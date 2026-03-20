@@ -6,6 +6,9 @@ import { initDb } from "./store/db.js";
 import { ensureSubAgentImage } from "./orchestrator/imageBuilder.js";
 import { createRouter } from "./api/routes.js";
 import { setupWebSocket } from "./api/websocket.js";
+import { startPolling } from "./polling.js";
+import { DebounceEngine } from "./debounce/engine.js";
+import { setDebounceEngine } from "./api/webhooks.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -18,6 +21,13 @@ async function main() {
   console.log("[startup] Ensuring sub-agent image exists...");
   try { await ensureSubAgentImage(docker, config.subAgentImage); }
   catch (err) { console.error("[startup] Failed to ensure sub-agent image:", err); process.exit(1); }
+
+  console.log("[startup] Initializing debounce engine...");
+  const debounceEngine = new DebounceEngine({ delayMs: 10 * 60 * 1000 }); // 10 minutes
+  setDebounceEngine(debounceEngine);
+
+  console.log("[startup] Starting Bitbucket Server polling...");
+  startPolling(docker);
 
   const app = express();
   app.use(express.json());
