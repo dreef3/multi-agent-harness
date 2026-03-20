@@ -120,6 +120,33 @@ async function pollPullRequest(
 }
 
 /**
+ * Clean up poll state for PRs that are no longer open
+ */
+function cleanupClosedPrs(): void {
+  // Get all PR IDs from all projects
+  const { listProjects } = require("./store/projects.js");
+  const projects = listProjects();
+  const openPrIds = new Set<string>();
+
+  for (const project of projects) {
+    const prs = listPullRequestsByProject(project.id);
+    for (const pr of prs) {
+      if (pr.status === "open") {
+        openPrIds.add(pr.id);
+      }
+    }
+  }
+
+  // Remove poll state for closed PRs
+  for (const prId of pollStates.keys()) {
+    if (!openPrIds.has(prId)) {
+      pollStates.delete(prId);
+      console.log(`[polling] Cleaned up poll state for closed PR ${prId}`);
+    }
+  }
+}
+
+/**
  * Poll all open PRs across all projects
  */
 async function pollAllPullRequests(docker: Dockerode): Promise<void> {
@@ -131,6 +158,7 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
     const projects = listProjects();
 
     let totalNewComments = 0;
+    const openPrIds = new Set<string>();
 
     for (const project of projects) {
       const prs = listPullRequestsByProject(project.id);
@@ -139,12 +167,21 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
       const openPrs = prs.filter(pr => pr.status === "open");
       
       for (const pr of openPrs) {
+        openPrIds.add(pr.id);
         try {
           const newComments = await pollPullRequest(docker, pr);
           totalNewComments += newComments;
         } catch (error) {
           console.error(`[polling] Error polling PR ${pr.id}:`, error);
         }
+      }
+    }
+
+    // Clean up poll state for closed PRs
+    for (const prId of pollStates.keys()) {
+      if (!openPrIds.has(prId)) {
+        pollStates.delete(prId);
+        console.log(`[polling] Cleaned up poll state for closed PR ${prId}`);
       }
     }
 

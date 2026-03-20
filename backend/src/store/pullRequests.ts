@@ -85,6 +85,11 @@ export function getPullRequest(id: string): PullRequest | null {
   return row ? prFromRow(row) : null;
 }
 
+export function getPullRequestByExternalId(externalId: string): PullRequest | null {
+  const row = getDb().prepare("SELECT * FROM pull_requests WHERE external_id = ?").get(externalId) as PullRequestRow | undefined;
+  return row ? prFromRow(row) : null;
+}
+
 export function listPullRequestsByProject(projectId: string): PullRequest[] {
   const rows = getDb()
     .prepare("SELECT * FROM pull_requests WHERE project_id = ? ORDER BY created_at DESC")

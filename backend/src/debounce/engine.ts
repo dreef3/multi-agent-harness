@@ -5,11 +5,16 @@ export type OnFireCallback = (prId: string) => void | Promise<void>;
 interface DebounceState {
   timeout: ReturnType<typeof setTimeout>;
   callback: OnFireCallback;
+  createdAt: number;
 }
+
+// Maximum lifetime for a debounce timer (24 hours)
+const MAX_TIMER_LIFETIME_MS = 24 * 60 * 60 * 1000;
 
 export class DebounceEngine {
   private timers = new Map<string, DebounceState>();
   private config: DebounceConfig;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(config?: Partial<DebounceConfig>) {
     this.config = {
@@ -17,6 +22,11 @@ export class DebounceEngine {
       delayMs: 10 * 60 * 1000, // 10 minutes default
       ...config,
     };
+
+    // Start cleanup interval for stale timers
+    this.cleanupInterval = setInterval(() => {
+      this.cleanupStaleTimers();
+    }, 60 * 60 * 1000); // Check every hour
   }
 
   /**
@@ -34,7 +44,22 @@ export class DebounceEngine {
       void onFire(prId);
     }, this.config.delayMs);
 
-    this.timers.set(prId, { timeout, callback: onFire });
+    this.timers.set(prId, { timeout, callback: onFire, createdAt: Date.now() });
+  }
+
+  /**
+   * Clean up timers that have exceeded the maximum lifetime.
+   * This prevents memory leaks from stale timers.
+   */
+  private cleanupStaleTimers(): void {
+    const now = Date.now();
+    for (const [prId, state] of this.timers) {
+      if (now - state.createdAt > MAX_TIMER_LIFETIME_MS) {
+        clearTimeout(state.timeout);
+        this.timers.delete(prId);
+        console.log(`[debounce] Cleaned up stale timer for PR ${prId}`);
+      }
+    }
   }
 
   /**
@@ -83,5 +108,10 @@ export class DebounceEngine {
       clearTimeout(state.timeout);
     }
     this.timers.clear();
+
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
+    }
   }
 }

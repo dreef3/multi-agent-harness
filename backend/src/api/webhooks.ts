@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { randomUUID } from "crypto";
-import { getPullRequest, upsertReviewComment } from "../store/pullRequests.js";
+import { randomUUID, createHmac, timingSafeEqual } from "crypto";
+import { getPullRequest, getPullRequestByExternalId, upsertReviewComment } from "../store/pullRequests.js";
 import { DebounceEngine } from "../debounce/engine.js";
 import type { ReviewComment } from "../models/types.js";
 
@@ -9,6 +9,7 @@ interface GitHubWebhookPayload {
   pull_request?: {
     number: number;
     html_url: string;
+    state?: string;
   };
   comment?: {
     id: number;
@@ -23,6 +24,13 @@ interface GitHubWebhookPayload {
     user: { login: string };
     body: string;
   };
+}
+
+function verifySignature(payload: string, signature: string, secret: string): boolean {
+  const hmac = createHmac("sha256", secret);
+  hmac.update(payload);
+  const digest = "sha256=" + hmac.digest("hex");
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(digest));
 }
 
 // Global debounce engine instance (shared with polling)
@@ -42,28 +50,56 @@ export function createWebhooksRouter(): Router {
   // GitHub webhook handler
   router.post("/github", async (req, res) => {
     const eventType = req.headers["x-github-event"] as string;
+    const signature = req.headers["x-hub-signature-256"] as string;
     const payload: GitHubWebhookPayload = req.body;
+
+    // Verify webhook signature
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    if (!signature || !secret) {
+      res.status(401).json({ error: "Missing signature or secret" });
+      return;
+    }
+
+    const rawBody = JSON.stringify(req.body);
+    if (!verifySignature(rawBody, signature, secret)) {
+      res.status(401).json({ error: "Invalid signature" });
+      return;
+    }
 
     console.log(`[webhook] Received GitHub event: ${eventType}`);
 
     // Handle pull request review events
     if (eventType === "pull_request_review" && payload.action === "submitted") {
-      // Extract PR info from the payload
       const prNumber = payload.pull_request?.number;
       if (!prNumber) {
         res.status(400).json({ error: "Missing pull request number" });
         return;
       }
 
-      // Find the PR in our database by external ID
-      // Note: We need to search by external_id, but we don't have that function
-      // For now, we'll queue the event for processing
-      console.log(`[webhook] PR review submitted for PR #${prNumber}`);
-      
-      // Trigger debounce if engine is available
+      const pr = getPullRequestByExternalId(prNumber.toString());
+      if (!pr) {
+        console.warn(`[webhook] PR #${prNumber} not found in database`);
+        res.status(404).json({ error: "Pull request not found" });
+        return;
+      }
+
+      console.log(`[webhook] PR review submitted for PR #${prNumber} (id: ${pr.id})`);
+
+      // Insert review as a comment and notify debounce engine
+      if (payload.review?.body) {
+        insertCommentAndNotify(
+          pr.id,
+          payload.review.id.toString(),
+          payload.review.user.login,
+          payload.review.body
+        );
+      }
+
+      // Trigger debounce engine for this PR
       if (debounceEngine) {
-        // We need to find the PR ID first - this will be handled by the polling mechanism
-        console.log(`[webhook] Debounce engine available, will process via polling`);
+        debounceEngine.notify(pr.id, async (prId) => {
+          console.log(`[webhook] Debounce timer fired for PR ${prId}`);
+        });
       }
     }
 
@@ -74,9 +110,37 @@ export function createWebhooksRouter(): Router {
         return;
       }
 
-      console.log(`[webhook] PR review comment received for PR #${payload.pull_request.number}`);
-      
-      // The comment will be picked up by polling and processed through debounce engine
+      const prNumber = payload.pull_request.number;
+      const pr = getPullRequestByExternalId(prNumber.toString());
+      if (!pr) {
+        console.warn(`[webhook] PR #${prNumber} not found in database`);
+        res.status(404).json({ error: "Pull request not found" });
+        return;
+      }
+
+      console.log(`[webhook] PR review comment received for PR #${prNumber} (id: ${pr.id})`);
+
+      // Insert comment and notify debounce engine
+      insertCommentAndNotify(
+        pr.id,
+        payload.comment.id.toString(),
+        payload.comment.user.login,
+        payload.comment.body,
+        payload.comment.path,
+        payload.comment.line
+      );
+    }
+
+    // Handle PR state changes (closed/merged) - clean up timers
+    if (eventType === "pull_request" && (payload.action === "closed" || payload.action === "merged")) {
+      const prNumber = payload.pull_request?.number;
+      if (prNumber) {
+        const pr = getPullRequestByExternalId(prNumber.toString());
+        if (pr && debounceEngine) {
+          debounceEngine.cancel(pr.id);
+          console.log(`[webhook] Cancelled debounce timer for closed PR #${prNumber}`);
+        }
+      }
     }
 
     // Always return 200 to acknowledge receipt
