@@ -1,30 +1,25 @@
 # Agent Configuration for E2E Tests
 
-This directory contains configuration for running E2E tests with different agent providers.
+This directory contains configuration for running E2E tests with OpenCode Go agent provider.
 
-## Supported Agents
+## OpenCode Go
 
-### OpenCode Zen
-OpenCode Zen is the TypeScript/JavaScript implementation of the OpenCode agent framework.
-
-Configuration:
-- Set `AGENT_PROVIDER=opencode-zen` in environment
-- Set `OPENCODE_API_KEY` to your API key
-
-### OpenCode Go
 OpenCode Go is the Go implementation of the OpenCode agent framework.
 
 Configuration:
-- Set `AGENT_PROVIDER=opencode-go` in environment  
-- Set `OPENCODE_API_KEY` to your API key
+- Set `AGENT_PROVIDER=opencode-go` in environment (default)
+- Set `OPENCODE_API_KEY` to your API key (required)
 
 ## GitHub Secrets Required
 
 Add these secrets to your GitHub repository:
 
-- `ANTHROPIC_API_KEY` - API key for Anthropic (Claude models)
 - `GITHUB_TOKEN` - GitHub personal access token for repository access
-- `OPENCODE_API_KEY` - API key for OpenCode services (if using OpenCode agents)
+- `OPENCODE_API_KEY` - API key for OpenCode Go agent
+
+## Optional Secrets
+
+- `ANTHROPIC_API_KEY` - Only needed if you want to use Claude models as fallback
 
 ## Test Repository
 

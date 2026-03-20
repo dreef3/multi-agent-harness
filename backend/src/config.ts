@@ -26,7 +26,7 @@ export const config = {
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
   // Agent provider configuration for E2E tests
-  agentProvider: process.env.AGENT_PROVIDER ?? "pi", // 'pi', 'opencode-zen', or 'opencode-go'
+  agentProvider: process.env.AGENT_PROVIDER ?? "opencode-go", // Only OpenCode Go is supported
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
 };
