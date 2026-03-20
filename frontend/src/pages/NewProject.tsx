@@ -2,12 +2,34 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
 
+interface JiraIssue {
+  key: string;
+  summary: string;
+  description?: string;
+  status: string;
+  priority?: string;
+  assignee?: string;
+  reporter?: string;
+  created: string;
+  updated: string;
+  labels: string[];
+  issuetype: string;
+}
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  
+  // JIRA integration state
+  const [jqlQuery, setJqlQuery] = useState("");
+  const [jiraIssues, setJiraIssues] = useState<JiraIssue[]>([]);
+  const [selectedIssues, setSelectedIssues] = useState<string[]>([]);
+  const [jiraLoading, setJiraLoading] = useState(false);
+  const [jiraError, setJiraError] = useState<string | null>(null);
+  const [showJiraPicker, setShowJiraPicker] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -16,9 +38,21 @@ export default function NewProject() {
     try {
       setLoading(true);
       setError(null);
+      
+      // Include JIRA tickets in description if selected
+      let finalDescription = description;
+      if (selectedIssues.length > 0) {
+        const jiraContext = selectedIssues
+          .map(key => jiraIssues.find(i => i.key === key))
+          .filter(Boolean)
+          .map(issue => `[${issue!.key}] ${issue!.summary}`)
+          .join("\n");
+        finalDescription = `${description}\n\nJIRA Tickets:\n${jiraContext}`;
+      }
+      
       const project = await api.projects.create({
         name: name.trim(),
-        description: description.trim(),
+        description: finalDescription.trim(),
       });
       navigate(`/projects/${project.id}/chat`);
     } catch (err) {
@@ -26,6 +60,51 @@ export default function NewProject() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function searchJiraIssues() {
+    if (!jqlQuery.trim()) return;
+    
+    try {
+      setJiraLoading(true);
+      setJiraError(null);
+      
+      const response = await fetch(`/api/jira/search?jql=${encodeURIComponent(jqlQuery)}&maxResults=20`);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Failed to search JIRA");
+      }
+      
+      const data = await response.json();
+      setJiraIssues(data.issues || []);
+    } catch (err) {
+      setJiraError(err instanceof Error ? err.message : "Failed to search JIRA");
+    } finally {
+      setJiraLoading(false);
+    }
+  }
+
+  function toggleIssueSelection(key: string) {
+    setSelectedIssues(prev => 
+      prev.includes(key) 
+        ? prev.filter(k => k !== key)
+        : [...prev, key]
+    );
+  }
+
+  function addSelectedIssuesToDescription() {
+    const selectedIssuesData = selectedIssues
+      .map(key => jiraIssues.find(i => i.key === key))
+      .filter(Boolean);
+    
+    if (selectedIssuesData.length === 0) return;
+    
+    const jiraText = selectedIssuesData
+      .map(issue => `[${issue!.key}] ${issue!.summary}\n${issue!.description || ""}`)
+      .join("\n\n---\n\n");
+    
+    setDescription(prev => prev ? `${prev}\n\n${jiraText}` : jiraText);
+    setShowJiraPicker(false);
   }
 
   return (
@@ -48,14 +127,94 @@ export default function NewProject() {
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
-            Description
-          </label>
+          <div className="flex items-center justify-between mb-1">
+            <label className="block text-sm font-medium text-gray-300">
+              Description
+            </label>
+            <button
+              type="button"
+              onClick={() => setShowJiraPicker(!showJiraPicker)}
+              className="text-xs text-blue-400 hover:text-blue-300"
+            >
+              {showJiraPicker ? "Hide JIRA Picker" : "+ Add JIRA Tickets"}
+            </button>
+          </div>
+          
+          {showJiraPicker && (
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-4 mb-3 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={jqlQuery}
+                  onChange={(e) => setJqlQuery(e.target.value)}
+                  placeholder="project = PROJ AND status = 'In Progress'"
+                  className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), searchJiraIssues())}
+                />
+                <button
+                  type="button"
+                  onClick={searchJiraIssues}
+                  disabled={jiraLoading || !jqlQuery.trim()}
+                  className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 px-4 py-2 rounded text-sm font-medium"
+                >
+                  {jiraLoading ? "Searching..." : "Search"}
+                </button>
+              </div>
+              
+              {jiraError && (
+                <div className="text-red-400 text-sm">{jiraError}</div>
+              )}
+              
+              {jiraIssues.length > 0 && (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {jiraIssues.map(issue => (
+                    <div
+                      key={issue.key}
+                      onClick={() => toggleIssueSelection(issue.key)}
+                      className={`p-2 rounded cursor-pointer transition-colors ${
+                        selectedIssues.includes(issue.key)
+                          ? "bg-blue-900/50 border border-blue-500"
+                          : "bg-gray-800 hover:bg-gray-750 border border-gray-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIssues.includes(issue.key)}
+                          onChange={() => {}}
+                          className="rounded"
+                        />
+                        <span className="font-medium text-sm">{issue.key}</span>
+                        <span className="text-xs text-gray-400">{issue.status}</span>
+                      </div>
+                      <div className="text-sm text-gray-300 ml-6">{issue.summary}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              {selectedIssues.length > 0 && (
+                <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                  <span className="text-sm text-gray-400">
+                    {selectedIssues.length} issue(s) selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addSelectedIssuesToDescription}
+                    className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-medium"
+                  >
+                    Add to Description
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+          
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What do you want to build?"
-            rows={4}
+            rows={6}
             className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
           />
         </div>

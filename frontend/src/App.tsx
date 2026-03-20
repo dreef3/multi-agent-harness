@@ -5,6 +5,7 @@ import Chat from "./pages/Chat";
 import PlanApproval from "./pages/PlanApproval";
 import Execution from "./pages/Execution";
 import Settings from "./pages/Settings";
+import PrOverview from "./pages/PrOverview";
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="/projects/:id/chat" element={<Chat />} />
           <Route path="/projects/:id/plan" element={<PlanApproval />} />
           <Route path="/projects/:id/execute" element={<Execution />} />
+          <Route path="/projects/:id/prs" element={<PrOverview />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>
