@@ -1,9 +1,11 @@
 import express from "express";
+import { createServer } from "http";
 import Dockerode from "dockerode";
 import { config } from "./config.js";
 import { initDb } from "./store/db.js";
 import { ensureSubAgentImage } from "./orchestrator/imageBuilder.js";
 import { createRouter } from "./api/routes.js";
+import { setupWebSocket } from "./api/websocket.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -19,9 +21,12 @@ async function main() {
 
   const app = express();
   app.use(express.json());
-  app.use("/api", createRouter());
+  app.use("/api", createRouter(config.dataDir));
 
-  app.listen(config.port, () => {
+  const server = createServer(app);
+  setupWebSocket(server, config.dataDir);
+
+  server.listen(config.port, () => {
     console.log(`[startup] Backend listening on port ${config.port}`);
   });
 }
