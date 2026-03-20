@@ -21,7 +21,7 @@ async function main() {
 
   const app = express();
   app.use(express.json());
-  app.use("/api", createRouter(config.dataDir));
+  app.use("/api", createRouter(config.dataDir, docker));
 
   const server = createServer(app);
   setupWebSocket(server, config.dataDir);

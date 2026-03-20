@@ -1,12 +1,15 @@
 import { Router } from "express";
+import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject } from "../store/projects.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
+import { TaskDispatcher } from "../orchestrator/taskDispatcher.js";
 
-export function createProjectsRouter(): Router {
+export function createProjectsRouter(docker: Dockerode): Router {
   const router = Router();
+  const taskDispatcher = new TaskDispatcher();
 
   // List all projects
   router.get("/", (_req, res) => {
@@ -89,7 +92,7 @@ export function createProjectsRouter(): Router {
   });
 
   // Approve plan
-  router.post("/:id/approve", (req, res) => {
+  router.post("/:id/approve", async (req, res) => {
     const project = getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
@@ -110,6 +113,13 @@ export function createProjectsRouter(): Router {
       approvedAt: new Date().toISOString(),
     };
     updateProject(req.params.id, { plan: approvedPlan, status: "executing" });
+
+    // Start dispatching tasks asynchronously
+    // Don't await - let it run in background
+    taskDispatcher.dispatchTasks(docker, req.params.id).catch(err => {
+      console.error(`Task dispatch failed for project ${req.params.id}:`, err);
+    });
+
     res.json({ success: true, plan: approvedPlan });
   });
 
