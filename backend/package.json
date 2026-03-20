@@ -10,6 +10,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.61.1",
     "better-sqlite3": "^9.4.3",
     "dockerode": "^4.0.2",
     "express": "^4.18.2",
