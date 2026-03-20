@@ -3,6 +3,9 @@ import type Dockerode from "dockerode";
 import { createProjectsRouter } from "./projects.js";
 import { createRepositoriesRouter } from "./repositories.js";
 import { createAgentsRouter } from "./agents.js";
+import { createJiraRouter } from "./jira.js";
+import { createPullRequestsRouter } from "./pullRequests.js";
+import { createWebhooksRouter } from "./webhooks.js";
 
 export function createRouter(dataDir: string, docker: Dockerode): Router {
   const router = Router();
@@ -15,6 +18,9 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
   router.use("/projects", createProjectsRouter(docker));
   router.use("/repositories", createRepositoriesRouter());
   router.use("/agents", createAgentsRouter());
+  router.use("/jira", createJiraRouter());
+  router.use("/pull-requests", createPullRequestsRouter(docker));
+  router.use("/webhooks", createWebhooksRouter());
 
   return router;
 }
