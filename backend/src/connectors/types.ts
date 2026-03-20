@@ -62,6 +62,10 @@ export function getConnector(provider: string): VcsConnector {
       const { GitHubConnector } = require("./github.js");
       return new GitHubConnector();
     }
+    case "bitbucket-server": {
+      const { BitbucketConnector } = require("./bitbucket.js");
+      return new BitbucketConnector();
+    }
     default:
       throw new ConnectorError(`Unsupported provider: ${provider}`, provider);
   }
