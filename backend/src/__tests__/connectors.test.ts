@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import { GitHubConnector } from "../connectors/github.js";
 import { BitbucketConnector } from "../connectors/bitbucket.js";
 import type { Repository } from "../models/types.js";
@@ -299,7 +299,8 @@ describe("GitHubConnector", () => {
 
 describe("BitbucketConnector", () => {
   let connector: BitbucketConnector;
-  let mockFetch: ReturnType<typeof vi.fn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let mockFetch: any;
   const repo: Repository = {
     id: "repo-1",
     name: "test-repo",
@@ -316,7 +317,7 @@ describe("BitbucketConnector", () => {
     vi.clearAllMocks();
     process.env.BITBUCKET_TOKEN = "test-token";
     mockFetch = vi.fn();
-    globalThis.fetch = mockFetch;
+    globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => {
