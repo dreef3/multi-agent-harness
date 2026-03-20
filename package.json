@@ -1,4 +1,19 @@
 {
+  "name": "multi-agent-harness",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "e2e-tests"
+  ],
+  "scripts": {
+    "dev": "bun run --cwd backend dev & bun run --cwd frontend dev",
+    "build": "bun run --cwd backend build && bun run --cwd frontend build",
+    "test": "bun run --cwd backend test",
+    "e2e": "bun run --cwd e2e-tests test"
+  },
   "dependencies": {
     "ws": "^8.19.0"
   },

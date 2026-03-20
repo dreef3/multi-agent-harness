@@ -1,4 +1,4 @@
-FROM node:20.18-slim
+FROM oven/bun:1
 
 RUN apt-get update && apt-get install -y \
     git \
@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     maven \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @mariozechner/pi-coding-agent
+RUN bun install -g @mariozechner/pi-coding-agent
 
 RUN git config --global credential.helper "store --file /run/secrets/git-credentials"
 

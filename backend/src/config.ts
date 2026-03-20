@@ -25,4 +25,8 @@ export const config = {
   subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "3", 10),
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
+  // Agent provider configuration for E2E tests
+  agentProvider: process.env.AGENT_PROVIDER ?? "pi", // 'pi', 'opencode-zen', or 'opencode-go'
+  opencodeApiKey: process.env.OPENCODE_API_KEY,
+  testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
 };

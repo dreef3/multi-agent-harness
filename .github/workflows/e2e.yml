@@ -1,0 +1,188 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  e2e-opencode-zen:
+    name: E2E with OpenCode Zen
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cat > .env << 'EOF'
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_PATH=/run/secrets/api-key
+          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          PORT=3000
+          DATA_DIR=/app/data
+          SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
+          SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
+          AGENT_PROVIDER=opencode-zen
+          OPENCODE_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          TEST_REPO_URL=git@github.com:dreef3/multi-agent-harness-test-repo.git
+          JIRA_BASE_URL=
+          JIRA_TOKEN=
+          BITBUCKET_BASE_URL=
+          BITBUCKET_TOKEN=
+          EOF
+
+      - name: Build and start services
+        run: |
+          docker compose build
+          docker compose up -d
+          sleep 10
+          docker compose ps
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Waiting for backend... attempt $i/30"
+            sleep 2
+          done
+
+      - name: Setup Bun for E2E tests
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install E2E test dependencies
+        working-directory: ./e2e-tests
+        run: bun install
+
+      - name: Install Playwright browsers
+        working-directory: ./e2e-tests
+        run: bunx playwright install --with-deps
+
+      - name: Run E2E tests with OpenCode Zen
+        working-directory: ./e2e-tests
+        env:
+          TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
+          AGENT_PROVIDER: opencode-zen
+          OPENCODE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HARNESS_URL: http://localhost:8080
+        run: bunx playwright test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-opencode-zen
+          path: e2e-tests/playwright-report/
+          retention-days: 30
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== Backend logs ==="
+          docker compose logs backend
+          echo "=== Frontend logs ==="
+          docker compose logs frontend
+
+      - name: Stop services
+        if: always()
+        run: docker compose down
+
+  e2e-opencode-go:
+    name: E2E with OpenCode Go
+    runs-on: ubuntu-latest
+    if: false  # Enable this when OpenCode Go is implemented
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create .env file
+        run: |
+          cat > .env << 'EOF'
+          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_PATH=/run/secrets/api-key
+          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          PORT=3000
+          DATA_DIR=/app/data
+          SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
+          SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
+          AGENT_PROVIDER=opencode-go
+          OPENCODE_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
+          TEST_REPO_URL=git@github.com:dreef3/multi-agent-harness-test-repo.git
+          JIRA_BASE_URL=
+          JIRA_TOKEN=
+          BITBUCKET_BASE_URL=
+          BITBUCKET_TOKEN=
+          EOF
+
+      - name: Build and start services
+        run: |
+          docker compose build
+          docker compose up -d
+          sleep 10
+          docker compose ps
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Waiting for backend... attempt $i/30"
+            sleep 2
+          done
+
+      - name: Setup Bun for E2E tests
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install E2E test dependencies
+        working-directory: ./e2e-tests
+        run: bun install
+
+      - name: Install Playwright browsers
+        working-directory: ./e2e-tests
+        run: bunx playwright install --with-deps
+
+      - name: Run E2E tests with OpenCode Go
+        working-directory: ./e2e-tests
+        env:
+          TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
+          AGENT_PROVIDER: opencode-go
+          OPENCODE_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          HARNESS_URL: http://localhost:8080
+        run: bunx playwright test
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-opencode-go
+          path: e2e-tests/playwright-report/
+          retention-days: 30
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== Backend logs ==="
+          docker compose logs backend
+          echo "=== Frontend logs ==="
+          docker compose logs frontend
+
+      - name: Stop services
+        if: always()
+        run: docker compose down
