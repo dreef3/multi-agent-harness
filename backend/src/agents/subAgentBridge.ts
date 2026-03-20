@@ -21,7 +21,7 @@ export class SubAgentBridge extends EventEmitter {
   }
 
   detach(): void {
-    this.stream?.destroy();
+    (this.stream as unknown as { destroy?: () => void } | null)?.destroy?.();
     this.stream = null;
     this.buffer = "";
   }
