@@ -47,6 +47,14 @@ describe("db", () => {
     expect(names).toContain("projects");
     expect(names).toContain("messages");
   });
+
+  it("creates pull_requests and review_comments tables", () => {
+    initDb(tmpDir);
+    const db = getDb();
+    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
+    expect(tables.map((t) => t.name)).toContain("pull_requests");
+    expect(tables.map((t) => t.name)).toContain("review_comments");
+  });
 });
 
 describe("repositories store", () => {

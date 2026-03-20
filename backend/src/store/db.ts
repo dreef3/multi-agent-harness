@@ -68,5 +68,21 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_messages_project_seq
       ON messages (project_id, seq_id);
+
+    CREATE TABLE IF NOT EXISTS pull_requests (
+      id TEXT PRIMARY KEY, project_id TEXT NOT NULL, repository_id TEXT NOT NULL,
+      agent_session_id TEXT NOT NULL, provider TEXT NOT NULL, external_id TEXT NOT NULL,
+      url TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS review_comments (
+      id TEXT PRIMARY KEY, pull_request_id TEXT NOT NULL, external_id TEXT NOT NULL,
+      author TEXT NOT NULL, body TEXT NOT NULL, file_path TEXT, line_number INTEGER,
+      status TEXT NOT NULL DEFAULT 'pending', received_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(external_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_review_comments_pr ON review_comments (pull_request_id, status);
   `);
 }
