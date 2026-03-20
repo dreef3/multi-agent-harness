@@ -36,6 +36,17 @@ describe("db", () => {
     initDb(tmpDir);
     expect(() => initDb(tmpDir)).not.toThrow();
   });
+
+  it("creates projects and messages tables", () => {
+    initDb(tmpDir);
+    const db = getDb();
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+      .all() as { name: string }[];
+    const names = tables.map((t) => t.name);
+    expect(names).toContain("projects");
+    expect(names).toContain("messages");
+  });
 });
 
 describe("repositories store", () => {

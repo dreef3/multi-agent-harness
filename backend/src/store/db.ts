@@ -42,5 +42,31 @@ function migrate(database: Database.Database): void {
       created_at    TEXT NOT NULL,
       updated_at    TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS projects (
+      id                  TEXT PRIMARY KEY,
+      name                TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'brainstorming',
+      source_type         TEXT NOT NULL,
+      source_json         TEXT NOT NULL,
+      repository_ids      TEXT NOT NULL DEFAULT '[]',
+      plan_json           TEXT,
+      master_session_path TEXT NOT NULL DEFAULT '',
+      created_at          TEXT NOT NULL,
+      updated_at          TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      project_id  TEXT NOT NULL,
+      seq_id      INTEGER NOT NULL,
+      role        TEXT NOT NULL,
+      content     TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      UNIQUE(project_id, seq_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_messages_project_seq
+      ON messages (project_id, seq_id);
   `);
 }
