@@ -3,6 +3,10 @@ import { initDb, getDb } from "../store/db.js";
 import os from "os";
 import path from "path";
 import fs from "fs";
+import { insertRepository, getRepository, listRepositories, updateRepository, deleteRepository } from "../store/repositories.js";
+import type { Repository } from "../models/types.js";
+import { insertAgentSession, getAgentSession, listAgentSessions, updateAgentSession } from "../store/agents.js";
+import type { AgentSession } from "../models/types.js";
 
 describe("db", () => {
   let tmpDir: string;
@@ -31,5 +35,85 @@ describe("db", () => {
   it("is idempotent — running initDb twice does not throw", () => {
     initDb(tmpDir);
     expect(() => initDb(tmpDir)).not.toThrow();
+  });
+});
+
+describe("repositories store", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-repo-"));
+    initDb(tmpDir);
+  });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  const repo: Repository = {
+    id: "repo-1", name: "my-service", cloneUrl: "https://github.com/org/my-service.git",
+    provider: "github", providerConfig: { owner: "org", repo: "my-service" },
+    defaultBranch: "main", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+
+  it("inserts and retrieves a repository", () => {
+    insertRepository(repo);
+    const found = getRepository("repo-1");
+    expect(found).toMatchObject({ id: "repo-1", name: "my-service" });
+    expect(found?.providerConfig).toEqual({ owner: "org", repo: "my-service" });
+  });
+  it("returns null for a missing id", () => { expect(getRepository("nonexistent")).toBeNull(); });
+  it("lists all repositories ordered by createdAt desc", () => {
+    insertRepository(repo);
+    const list = listRepositories();
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe("repo-1");
+  });
+  it("updates name", () => {
+    insertRepository(repo);
+    updateRepository("repo-1", { name: "renamed-service" });
+    expect(getRepository("repo-1")?.name).toBe("renamed-service");
+  });
+  it("deletes a repository", () => {
+    insertRepository(repo);
+    deleteRepository("repo-1");
+    expect(getRepository("repo-1")).toBeNull();
+  });
+  it("throws when updating a nonexistent repository", () => {
+    expect(() => updateRepository("missing", { name: "x" })).toThrow("Repository not found");
+  });
+});
+
+describe("agent sessions store", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sess-"));
+    initDb(tmpDir);
+  });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  const session: AgentSession = {
+    id: "session-1", projectId: "project-1", type: "sub", repositoryId: "repo-1",
+    taskId: "task-1", status: "starting", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+  };
+
+  it("inserts and retrieves a session", () => {
+    insertAgentSession(session);
+    const found = getAgentSession("session-1");
+    expect(found).toMatchObject({ id: "session-1", status: "starting" });
+    expect(found?.repositoryId).toBe("repo-1");
+  });
+  it("returns null for a missing id", () => { expect(getAgentSession("missing")).toBeNull(); });
+  it("lists sessions by projectId", () => {
+    insertAgentSession(session);
+    const list = listAgentSessions("project-1");
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe("session-1");
+  });
+  it("updates status and containerId", () => {
+    insertAgentSession(session);
+    updateAgentSession("session-1", { status: "running", containerId: "container-abc" });
+    const found = getAgentSession("session-1");
+    expect(found?.status).toBe("running");
+    expect(found?.containerId).toBe("container-abc");
+  });
+  it("throws when updating a nonexistent session", () => {
+    expect(() => updateAgentSession("missing", { status: "failed" })).toThrow("AgentSession not found");
   });
 });
