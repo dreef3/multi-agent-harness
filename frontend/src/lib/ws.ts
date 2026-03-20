@@ -9,16 +9,29 @@ class WebSocketClient {
   private disconnectHandlers: DisconnectHandler[] = [];
   private reconnectInterval = 3000;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private url: string;
+  private baseUrl: string;
+  private projectId: string | null = null;
 
-  constructor(url: string = "/ws") {
-    this.url = url;
+  constructor(baseUrl: string = "/ws") {
+    this.baseUrl = baseUrl;
+  }
+
+  setProjectId(projectId: string | null): void {
+    this.projectId = projectId;
+  }
+
+  private getUrl(): string {
+    if (this.projectId) {
+      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      return `${protocol}://${window.location.host}/ws/projects/${this.projectId}/chat`;
+    }
+    return this.baseUrl;
   }
 
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
-    this.ws = new WebSocket(this.url);
+    this.ws = new WebSocket(this.getUrl());
 
     this.ws.onopen = () => {
       console.log("WebSocket connected");

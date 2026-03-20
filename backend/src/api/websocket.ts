@@ -68,7 +68,6 @@ export function setupWebSocket(server: Server, dataDir: string): void {
         agent!.on("delta", onDelta);
         try {
           await agent!.prompt(msg.text);
-          agent!.off("delta", onDelta);
           if (fullResponse) {
             appendMessage(projectId, "assistant", fullResponse);
             if (fullResponse.includes("### Task") && fullResponse.includes("**Repository:**")) {
@@ -82,8 +81,9 @@ export function setupWebSocket(server: Server, dataDir: string): void {
             }
           }
         } catch (err) {
-          agent!.off("delta", onDelta);
           send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
+        } finally {
+          agent!.off("delta", onDelta);
         }
         return;
       }

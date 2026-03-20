@@ -19,8 +19,9 @@ export default function PlanApproval() {
   async function loadPlan() {
     if (!id) return;
     try {
-      const data = await api.plan.get(id);
-      setPlan(data);
+      // Plan endpoint not implemented - get plan from project instead
+      const project = await api.projects.get(id);
+      setPlan(project.plan as Plan | null);
     } catch (err) {
       console.error("Failed to load plan:", err);
     } finally {
@@ -32,7 +33,7 @@ export default function PlanApproval() {
     if (!id || actionLoading) return;
     try {
       setActionLoading(true);
-      await api.plan.approve(id);
+      await api.projects.approve(id);
       navigate(`/projects/${id}/execute`);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to approve plan");
@@ -45,7 +46,9 @@ export default function PlanApproval() {
     if (!id || actionLoading || !feedback.trim()) return;
     try {
       setActionLoading(true);
-      await api.plan.reject(id, feedback.trim());
+      // Reject endpoint not implemented yet
+      // await api.plan.reject(id, feedback.trim());
+      alert("Reject not implemented yet");
       navigate(`/projects/${id}/chat`);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to reject plan");

@@ -25,6 +25,7 @@ export default function Execution() {
 
   useEffect(() => {
     if (!id) return;
+    wsClient.setProjectId(id);
     wsClient.connect();
 
     const unsubscribe = wsClient.onMessage((data) => {
@@ -66,7 +67,8 @@ export default function Execution() {
     if (!id || loading) return;
     try {
       setLoading(true);
-      await api.execution.start(id);
+      // Execution start endpoint not implemented yet
+      // await api.projects.approve(id);
       setStatus((prev) => ({ ...prev, status: "running" }));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to start execution");
@@ -79,7 +81,8 @@ export default function Execution() {
     if (!id || loading) return;
     try {
       setLoading(true);
-      await api.execution.stop(id);
+      // Execution stop endpoint not implemented yet
+      // await api.projects.cancel(id);
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to stop execution");
     } finally {

@@ -3,8 +3,12 @@ const API_BASE = "/api";
 export interface Project {
   id: string;
   name: string;
-  description: string;
-  status: "draft" | "planning" | "approved" | "executing" | "completed" | "error";
+  description?: string;
+  source?: string;
+  repositoryIds?: string[];
+  masterSessionPath?: string;
+  status: "draft" | "planning" | "approved" | "executing" | "completed" | "error" | "brainstorming" | "awaiting_approval" | "cancelled";
+  plan?: Plan;
   createdAt: string;
   updatedAt: string;
 }
@@ -12,7 +16,7 @@ export interface Project {
 export interface Message {
   id: string;
   projectId: string;
-  role: "user" | "agent" | "system";
+  role: "user" | "assistant";
   content: string;
   timestamp: string;
 }
@@ -59,6 +63,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  health: () => fetchJson<{ status: string; timestamp: string }>(`${API_BASE}/health`),
   projects: {
     list: () => fetchJson<Project[]>(`${API_BASE}/projects`),
     get: (id: string) => fetchJson<Project>(`${API_BASE}/projects/${id}`),
@@ -69,47 +74,33 @@ export const api = {
       }),
     delete: (id: string) =>
       fetch(`${API_BASE}/projects/${id}`, { method: "DELETE" }),
-  },
-  messages: {
-    list: (projectId: string) =>
-      fetchJson<Message[]>(`${API_BASE}/projects/${projectId}/messages`),
-    send: (projectId: string, content: string) =>
-      fetchJson<Message>(`${API_BASE}/projects/${projectId}/messages`, {
-        method: "POST",
-        body: JSON.stringify({ content }),
-      }),
-  },
-  plan: {
-    get: (projectId: string) =>
-      fetchJson<Plan>(`${API_BASE}/projects/${projectId}/plan`),
+    messages: {
+      list: (projectId: string) =>
+        fetchJson<Message[]>(`${API_BASE}/projects/${projectId}/messages`),
+    },
     approve: (projectId: string) =>
-      fetchJson<Plan>(`${API_BASE}/projects/${projectId}/plan/approve`, {
+      fetchJson<{ success: boolean; plan: unknown }>(`${API_BASE}/projects/${projectId}/approve`, {
         method: "POST",
       }),
-    reject: (projectId: string, feedback: string) =>
-      fetchJson<Plan>(`${API_BASE}/projects/${projectId}/plan/reject`, {
+    cancel: (projectId: string) =>
+      fetchJson<{ success: boolean; status: string }>(`${API_BASE}/projects/${projectId}/cancel`, {
         method: "POST",
-        body: JSON.stringify({ feedback }),
       }),
   },
-  execution: {
-    start: (projectId: string) =>
-      fetchJson<{ success: boolean }>(
-        `${API_BASE}/projects/${projectId}/execute`,
-        { method: "POST" }
-      ),
-    stop: (projectId: string) =>
-      fetchJson<{ success: boolean }>(
-        `${API_BASE}/projects/${projectId}/execute/stop`,
-        { method: "POST" }
-      ),
-  },
-  settings: {
-    get: () => fetchJson<Settings>(`${API_BASE}/settings`),
-    update: (data: Settings) =>
-      fetchJson<Settings>(`${API_BASE}/settings`, {
-        method: "PUT",
+  repositories: {
+    list: () => fetchJson<unknown[]>(`${API_BASE}/repositories`),
+    get: (id: string) => fetchJson<unknown>(`${API_BASE}/repositories/${id}`),
+    create: (data: unknown) =>
+      fetchJson<unknown>(`${API_BASE}/repositories`, {
+        method: "POST",
         body: JSON.stringify(data),
       }),
+    update: (id: string, data: unknown) =>
+      fetchJson<unknown>(`${API_BASE}/repositories/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    delete: (id: string) =>
+      fetch(`${API_BASE}/repositories/${id}`, { method: "DELETE" }),
   },
 };

@@ -15,6 +15,7 @@ export default function Chat() {
 
   useEffect(() => {
     if (!id) return;
+    wsClient.setProjectId(id);
     loadMessages();
     wsClient.connect();
     
@@ -41,7 +42,7 @@ export default function Chat() {
   async function loadMessages() {
     if (!id) return;
     try {
-      const data = await api.messages.list(id);
+      const data = await api.projects.messages.list(id);
       setMessages(data);
     } catch (err) {
       console.error("Failed to load messages:", err);
@@ -56,8 +57,17 @@ export default function Chat() {
 
     try {
       setSending(true);
-      const message = await api.messages.send(id, input.trim());
-      setMessages((prev) => [...prev, message]);
+      // Send message via WebSocket
+      wsClient.send({ type: "prompt", text: input.trim() });
+      // Optimistically add user message to UI
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        projectId: id,
+        role: "user",
+        content: input.trim(),
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, userMessage]);
       setInput("");
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to send message");
@@ -97,13 +107,11 @@ export default function Chat() {
                 className={`max-w-[80%] rounded-lg px-4 py-2 ${
                   msg.role === "user"
                     ? "bg-blue-600 text-white"
-                    : msg.role === "system"
-                    ? "bg-gray-700 text-gray-300"
                     : "bg-gray-800 text-gray-100"
                 }`}
               >
                 <div className="text-xs text-gray-400 mb-1">
-                  {msg.role === "user" ? "You" : msg.role === "agent" ? "Agent" : "System"}
+                  {msg.role === "user" ? "You" : "Assistant"}
                 </div>
                 <div className="prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown>{msg.content}</ReactMarkdown>

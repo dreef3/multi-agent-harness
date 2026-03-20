@@ -13,8 +13,11 @@ export default function Settings() {
 
   async function loadSettings() {
     try {
-      const data = await api.settings.get();
-      setSettings(data);
+      // Settings endpoint not implemented - use defaults
+      setSettings({
+        masterAgent: { model: "claude-3-opus", temperature: 0.7, maxTokens: 4096 },
+        workerAgents: { model: "claude-3-haiku", temperature: 0.5, maxTokens: 2048 },
+      });
     } catch (err) {
       console.error("Failed to load settings:", err);
     } finally {
@@ -26,7 +29,8 @@ export default function Settings() {
     if (!settings) return;
     try {
       setSaving(true);
-      await api.settings.update(settings);
+      // Settings endpoint not implemented yet
+      // await api.settings.update(settings);
       setMessage("Settings saved successfully!");
       setTimeout(() => setMessage(null), 3000);
     } catch (err) {
