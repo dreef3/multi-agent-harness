@@ -43,7 +43,7 @@ test.describe('Multi-Agent Harness E2E', () => {
     // Wait for agent response (with longer timeout since it involves AI)
     // The assistant messages have bg-gray-800 class
     const assistantMessages = page.locator('.bg-gray-800');
-    await expect(assistantMessages.first()).toBeVisible({ timeout: 120000 });
+    await expect(assistantMessages.first()).toBeVisible();
     
     // Verify the response contains some content
     const responseText = await assistantMessages.first().textContent();

@@ -11,6 +11,7 @@ class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private baseUrl: string;
   private projectId: string | null = null;
+  private messageQueue: unknown[] = [];
 
   constructor(baseUrl: string = "/ws") {
     this.baseUrl = baseUrl;
@@ -18,6 +19,7 @@ class WebSocketClient {
 
   setProjectId(projectId: string | null): void {
     this.projectId = projectId;
+    this.messageQueue = [];
   }
 
   private getUrl(): string {
@@ -39,6 +41,9 @@ class WebSocketClient {
       if (this.reconnectTimer) {
         clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
+      }
+      while (this.messageQueue.length > 0) {
+        this.ws!.send(JSON.stringify(this.messageQueue.shift()));
       }
     };
 
@@ -65,7 +70,7 @@ class WebSocketClient {
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
-      console.log("Attempting to reconnect...");
+      this.reconnectTimer = null;
       this.connect();
     }, this.reconnectInterval);
   }
@@ -83,7 +88,7 @@ class WebSocketClient {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     } else {
-      console.warn("WebSocket is not connected");
+      this.messageQueue.push(data);
     }
   }
 
