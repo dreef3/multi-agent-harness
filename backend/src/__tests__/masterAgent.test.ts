@@ -17,12 +17,18 @@ const mocks = vi.hoisted(() => {
   };
   const mockCreateAgentSession = vi.fn().mockResolvedValue({ session: mockSession });
   const mockSessionManager = { create: vi.fn().mockReturnValue({ type: "file" }) };
-  return { mockSession, mockCreateAgentSession, mockSessionManager };
+  const mockSettingsManagerInstance = { type: "in-memory" };
+  const mockSettingsManager = { inMemory: vi.fn().mockReturnValue(mockSettingsManagerInstance) };
+  const mockResourceLoaderInstance = { type: "resource-loader" };
+  const MockDefaultResourceLoader = vi.fn().mockImplementation(() => mockResourceLoaderInstance);
+  return { mockSession, mockCreateAgentSession, mockSessionManager, mockSettingsManager, MockDefaultResourceLoader, mockResourceLoaderInstance };
 });
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
   createAgentSession: mocks.mockCreateAgentSession,
   SessionManager: mocks.mockSessionManager,
+  SettingsManager: mocks.mockSettingsManager,
+  DefaultResourceLoader: mocks.MockDefaultResourceLoader,
 }));
 
 describe("MasterAgent", () => {
@@ -40,6 +46,8 @@ describe("MasterAgent", () => {
     await agent.init();
     expect(mocks.mockCreateAgentSession).toHaveBeenCalledWith({
       sessionManager: { type: "file" },
+      settingsManager: { type: "in-memory" },
+      resourceLoader: mocks.mockResourceLoaderInstance,
     });
     agent.dispose();
   });
