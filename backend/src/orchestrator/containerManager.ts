@@ -19,6 +19,8 @@ const PROVIDER_ENV_VARS = [
   "KIMI_API_KEY",
   "MINIMAX_API_KEY",
   "MINIMAX_CN_API_KEY",
+  // Git / VCS credentials
+  "GITHUB_TOKEN",
   // Cloud providers
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
@@ -38,6 +40,9 @@ export interface ContainerCreateOptions {
   sessionId: string;
   repoCloneUrl: string;
   branchName: string;
+  taskDescription?: string;
+  agentProvider?: string;
+  agentModel?: string;
 }
 
 export async function createSubAgentContainer(docker: Dockerode, opts: ContainerCreateOptions): Promise<string> {
@@ -45,9 +50,15 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     .filter(name => process.env[name])
     .map(name => `${name}=${process.env[name]}`);
 
+  const taskEnv = [
+    ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
+    `AGENT_PROVIDER=${opts.agentProvider ?? config.agentProvider}`,
+    `AGENT_MODEL=${opts.agentModel ?? config.models[config.agentProvider as keyof typeof config.models]?.workerAgent?.model ?? "minimax-m2.7"}`,
+  ];
+
   const container = await docker.createContainer({
     Image: config.subAgentImage,
-    Env: [`REPO_CLONE_URL=${opts.repoCloneUrl}`, `BRANCH_NAME=${opts.branchName}`, ...providerEnv],
+    Env: [`REPO_CLONE_URL=${opts.repoCloneUrl}`, `BRANCH_NAME=${opts.branchName}`, ...taskEnv, ...providerEnv],
     WorkingDir: "/workspace",
     HostConfig: {
       Binds: [

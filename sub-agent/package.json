@@ -1,0 +1,8 @@
+{
+  "name": "@multi-agent-harness/sub-agent",
+  "version": "0.1.0",
+  "type": "module",
+  "dependencies": {
+    "@mariozechner/pi-coding-agent": "^0.61.1"
+  }
+}
