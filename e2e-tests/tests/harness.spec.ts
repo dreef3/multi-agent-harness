@@ -9,7 +9,7 @@ test.describe('Multi-Agent Harness E2E', () => {
     await expect(page.getByText('Multi-Agent Harness')).toBeVisible();
     
     // Click on "New Project" link
-    await page.getByRole('link', { name: /\+ new project/i }).click();
+    await page.getByRole('main').getByRole('link', { name: /\+ new project/i }).click();
     
     // Wait for the new project form
     await expect(page.getByRole('heading', { name: /create new project/i })).toBeVisible();

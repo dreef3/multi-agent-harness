@@ -35,13 +35,36 @@ jobs:
           BITBUCKET_TOKEN=
           EOF
 
-      - name: Build sub-agent image
-        run: docker build -t multi-agent-harness/sub-agent:latest ./sub-agent
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          tags: multi-agent-harness/backend:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
 
-      - name: Build and start services
+      - name: Build frontend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          tags: multi-agent-harness/frontend:latest
+          load: true
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+      - name: Build sub-agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./sub-agent
+          tags: multi-agent-harness/sub-agent:latest
+          load: true
+          cache-from: type=gha,scope=sub-agent
+          cache-to: type=gha,scope=sub-agent,mode=max
+
+      - name: Start services
         run: |
-          docker compose build
-          docker compose up -d
+          docker compose up -d --no-build
           sleep 10
           docker compose ps
 
@@ -80,7 +103,12 @@ jobs:
       - name: Install Playwright browsers
         working-directory: ./e2e-tests
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: bunx playwright install --with-deps
+        run: bunx playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        working-directory: ./e2e-tests
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
 
       - name: Run E2E tests with OpenCode Go
         working-directory: ./e2e-tests

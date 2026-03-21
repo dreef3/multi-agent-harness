@@ -1,6 +1,7 @@
 services:
   backend:
     build: ./backend
+    image: multi-agent-harness/backend:latest
     ports:
       - "3000:3000"
     volumes:
@@ -24,6 +25,7 @@ services:
 
   frontend:
     build: ./frontend
+    image: multi-agent-harness/frontend:latest
     ports:
       - "0:80"
     depends_on:
