@@ -7,7 +7,6 @@ import { insertAgentSession, updateAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
-import { SubAgentBridge } from "../agents/subAgentBridge.js";
 import { config } from "../config.js";
 
 export interface TaskResult {
@@ -324,29 +323,20 @@ export class TaskDispatcher {
 
     try {
       // Create container for fix-run (using existing branch)
+      const taskDescription = `Address the following code review comments on the pull request branch "${pr.branch}":\n\n${commentsText}\n\nMake any necessary code changes and ensure the changes are committed.`;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName: pr.branch,
+        taskDescription,
       });
 
       updateAgentSession(sessionId, { containerId, status: "running" });
       await startContainer(docker, containerId);
 
-      // Attach to container to send fix instructions
-      const bridge = new SubAgentBridge();
-      await bridge.attach(docker, containerId);
-
-      // Send fix instructions
-      bridge.send({
-        type: "fix",
-        comments: commentsText,
-      });
-
       // Wait for completion
       const completed = await this.waitForCompletion(docker, sessionId, containerId);
-
-      bridge.detach();
 
       if (!completed) {
         throw new Error("Fix-run timed out or container failed");
