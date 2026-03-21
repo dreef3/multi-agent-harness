@@ -97,7 +97,6 @@ export class TaskDispatcher {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName,
-        anthropicApiKeyPath: config.anthropicApiKeyPath,
       });
 
       // Update session with container ID

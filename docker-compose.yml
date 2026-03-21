@@ -6,6 +6,7 @@ services:
       - "3000:3000"
     volumes:
       - ./data:/app/data
+      - harness-pi-auth:/pi-agent
     env_file:
       - .env
     environment:
@@ -35,3 +36,7 @@ networks:
   harness-agents:
     driver: bridge
     internal: false
+
+volumes:
+  harness-pi-auth:
+    name: harness-pi-auth

@@ -1,4 +1,4 @@
-FROM node:20.18-slim AS builder
+FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Install build dependencies for native modules
@@ -8,14 +8,17 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-COPY package.json bun.lock* ./
-RUN npm install
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN bun run build
 
-FROM node:20.18-slim
+FROM oven/bun:1
 WORKDIR /app
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
-CMD ["node", "dist/index.js"]
+RUN mkdir -p /app/data /pi-agent && chown -R bun:bun /app /pi-agent
+ENV PI_CODING_AGENT_DIR=/pi-agent
+USER bun
+CMD ["bun", "dist/index.js"]

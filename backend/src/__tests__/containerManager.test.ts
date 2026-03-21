@@ -26,12 +26,12 @@ describe("containerManager", () => {
     const mockDocker = { createContainer: mockCreate };
     const id = await createSubAgentContainer(mockDocker as never, {
       sessionId: "sess-1", repoCloneUrl: "https://github.com/org/repo.git",
-      branchName: "agent/proj-1/task-1", anthropicApiKeyPath: "/secrets/api-key",
+      branchName: "agent/proj-1/task-1",
     });
     expect(id).toBe("container-abc");
     const callArg = mockCreate.mock.calls[0][0] as { Env: string[]; HostConfig: { Binds: string[] } };
     expect(callArg.Env).toContain("REPO_CLONE_URL=https://github.com/org/repo.git");
-    expect(callArg.HostConfig.Binds).toContain("/secrets/api-key:/run/secrets/api-key:ro");
+    expect(callArg.HostConfig.Binds.some((b: string) => b.endsWith(":/pi-agent"))).toBe(true);
   });
 
   it("starts a container", async () => {
