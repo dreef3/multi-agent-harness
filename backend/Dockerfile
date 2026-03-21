@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
 # Copy workspace config and lockfile from root context
 COPY bun.lock package.json ./
 COPY backend/package.json ./backend/
+COPY frontend/package.json ./frontend/
+COPY e2e-tests/package.json ./e2e-tests/
 
 # Install dependencies
 WORKDIR /app
