@@ -24,16 +24,18 @@ export interface Message {
 export interface Plan {
   id: string;
   projectId: string;
+  content?: string;
   tasks: Task[];
-  status: "draft" | "pending_approval" | "approved" | "rejected";
-  createdAt: string;
+  approved: boolean;
+  approvedAt?: string;
 }
 
 export interface Task {
   id: string;
+  repositoryId: string;
   description: string;
-  status: "pending" | "in_progress" | "completed" | "failed";
-  dependencies: string[];
+  status: "pending" | "executing" | "completed" | "failed" | "cancelled";
+  dependsOn?: string[];
 }
 
 export interface ModelConfig {
