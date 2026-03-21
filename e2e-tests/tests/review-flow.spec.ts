@@ -137,6 +137,12 @@ test.describe('Review Comment Fix-Run Flow', () => {
     const syncData = await syncRes.json() as { synced: number };
     expect(syncData.synced).toBeGreaterThan(0);
 
+    // Verify pending comments appeared (getPendingComments returns status='pending')
+    const pendingBeforeRes = await request.get(`${API_BASE}/pull-requests/${prId}`);
+    expect(pendingBeforeRes.ok()).toBe(true);
+    const pendingBefore = await pendingBeforeRes.json() as { comments: { status: string }[] };
+    expect(pendingBefore.comments.length).toBeGreaterThan(0);
+
     // ── 10. Trigger fix-run (blocks until container exits) ───────────────────
     // The endpoint awaits runFixRun inline, so a 200 means the container ran and comments are marked.
     const fixRes = await request.post(
@@ -147,12 +153,13 @@ test.describe('Review Comment Fix-Run Flow', () => {
     const fixData = await fixRes.json() as { success: boolean };
     expect(fixData.success).toBe(true);
 
-    // ── 11. Verify comments are "fixed" in harness ───────────────────────────
+    // ── 11. Verify comments are now "fixed" (no longer pending) ──────────────
+    // GET /:id returns getPendingComments (status='pending' only).
+    // After fix-run marks them 'fixed', the pending list should be empty.
     const prDetailRes = await request.get(`${API_BASE}/pull-requests/${prId}`);
     expect(prDetailRes.ok()).toBe(true);
     const prDetail = await prDetailRes.json() as { comments: { status: string }[] };
-    expect(prDetail.comments.length).toBeGreaterThan(0);
-    expect(prDetail.comments.every(c => c.status === 'fixed')).toBe(true);
+    expect(prDetail.comments.length).toBe(0); // all moved from pending → fixed
 
     // ── 12. Verify new commit pushed to PR branch ────────────────────────────
     await expect.poll(
