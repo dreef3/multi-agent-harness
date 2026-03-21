@@ -36,16 +36,22 @@ export interface Task {
   dependencies: string[];
 }
 
+export interface ModelConfig {
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
 export interface Settings {
-  masterAgent: {
-    model: string;
-    temperature: number;
-    maxTokens: number;
-  };
-  workerAgents: {
-    model: string;
-    temperature: number;
-    maxTokens: number;
+  masterAgent: ModelConfig;
+  workerAgents: ModelConfig;
+}
+
+export interface Config {
+  provider: string;
+  models: {
+    masterAgent: ModelConfig;
+    workerAgent: ModelConfig;
   };
 }
 
@@ -64,6 +70,7 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   health: () => fetchJson<{ status: string; timestamp: string }>(`${API_BASE}/health`),
+  config: () => fetchJson<Config>(`${API_BASE}/config`),
   projects: {
     list: () => fetchJson<Project[]>(`${API_BASE}/projects`),
     get: (id: string) => fetchJson<Project>(`${API_BASE}/projects/${id}`),

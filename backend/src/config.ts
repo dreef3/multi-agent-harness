@@ -29,4 +29,47 @@ export const config = {
   agentProvider: process.env.AGENT_PROVIDER ?? "opencode-go", // Only OpenCode Go is supported
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
+  
+  // Provider-specific model configuration
+  models: {
+    // Pi agent provider (uses Claude models via Anthropic)
+    pi: {
+      masterAgent: {
+        model: "claude-3-opus",
+        temperature: 0.7,
+        maxTokens: 4096,
+      },
+      workerAgent: {
+        model: "claude-3-haiku",
+        temperature: 0.5,
+        maxTokens: 2048,
+      },
+    },
+    // OpenCode Go provider (uses OpenCode models)
+    "opencode-go": {
+      masterAgent: {
+        model: "opencode-go",
+        temperature: 0.7,
+        maxTokens: 4096,
+      },
+      workerAgent: {
+        model: "opencode-go",
+        temperature: 0.5,
+        maxTokens: 2048,
+      },
+    },
+    // OpenCode Zen provider (uses OpenCode models)
+    "opencode-zen": {
+      masterAgent: {
+        model: "opencode-zen",
+        temperature: 0.7,
+        maxTokens: 4096,
+      },
+      workerAgent: {
+        model: "opencode-zen",
+        temperature: 0.5,
+        maxTokens: 2048,
+      },
+    },
+  },
 };

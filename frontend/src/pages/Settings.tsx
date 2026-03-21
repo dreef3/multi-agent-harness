@@ -1,25 +1,39 @@
 import { useEffect, useState } from "react";
-import { api, Settings as SettingsType } from "../lib/api";
+import { api, Config, ModelConfig } from "../lib/api";
+
+interface Settings {
+  masterAgent: ModelConfig;
+  workerAgents: ModelConfig;
+}
 
 export default function Settings() {
-  const [settings, setSettings] = useState<SettingsType | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [config, setConfig] = useState<Config | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    loadSettings();
+    loadConfig();
   }, []);
 
-  async function loadSettings() {
+  async function loadConfig() {
     try {
-      // Settings endpoint not implemented - use defaults
+      const backendConfig = await api.config();
+      setConfig(backendConfig);
+      
+      // Initialize settings from backend config
       setSettings({
-        masterAgent: { model: "claude-3-opus", temperature: 0.7, maxTokens: 4096 },
-        workerAgents: { model: "claude-3-haiku", temperature: 0.5, maxTokens: 2048 },
+        masterAgent: { ...backendConfig.models.masterAgent },
+        workerAgents: { ...backendConfig.models.workerAgent },
       });
     } catch (err) {
-      console.error("Failed to load settings:", err);
+      console.error("Failed to load config:", err);
+      // Fallback to defaults if backend is unavailable
+      setSettings({
+        masterAgent: { model: "opencode-go", temperature: 0.7, maxTokens: 4096 },
+        workerAgents: { model: "opencode-go", temperature: 0.5, maxTokens: 2048 },
+      });
     } finally {
       setLoading(false);
     }
@@ -43,9 +57,23 @@ export default function Settings() {
   if (loading) return <div className="text-gray-400">Loading...</div>;
   if (!settings) return <div className="text-gray-400">Failed to load settings</div>;
 
+  const isOpenCodeProvider = config?.provider?.startsWith("opencode");
+  const providerLabel = config?.provider ?? "opencode-go";
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold">Settings</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Settings</h1>
+        <div className="text-sm text-gray-400">
+          Provider: <span className="text-blue-400 font-medium">{providerLabel}</span>
+        </div>
+      </div>
+
+      {isOpenCodeProvider && (
+        <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-4 text-sm text-blue-200">
+          Using OpenCode provider. Models are managed by the OpenCode agent.
+        </div>
+      )}
 
       {message && (
         <div
@@ -69,14 +97,22 @@ export default function Settings() {
             <input
               type="text"
               value={settings.masterAgent.model}
+              disabled={isOpenCodeProvider}
               onChange={(e) =>
                 setSettings({
                   ...settings,
                   masterAgent: { ...settings.masterAgent, model: e.target.value },
                 })
               }
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 ${
+                isOpenCodeProvider ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             />
+            {isOpenCodeProvider && (
+              <p className="text-xs text-gray-500 mt-1">
+                Model is managed by OpenCode provider
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">
@@ -132,14 +168,22 @@ export default function Settings() {
             <input
               type="text"
               value={settings.workerAgents.model}
+              disabled={isOpenCodeProvider}
               onChange={(e) =>
                 setSettings({
                   ...settings,
                   workerAgents: { ...settings.workerAgents, model: e.target.value },
                 })
               }
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              className={`w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500 ${
+                isOpenCodeProvider ? "opacity-50 cursor-not-allowed" : ""
+              }`}
             />
+            {isOpenCodeProvider && (
+              <p className="text-xs text-gray-500 mt-1">
+                Model is managed by OpenCode provider
+              </p>
+            )}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1">
