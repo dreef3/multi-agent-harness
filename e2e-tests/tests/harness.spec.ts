@@ -25,7 +25,7 @@ test.describe('Multi-Agent Harness E2E', () => {
     await page.getByRole('button', { name: /create project/i }).click();
     
     // Wait to be redirected to the chat page
-    await expect(page).toHaveURL(/\/projects\/\d+\/chat/);
+    await expect(page).toHaveURL(/\/projects\/[\w-]+\/chat/);
     
     // Wait for chat interface to load
     await expect(page.getByPlaceholder(/type your message/i)).toBeVisible({ timeout: 10000 });

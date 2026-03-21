@@ -19,7 +19,7 @@ function send(ws: WebSocket, msg: WsServerMessage) {
 }
 
 export function setupWebSocket(server: Server, dataDir: string): void {
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ server });
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
     const match = /\/ws\/projects\/([^/]+)\/chat/.exec(req.url ?? "");
     if (!match) { ws.close(4000, "Invalid URL"); return; }
