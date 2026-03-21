@@ -1,5 +1,5 @@
 import { EventEmitter } from "events";
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager, SettingsManager } from "@mariozechner/pi-coding-agent";
 import path from "path";
 
 interface PiEvent {
@@ -16,7 +16,12 @@ export class MasterAgent extends EventEmitter {
 
   async init(): Promise<void> {
     const sessionDir = path.dirname(this.sessionFilePath);
-    const { session } = await createAgentSession({ sessionManager: SessionManager.create(sessionDir, sessionDir) });
+    // Use in-memory settings to skip npm package resolution (which makes slow network calls)
+    const settingsManager = SettingsManager.inMemory();
+    const { session } = await createAgentSession({
+      sessionManager: SessionManager.create(sessionDir, sessionDir),
+      settingsManager,
+    });
     session.subscribe((event: unknown) => {
       const e = event as PiEvent;
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && e.assistantMessageEvent.delta) {
