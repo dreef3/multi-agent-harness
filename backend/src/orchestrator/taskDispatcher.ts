@@ -109,6 +109,9 @@ export class TaskDispatcher {
       console.log(`[taskDispatcher] Starting container ${containerId}`);
       await startContainer(docker, containerId);
 
+      // Stream container logs to backend stdout for observability
+      this.streamContainerLogs(docker, containerId, `task-${task.id.slice(0, 8)}`);
+
       // Wait for completion
       console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
       const completed = await this.waitForCompletion(docker, sessionId, containerId);
@@ -335,6 +338,9 @@ export class TaskDispatcher {
       updateAgentSession(sessionId, { containerId, status: "running" });
       await startContainer(docker, containerId);
 
+      // Stream container logs to backend stdout for observability
+      this.streamContainerLogs(docker, containerId, `fix-${sessionId.slice(0, 8)}`);
+
       // Wait for completion
       const completed = await this.waitForCompletion(docker, sessionId, containerId);
 
@@ -373,6 +379,35 @@ export class TaskDispatcher {
         }
       }
     }
+  }
+
+  /**
+   * Stream container stdout/stderr to backend process stdout for observability.
+   */
+  private streamContainerLogs(docker: Dockerode, containerId: string, label: string): void {
+    docker.getContainer(containerId).logs(
+      { follow: true, stdout: true, stderr: true, timestamps: false },
+      (err, stream) => {
+        if (err || !stream) return;
+        docker.modem.demuxStream(
+          stream as NodeJS.ReadableStream,
+          {
+            write: (chunk: Buffer) => {
+              for (const line of chunk.toString().split("\n")) {
+                if (line.trim()) console.log(`[container:${label}] ${line}`);
+              }
+            },
+          } as NodeJS.WritableStream,
+          {
+            write: (chunk: Buffer) => {
+              for (const line of chunk.toString().split("\n")) {
+                if (line.trim()) console.error(`[container:${label}] ${line}`);
+              }
+            },
+          } as NodeJS.WritableStream
+        );
+      }
+    );
   }
 
   /**
