@@ -41,8 +41,8 @@ test.describe('Repository Configuration Flow', () => {
     await page.locator('button:has-text("E2E Test Repo")').first().click();
     await page.keyboard.press('Escape'); // Close dropdown
 
-    // Verify repository is selected
-    await expect(page.getByText('E2E Test Repo')).toBeVisible();
+    // Verify repository is selected (check the tag is visible)
+    await expect(page.locator('span:has-text("E2E Test Repo")').first()).toBeVisible();
 
     // 4. Create project
     await page.getByRole('button', { name: /create project/i }).click();
