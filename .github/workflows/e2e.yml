@@ -121,6 +121,7 @@ jobs:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
           AGENT_PROVIDER: opencode-go
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
         run: bunx playwright test
 

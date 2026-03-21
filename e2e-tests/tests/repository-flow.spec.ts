@@ -17,7 +17,9 @@ test.describe('Repository Configuration Flow', () => {
     );
     if (branchRes.ok) {
       const branches = await branchRes.json();
-      initialBranchNames = (branches as { name: string }[]).map(b => b.name);
+      if (Array.isArray(branches)) {
+        initialBranchNames = (branches as { name: string }[]).map(b => b.name);
+      }
     }
 
     // Seed test repository via API
