@@ -144,7 +144,7 @@ export interface SettingsInfo {
 
 - [ ] **Step 2: Update repositories API methods and add settings**
 
-Update the `repositories` object in the `api` object (replacing the existing `repositories` property) and add a new `settings` property after it:
+**Modify** the existing `repositories` object in the `api` object to use typed parameters, and **add** a new `settings` property after it. The changes go in the `api` object defined near line 71 of the file:
 
 ```typescript
   repositories: {
@@ -408,13 +408,21 @@ git commit -m "feat(frontend): repository form component"
 
 Modify `frontend/src/pages/Settings.tsx` to add repository management.
 
-**Update imports** - modify line 1 to add Repository and add RepositoryForm import:
-
+**Update imports** - the existing import on line 2 is:
 ```typescript
-// Existing import: import { useEffect, useState } from "react";
+import { api, Config, ModelConfig } from "../lib/api";
+```
+Change it to:
+```typescript
 import { api, Config, ModelConfig, Repository } from "../lib/api";
+```
+
+And add the RepositoryForm import after it:
+```typescript
 import RepositoryForm from "../components/RepositoryForm";
 ```
+
+(Line 1's `import { useEffect, useState } from "react";` stays unchanged.)
 
 **Add state for repositories** (inside Settings component):
 const [repositories, setRepositories] = useState<Repository[]>([]);
@@ -807,44 +815,45 @@ git commit -m "feat(frontend): add repository multi-select to NewProject page"
 
 ---
 
-### Task 6: Backend — Handle repositoryIds on Project Creation
+### Task 6: Backend — Verify repositoryIds Support (Already Implemented)
 
 **Files:**
-- Modify: `backend/src/api/projects.ts`
+- Check: `backend/src/api/projects.ts`
+- Check: `backend/src/store/projects.ts`
 
-- [ ] **Step 1: Verify projects API already supports repositoryIds**
+**Note:** The existing `Project` model already has `repositoryIds: string[]`. This task is verification-only and can be skipped if the code is already correct.
 
-The existing `Project` model already has `repositoryIds: string[]` and the store should already handle it. Check `backend/src/api/projects.ts` and `backend/src/store/projects.ts` to confirm.
+- [ ] **Step 1: Verify projects API accepts repositoryIds**
 
-If the projects API doesn't include repositoryIds in the create payload, add it:
+Check `backend/src/api/projects.ts` POST handler. If it destructures `repositoryIds` from the request body and includes it in the Project creation, this is already implemented.
+
+If NOT implemented, add `repositoryIds` extraction and include it in the project object:
 
 ```typescript
-// In createProject handler, ensure repositoryIds is included:
+const { name, description, repositoryIds } = req.body;
+// ...
 const project: Project = {
   id: randomUUID(),
   name,
   status: "brainstorming",
-  source: source ?? { type: "freeform" },
+  source: source ?? { type: "freeform", freeformDescription: description },
   repositoryIds: repositoryIds ?? [],
-  // ... rest
+  // ... rest of fields
 };
 ```
 
 - [ ] **Step 2: Verify the store handles repositoryIds**
 
-Check `backend/src/store/projects.ts` to ensure `repositoryIds` is stored as JSON.
+Check `backend/src/store/projects.ts`. If it stores `repositoryIds` as JSON (in `repository_ids` column), this is already implemented.
 
 - [ ] **Step 3: Verify TypeScript compiles**
 
 Run: `cd backend && npx tsc --noEmit`
 Expected: no errors
 
-- [ ] **Step 4: Commit if changes were needed, otherwise skip**
+- [ ] **Step 4: Skip commit if no changes needed**
 
-```bash
-git add backend/src/api/projects.ts backend/src/store/projects.ts
-git commit -m "feat(backend): ensure repositoryIds handled on project creation"
-```
+If repositoryIds is already handled, no commit needed for this task.
 
 ---
 
@@ -1050,13 +1059,37 @@ GITHUB_TOKEN=your_token bun run test:repo
 - [ ] **Step 5: Commit**
 
 ```bash
-git add e2e-tests/tests/repository-flow.spec.ts e2e-tests/playwright.config.ts e2e-tests/package.json
+git add e2e-tests/tests/repository-flow.spec.ts e2e-tests/playwright.config.ts e2e-tests/package.json e2e-tests/README.md
 git commit -m "feat(e2e): add repository configuration flow E2E test"
 ```
 
 ---
 
-### Task 8: Integration Test — Manual Verification
+### Task 8: Update .env.example
+
+**Files:**
+- Modify: `.env.example`
+
+- [ ] **Step 1: Add test repository variables to .env.example**
+
+The existing `.env.example` already documents `GITHUB_TOKEN` and `BITBUCKET_TOKEN`. Add documentation for the E2E test variables if not present:
+
+```bash
+# E2E Test Repository (optional - defaults to dreef3/multi-agent-harness-test-repo)
+TEST_REPO_OWNER=dreef3
+TEST_REPO_NAME=multi-agent-harness-test-repo
+```
+
+- [ ] **Step 2: Commit**
+
+```bash
+git add .env.example
+git commit -m "docs: add test repository variables to .env.example"
+```
+
+---
+
+### Task 9: Integration Test — Manual Verification
 
 **Files:** None (manual testing)
 
@@ -1100,6 +1133,9 @@ Expected: Test passes with PR created
 1. Backend: Settings endpoint for provider credential status
 2. Frontend: Repository management in Settings page
 3. Frontend: Repository multi-select in NewProject page
-4. Backend: Ensure repositoryIds handled on project creation5. E2E: Full flow test from project creation to PR creation
+4. Frontend: API client types for Repository and Settings
+5. Backend: Verify repositoryIds handled on project creation
+6. E2E: Full flow test from project creation to PR creation
+7. E2E: Test documentation and environment variables
 
 All changes are additive — no breaking changes to existing functionality.
