@@ -4,7 +4,7 @@ import type { PlanTask, Repository } from "../models/types.js";
 export function parsePlan(projectId: string, markdown: string, repositories: Pick<Repository, "id" | "name">[]): PlanTask[] {
   const repoByName = new Map(repositories.map((r) => [r.name.toLowerCase(), r.id]));
   const tasks: PlanTask[] = [];
-  const taskBlockRegex = /^###\s+Task\s+\d+:\s+.+?\n([\s\S]*?)(?=^###\s+Task\s+\d+:|$)/gm;
+  const taskBlockRegex = /^###\s+Task\s+\d+:\s+.+?\n([\s\S]*?)(?=^###\s+Task\s+\d+:|(?![\s\S]))/gm;
   for (const match of markdown.matchAll(taskBlockRegex)) {
     const block = match[0];
     const repoMatch = /\*\*Repository:\*\*\s+(.+)/i.exec(block);

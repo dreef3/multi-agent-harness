@@ -62,8 +62,16 @@ jobs:
         working-directory: ./e2e-tests
         run: bun install
 
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e-tests/package.json') }}
+
       - name: Install Playwright browsers
         working-directory: ./e2e-tests
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: bunx playwright install --with-deps
 
       - name: Run E2E tests with OpenCode Go
