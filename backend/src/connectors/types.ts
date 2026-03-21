@@ -1,4 +1,6 @@
 import type { Repository, VcsComment } from "../models/types.js";
+import { GitHubConnector } from "./github.js";
+import { BitbucketConnector } from "./bitbucket.js";
 
 export interface CreatePullRequestParams {
   title: string;
@@ -58,14 +60,10 @@ export class ConnectorError extends Error {
 
 export function getConnector(provider: string): VcsConnector {
   switch (provider) {
-    case "github": {
-      const { GitHubConnector } = require("./github.js");
+    case "github":
       return new GitHubConnector();
-    }
-    case "bitbucket-server": {
-      const { BitbucketConnector } = require("./bitbucket.js");
+    case "bitbucket-server":
       return new BitbucketConnector();
-    }
     default:
       throw new ConnectorError(`Unsupported provider: ${provider}`, provider);
   }
