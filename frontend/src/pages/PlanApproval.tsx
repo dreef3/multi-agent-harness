@@ -122,7 +122,7 @@ export default function PlanApproval() {
         )}
       </div>
 
-      {plan.status === "pending_approval" && (
+      {!plan.approved && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
           <h2 className="text-lg font-semibold">Feedback (optional for reject)</h2>
           <textarea

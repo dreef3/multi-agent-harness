@@ -69,15 +69,9 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
       await agent.prompt(msg.text);
       if (fullResponse) {
         appendMessage(projectId, "assistant", fullResponse);
-        const hasPlanMarkers = fullResponse.includes("### Task") && fullResponse.includes("**Repository:**");
-        console.log(`[ws] response length=${fullResponse.length} hasPlanMarkers=${hasPlanMarkers}`);
-        if (!hasPlanMarkers) {
-          console.log(`[ws] response preview: ${fullResponse.slice(0, 500)}`);
-        }
-        if (hasPlanMarkers) {
+        if (fullResponse.includes("### Task") && fullResponse.includes("**Repository:**")) {
           const repos = listRepositories();
           const tasks = parsePlan(projectId, fullResponse, repos);
-          console.log(`[ws] parsePlan found ${tasks.length} tasks`);
           if (tasks.length > 0) {
             const plan = { id: randomUUID(), projectId, content: fullResponse, tasks, approved: false };
             updateProject(projectId, { plan, status: "awaiting_approval" });
