@@ -6,6 +6,7 @@ import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { TaskDispatcher } from "../orchestrator/taskDispatcher.js";
+import { preInitAgent } from "./websocket.js";
 
 export function createProjectsRouter(docker: Dockerode): Router {
   const router = Router();
@@ -51,6 +52,8 @@ export function createProjectsRouter(docker: Dockerode): Router {
     };
 
     insertProject(project);
+    // Start agent initialization in background so it's ready when the WS connects
+    preInitAgent(project.id);
     res.status(201).json(project);
   });
 

@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
-import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager, SettingsManager, DefaultResourceLoader, ModelRegistry, AuthStorage } from "@mariozechner/pi-coding-agent";
 import path from "path";
+import { config } from "../config.js";
 
 interface PiEvent {
   type: string;
@@ -16,7 +17,33 @@ export class MasterAgent extends EventEmitter {
 
   async init(): Promise<void> {
     const sessionDir = path.dirname(this.sessionFilePath);
-    const { session } = await createAgentSession({ sessionManager: SessionManager.create(sessionDir, sessionDir) });
+    // Use in-memory settings to skip npm package resolution (which makes slow network calls)
+    const settingsManager = SettingsManager.inMemory();
+    // Pre-build a resource loader without calling reload() to skip all network I/O.
+    // createAgentSession only calls reload() when it creates the resource loader itself;
+    // if we pass one pre-built, it skips that slow initialization entirely.
+    const resourceLoader = new DefaultResourceLoader({
+      settingsManager,
+      noExtensions: true,
+      noSkills: true,
+      noPromptTemplates: true,
+      noThemes: true,
+    });
+    // Resolve the model explicitly to skip findInitialModel() network checks.
+    // Use provider+model from config so it's configurable per deployment.
+    const authStorage = AuthStorage.create();
+    const modelRegistry = new ModelRegistry(authStorage);
+    const provider = config.agentProvider;
+    const providerModels = config.models[provider as keyof typeof config.models];
+    const modelId = providerModels?.masterAgent?.model;
+    const model = modelId ? modelRegistry.find(provider, modelId) : undefined;
+    const { session } = await createAgentSession({
+      sessionManager: SessionManager.create(sessionDir, sessionDir),
+      settingsManager,
+      resourceLoader,
+      modelRegistry,
+      ...(model ? { model } : {}),
+    });
     session.subscribe((event: unknown) => {
       const e = event as PiEvent;
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && e.assistantMessageEvent.delta) {

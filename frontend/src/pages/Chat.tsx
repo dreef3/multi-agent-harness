@@ -11,6 +11,7 @@ export default function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -18,12 +19,14 @@ export default function Chat() {
     wsClient.setProjectId(id);
     loadMessages();
     wsClient.connect();
-    
+
     const unsubscribe = wsClient.onMessage((data) => {
       if (data && typeof data === "object" && "type" in data) {
-        const msg = data as { type: string; payload?: Message };
-        if (msg.type === "message" && msg.payload) {
-          setMessages((prev) => [...prev, msg.payload!]);
+        const msg = data as { type: string; text?: string; payload?: Message };
+        if (msg.type === "delta" && msg.text) {
+          setStreamingContent((prev) => prev + msg.text);
+        } else if (msg.type === "message_complete") {
+          loadMessages().then(() => setStreamingContent(""));
         } else if (msg.type === "plan_ready") {
           navigate(`/projects/${id}/plan`);
         }
@@ -91,34 +94,46 @@ export default function Chat() {
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-4 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        {messages.length === 0 ? (
+        {messages.length === 0 && !streamingContent ? (
           <div className="text-gray-500 text-center py-8">
             No messages yet. Start the conversation!
           </div>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex ${
-                msg.role === "user" ? "justify-end" : "justify-start"
-              }`}
-            >
+          <>
+            {messages.map((msg) => (
               <div
-                className={`max-w-[80%] rounded-lg px-4 py-2 ${
-                  msg.role === "user"
-                    ? "bg-blue-600 text-white"
-                    : "bg-gray-800 text-gray-100"
+                key={msg.id}
+                className={`flex ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
                 }`}
               >
-                <div className="text-xs text-gray-400 mb-1">
-                  {msg.role === "user" ? "You" : "Assistant"}
-                </div>
-                <div className="prose prose-invert prose-sm max-w-none">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
+                <div
+                  className={`max-w-[80%] rounded-lg px-4 py-2 ${
+                    msg.role === "user"
+                      ? "bg-blue-600 text-white"
+                      : "bg-gray-800 text-gray-100"
+                  }`}
+                >
+                  <div className="text-xs text-gray-400 mb-1">
+                    {msg.role === "user" ? "You" : "Assistant"}
+                  </div>
+                  <div className="prose prose-invert prose-sm max-w-none">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            ))}
+            {streamingContent && (
+              <div className="flex justify-start">
+                <div className="max-w-[80%] rounded-lg px-4 py-2 bg-gray-800 text-gray-100">
+                  <div className="text-xs text-gray-400 mb-1">Assistant</div>
+                  <div className="prose prose-invert prose-sm max-w-none whitespace-pre-wrap">
+                    {streamingContent}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
         <div ref={messagesEndRef} />
       </div>

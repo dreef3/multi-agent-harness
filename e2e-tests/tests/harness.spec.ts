@@ -9,23 +9,23 @@ test.describe('Multi-Agent Harness E2E', () => {
     await expect(page.getByText('Multi-Agent Harness')).toBeVisible();
     
     // Click on "New Project" link
-    await page.getByRole('link', { name: /\+ new project/i }).click();
+    await page.getByRole('main').getByRole('link', { name: /\+ new project/i }).click();
     
     // Wait for the new project form
     await expect(page.getByRole('heading', { name: /create new project/i })).toBeVisible();
     
     // Fill in project details
     const projectName = `E2E Test Project ${Date.now()}`;
-    await page.getByLabel(/project name/i).fill(projectName);
-    
+    await page.getByPlaceholder(/my awesome project/i).fill(projectName);
+
     // Fill in description with a free form request
-    await page.getByLabel(/description/i).fill('Please analyze the codebase structure and tell me what you find');
+    await page.getByPlaceholder(/what do you want to build/i).fill('Please analyze the codebase structure and tell me what you find');
     
     // Submit the form
     await page.getByRole('button', { name: /create project/i }).click();
     
     // Wait to be redirected to the chat page
-    await expect(page).toHaveURL(/\/projects\/\d+\/chat/);
+    await expect(page).toHaveURL(/\/projects\/[\w-]+\/chat/);
     
     // Wait for chat interface to load
     await expect(page.getByPlaceholder(/type your message/i)).toBeVisible({ timeout: 10000 });
@@ -43,7 +43,7 @@ test.describe('Multi-Agent Harness E2E', () => {
     // Wait for agent response (with longer timeout since it involves AI)
     // The assistant messages have bg-gray-800 class
     const assistantMessages = page.locator('.bg-gray-800');
-    await expect(assistantMessages.first()).toBeVisible({ timeout: 120000 });
+    await expect(assistantMessages.first()).toBeVisible();
     
     // Verify the response contains some content
     const responseText = await assistantMessages.first().textContent();

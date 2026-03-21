@@ -25,6 +25,8 @@ export const config = {
   subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "3", 10),
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
+  // Named Docker volume shared between backend and sub-agents for pi agent auth (OAuth tokens)
+  piAgentVolume: process.env.PI_AGENT_VOLUME ?? "harness-pi-auth",
   // Agent provider configuration for E2E tests
   agentProvider: process.env.AGENT_PROVIDER ?? "opencode-go", // Only OpenCode Go is supported
   opencodeApiKey: process.env.OPENCODE_API_KEY,
@@ -48,12 +50,12 @@ export const config = {
     // OpenCode Go provider (uses OpenCode models)
     "opencode-go": {
       masterAgent: {
-        model: "opencode-go",
+        model: "minimax-m2.7",
         temperature: 0.7,
         maxTokens: 4096,
       },
       workerAgent: {
-        model: "opencode-go",
+        model: "minimax-m2.7",
         temperature: 0.5,
         maxTokens: 2048,
       },

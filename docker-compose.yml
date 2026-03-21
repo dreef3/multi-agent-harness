@@ -1,10 +1,12 @@
 services:
   backend:
     build: ./backend
+    image: multi-agent-harness/backend:latest
     ports:
       - "3000:3000"
     volumes:
-      - ./data:/app/data
+      - harness-data:/app/data
+      - harness-pi-auth:/pi-agent
     env_file:
       - .env
     environment:
@@ -24,8 +26,9 @@ services:
 
   frontend:
     build: ./frontend
+    image: multi-agent-harness/frontend:latest
     ports:
-      - "0:80"
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       - backend
 
@@ -33,3 +36,9 @@ networks:
   harness-agents:
     driver: bridge
     internal: false
+
+volumes:
+  harness-data:
+    name: harness-data
+  harness-pi-auth:
+    name: harness-pi-auth
