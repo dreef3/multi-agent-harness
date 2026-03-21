@@ -27,7 +27,7 @@ services:
     build: ./frontend
     image: multi-agent-harness/frontend:latest
     ports:
-      - "0:80"
+      - "${FRONTEND_PORT:-8080}:80"
     depends_on:
       - backend
 

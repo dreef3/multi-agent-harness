@@ -21,7 +21,16 @@ const mocks = vi.hoisted(() => {
   const mockSettingsManager = { inMemory: vi.fn().mockReturnValue(mockSettingsManagerInstance) };
   const mockResourceLoaderInstance = { type: "resource-loader" };
   const MockDefaultResourceLoader = vi.fn().mockImplementation(() => mockResourceLoaderInstance);
-  return { mockSession, mockCreateAgentSession, mockSessionManager, mockSettingsManager, MockDefaultResourceLoader, mockResourceLoaderInstance };
+  const mockAuthStorageInstance = { type: "auth-storage" };
+  const mockAuthStorage = { create: vi.fn().mockReturnValue(mockAuthStorageInstance) };
+  const mockModelInstance = { id: "minimax-m2.7", provider: "opencode-go" };
+  const mockModelRegistryInstance = { find: vi.fn().mockReturnValue(mockModelInstance) };
+  const MockModelRegistry = vi.fn().mockImplementation(() => mockModelRegistryInstance);
+  return {
+    mockSession, mockCreateAgentSession, mockSessionManager,
+    mockSettingsManager, MockDefaultResourceLoader, mockResourceLoaderInstance,
+    mockAuthStorage, MockModelRegistry, mockModelRegistryInstance, mockModelInstance,
+  };
 });
 
 vi.mock("@mariozechner/pi-coding-agent", () => ({
@@ -29,6 +38,8 @@ vi.mock("@mariozechner/pi-coding-agent", () => ({
   SessionManager: mocks.mockSessionManager,
   SettingsManager: mocks.mockSettingsManager,
   DefaultResourceLoader: mocks.MockDefaultResourceLoader,
+  AuthStorage: mocks.mockAuthStorage,
+  ModelRegistry: mocks.MockModelRegistry,
 }));
 
 describe("MasterAgent", () => {
@@ -48,6 +59,8 @@ describe("MasterAgent", () => {
       sessionManager: { type: "file" },
       settingsManager: { type: "in-memory" },
       resourceLoader: mocks.mockResourceLoaderInstance,
+      modelRegistry: mocks.mockModelRegistryInstance,
+      model: mocks.mockModelInstance,
     });
     agent.dispose();
   });

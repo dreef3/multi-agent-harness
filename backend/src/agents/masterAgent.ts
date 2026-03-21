@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
-import { createAgentSession, SessionManager, SettingsManager, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager, SettingsManager, DefaultResourceLoader, ModelRegistry, AuthStorage } from "@mariozechner/pi-coding-agent";
 import path from "path";
+import { config } from "../config.js";
 
 interface PiEvent {
   type: string;
@@ -28,10 +29,20 @@ export class MasterAgent extends EventEmitter {
       noPromptTemplates: true,
       noThemes: true,
     });
+    // Resolve the model explicitly to skip findInitialModel() network checks.
+    // Use provider+model from config so it's configurable per deployment.
+    const authStorage = AuthStorage.create();
+    const modelRegistry = new ModelRegistry(authStorage);
+    const provider = config.agentProvider;
+    const providerModels = config.models[provider as keyof typeof config.models];
+    const modelId = providerModels?.masterAgent?.model;
+    const model = modelId ? modelRegistry.find(provider, modelId) : undefined;
     const { session } = await createAgentSession({
       sessionManager: SessionManager.create(sessionDir, sessionDir),
       settingsManager,
       resourceLoader,
+      modelRegistry,
+      ...(model ? { model } : {}),
     });
     session.subscribe((event: unknown) => {
       const e = event as PiEvent;

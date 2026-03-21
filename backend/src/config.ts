@@ -48,12 +48,12 @@ export const config = {
     // OpenCode Go provider (uses OpenCode models)
     "opencode-go": {
       masterAgent: {
-        model: "opencode-go",
+        model: "minimax-m2.7",
         temperature: 0.7,
         maxTokens: 4096,
       },
       workerAgent: {
-        model: "opencode-go",
+        model: "minimax-m2.7",
         temperature: 0.5,
         maxTokens: 2048,
       },

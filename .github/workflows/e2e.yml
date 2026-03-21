@@ -7,6 +7,10 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   e2e-opencode-go:
     name: E2E with OpenCode Go
@@ -33,6 +37,7 @@ jobs:
           JIRA_TOKEN=
           BITBUCKET_BASE_URL=
           BITBUCKET_TOKEN=
+          FRONTEND_PORT=0
           EOF
 
       - name: Build backend image
