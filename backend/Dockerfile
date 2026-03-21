@@ -1,6 +1,6 @@
 FROM oven/bun:1 AS bun-binary
 
-FROM node:20.18-slim AS builder
+FROM node:24-slim AS builder
 # Copy bun binary for lockfile-aware installs while keeping node for native module compilation
 COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
@@ -17,7 +17,7 @@ RUN bun install
 COPY . .
 RUN bun run build
 
-FROM node:20.18-slim
+FROM node:24-slim
 WORKDIR /app
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/dist ./dist
