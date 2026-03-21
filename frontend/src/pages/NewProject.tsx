@@ -57,6 +57,11 @@ export default function NewProject() {
   const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
   const [repoLoading, setRepoLoading] = useState(true);
   const [showRepoDropdown, setShowRepoDropdown] = useState(false);
+
+  // GitHub Issues are only valid when all selected repos are GitHub-hosted
+  const selectedRepos = repositories.filter(r => selectedRepoIds.includes(r.id));
+  const hasNonGithubRepo = selectedRepos.some(r => r.provider !== "github");
+  const canUseGhIssues = selectedRepoIds.length === 0 || !hasNonGithubRepo;
   
   useEffect(() => {
     loadRepositories();
@@ -104,9 +109,12 @@ export default function NewProject() {
         finalDescription = `${finalDescription}\n\nGitHub Issues:\n${ghContext}`;
       }
 
-      const source = selectedGhIssues.length > 0
-        ? { type: "github" as const, githubIssues: selectedGhIssues, freeformDescription: finalDescription.trim() }
-        : { type: "freeform" as const, freeformDescription: finalDescription.trim() };
+      const source =
+        selectedGhIssues.length > 0
+          ? { type: "github" as const, githubIssues: selectedGhIssues, freeformDescription: finalDescription.trim() }
+          : selectedIssues.length > 0
+          ? { type: "jira" as const, jiraTickets: selectedIssues, freeformDescription: finalDescription.trim() }
+          : { type: "freeform" as const, freeformDescription: finalDescription.trim() };
 
       const project = await api.projects.create({
         name: name.trim(),
@@ -250,15 +258,32 @@ export default function NewProject() {
             <div className="flex gap-3">
               <button
                 type="button"
-                onClick={() => setShowJiraPicker(!showJiraPicker)}
+                onClick={() => {
+                  setShowJiraPicker(!showJiraPicker);
+                  if (!showJiraPicker) {
+                    setShowGhPicker(false);
+                    setSelectedGhIssues([]);
+                    setGhIssues([]);
+                  }
+                }}
                 className="text-xs text-blue-400 hover:text-blue-300"
               >
                 {showJiraPicker ? "Hide JIRA Picker" : "+ Add JIRA Tickets"}
               </button>
               <button
                 type="button"
-                onClick={() => setShowGhPicker(!showGhPicker)}
-                className="text-xs text-purple-400 hover:text-purple-300"
+                onClick={() => {
+                  if (!canUseGhIssues) return;
+                  setShowGhPicker(!showGhPicker);
+                  if (!showGhPicker) {
+                    setShowJiraPicker(false);
+                    setSelectedIssues([]);
+                    setJiraIssues([]);
+                  }
+                }}
+                disabled={!canUseGhIssues}
+                title={hasNonGithubRepo ? "GitHub Issues are only available when all selected repositories are hosted on GitHub" : undefined}
+                className={`text-xs ${canUseGhIssues ? "text-purple-400 hover:text-purple-300" : "text-gray-600 cursor-not-allowed"}`}
               >
                 {showGhPicker ? "Hide GitHub Issues" : "+ Add GitHub Issues"}
               </button>
