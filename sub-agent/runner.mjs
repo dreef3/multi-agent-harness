@@ -106,19 +106,23 @@ try {
   console.error("[sub-agent] AI agent error:", err.message);
 }
 
-// Fallback: if AI didn't write files, create a marker so there's something to commit
-if (!aiSucceeded) {
-  writeFileSync(
-    "task-output.md",
-    `# Task Output\n\nTask: ${TASK_DESCRIPTION}\n\nNote: AI agent unavailable; placeholder created.\nCompleted at: ${new Date().toISOString()}\n`
-  );
-}
-
 // ── Commit & push ─────────────────────────────────────────────────────────────
 try {
   git("add", "-A");
   const diff = execSync("git diff --cached --stat").toString().trim();
-  if (diff) {
+  if (!diff) {
+    // No staged changes — create a marker so there's always something to commit
+    const note = aiSucceeded
+      ? "AI agent completed but made no file changes."
+      : "AI agent unavailable; placeholder created.";
+    writeFileSync(
+      "task-output.md",
+      `# Task Output\n\nTask: ${TASK_DESCRIPTION}\n\nNote: ${note}\nCompleted at: ${new Date().toISOString()}\n`
+    );
+    git("add", "-A");
+  }
+  const finalDiff = execSync("git diff --cached --stat").toString().trim();
+  if (finalDiff) {
     git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
     git("push", "origin", BRANCH_NAME);
     console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
