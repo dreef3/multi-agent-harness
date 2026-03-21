@@ -65,7 +65,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
           tasks: [{
             id: taskId,
             repositoryId: repoId,
-            description: 'Create a file called `review-flow-marker.md` with the single line "# Review Flow Marker". Commit it to a new branch.',
+            description: 'Create a file called `review-flow-marker.md` with the content "# Review Flow Marker" and commit it to the current branch.',
             status: 'pending',
           }],
           approved: false,

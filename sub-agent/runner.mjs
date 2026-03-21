@@ -124,7 +124,7 @@ try {
   const finalDiff = execSync("git diff --cached --stat").toString().trim();
   if (finalDiff) {
     git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
-    git("push", "origin", BRANCH_NAME);
+    git("push", "origin", `HEAD:${BRANCH_NAME}`);
     console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
   } else {
     console.log("[sub-agent] No changes to commit");
