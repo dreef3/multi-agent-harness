@@ -3,26 +3,27 @@ FROM oven/bun:1 AS builder
 
 WORKDIR /app
 
-# Copy package files
-COPY package.json bun.lock* ./
+# Copy workspace config and lockfile from root context
+COPY bun.lock package.json ./
+COPY frontend/package.json ./frontend/
 
 # Install dependencies
-RUN bun install
+WORKDIR /app
+RUN bun install --frozen-lockfile
 
-# Copy source code
-COPY . .
-
-# Build the application
+# Copy frontend source and build
+COPY frontend/ ./frontend/
+WORKDIR /app/frontend
 RUN bun run build
 
 # Production stage
 FROM nginx:alpine
 
 # Copy built assets from builder stage
-COPY --from=builder /app/dist /usr/share/nginx/html
+COPY --from=builder /app/frontend/dist /usr/share/nginx/html
 
 # Copy nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY frontend/nginx.conf /etc/nginx/conf.d/default.conf
 
 # Expose port
 EXPOSE 80
