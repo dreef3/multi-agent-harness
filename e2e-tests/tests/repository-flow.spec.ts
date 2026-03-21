@@ -3,9 +3,6 @@ import { test, expect } from '@playwright/test';
 const API_BASE = process.env.HARNESS_API_URL || 'http://localhost:3000/api';
 
 test.describe('Repository Configuration Flow', () => {
-  // AI-dependent tests need longer timeout
-  test.describe.configure({ timeout: 300000 });
-
   test.beforeEach(async ({ page, request }) => {
     // Seed a test repository
     await request.post(`${API_BASE}/repositories`, {
@@ -56,8 +53,8 @@ test.describe('Repository Configuration Flow', () => {
     // 6. Wait for chat interface
     await expect(page.getByPlaceholder(/type your message/i)).toBeVisible({ timeout: 10000 });
 
-    // 7. Send a message to trigger brainstorming
-    const testMessage = 'Please create a README.md file with the project description';
+    // 7. Send a message to trigger brainstorming/planning
+    const testMessage = 'Create a plan to add a README.md file with the project description';
     await page.getByPlaceholder(/type your message/i).fill(testMessage);
     await page.getByRole('button', { name: /send/i }).click();
 
@@ -65,24 +62,25 @@ test.describe('Repository Configuration Flow', () => {
     const assistantMessages = page.locator('.bg-gray-800');
     await expect(assistantMessages.first()).toBeVisible({ timeout: 180000 });
 
-    // 9. Navigate to plan page
-    const currentUrl = page.url();
-    const projectId = currentUrl.match(/\/projects\/([\w-]+)\/chat/)?.[1];
-    expect(projectId).toBeDefined();
-    await page.goto(`/projects/${projectId}/plan`);
+    // 9. Wait for plan to be ready (auto-navigation to plan page)
+    await expect(page).toHaveURL(/\/projects\/[\w-]+\/plan/, { timeout: 180000 });
 
-    // 10. Wait for plan to be ready
-    await expect(page.getByRole('button', { name: /approve/i })).toBeVisible({ timeout: 180000 });
+    // 10. Wait for approve button
+    await expect(page.getByRole('button', { name: /approve/i })).toBeVisible({ timeout: 10000 });
 
     // 11. Approve the plan
     await page.getByRole('button', { name: /approve/i }).click();
 
     // 12. Wait for execution status
-    await expect(page.getByText(/executing/i)).toBeVisible({ timeout: 60000 });
+    await expect(page.getByText(/executing/i)).toBeVisible({ timeout: 10000 });
 
     // 13. Poll for PR creation (up to 10 minutes)
+    const currentUrl = page.url();
+    const projectId = currentUrl.match(/\/projects\/([\w-]+)\/plan/)?.[1];
+    expect(projectId).toBeDefined();
+    
     let prCreated = false;
-    const maxAttempts = 120; // 120 * 5 seconds = 10 minutes
+    const maxAttempts = 120;
     
     for (let i = 0; i < maxAttempts; i++) {
       const response = await request.get(`${API_BASE}/projects/${projectId}/prs`);
@@ -96,7 +94,6 @@ test.describe('Repository Configuration Flow', () => {
           break;
         }
       }
-      // Wait 5 seconds before polling again
       await new Promise(resolve => setTimeout(resolve, 5000));
     }
 
