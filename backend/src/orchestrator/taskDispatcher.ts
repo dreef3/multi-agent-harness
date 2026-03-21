@@ -312,7 +312,6 @@ export class TaskDispatcher {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName: pr.branch,
-        anthropicApiKeyPath: config.anthropicApiKeyPath,
       });
 
       updateAgentSession(sessionId, { containerId, status: "running" });
