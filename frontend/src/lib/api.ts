@@ -100,7 +100,7 @@ export const api = {
   projects: {
     list: () => fetchJson<Project[]>(`${API_BASE}/projects`),
     get: (id: string) => fetchJson<Project>(`${API_BASE}/projects/${id}`),
-    create: (data: { name: string; description: string }) =>
+    create: (data: { name: string; description: string; repositoryIds?: string[] }) =>
       fetchJson<Project>(`${API_BASE}/projects`, {
         method: "POST",
         body: JSON.stringify(data),
