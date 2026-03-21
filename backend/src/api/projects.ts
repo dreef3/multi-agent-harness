@@ -2,6 +2,7 @@ import { Router } from "express";
 import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject } from "../store/projects.js";
+import { getRepository } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
@@ -34,6 +35,21 @@ export function createProjectsRouter(docker: Dockerode): Router {
     if (!name) {
       res.status(400).json({ error: "Missing required field: name" });
       return;
+    }
+
+    // GitHub Issues source requires all repositories to be GitHub-hosted
+    if (source?.type === "github" && Array.isArray(repositoryIds) && repositoryIds.length > 0) {
+      const nonGithubRepos = repositoryIds
+        .map((id: string) => getRepository(id))
+        .filter((r): r is NonNullable<typeof r> => r != null)
+        .filter(r => r.provider !== "github");
+      if (nonGithubRepos.length > 0) {
+        res.status(400).json({
+          error: "GitHub Issues source is only supported with GitHub repositories",
+          invalidRepositories: nonGithubRepos.map(r => r.name),
+        });
+        return;
+      }
     }
 
     const now = new Date().toISOString();

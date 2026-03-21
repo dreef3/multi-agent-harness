@@ -4,6 +4,7 @@ import { createProjectsRouter } from "./projects.js";
 import { createRepositoriesRouter } from "./repositories.js";
 import { createAgentsRouter } from "./agents.js";
 import { createJiraRouter } from "./jira.js";
+import { createGitHubIssuesRouter } from "./githubIssues.js";
 import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
 import { createSettingsRouter } from "./settings.js";
@@ -32,6 +33,7 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
   router.use("/repositories", createRepositoriesRouter());
   router.use("/agents", createAgentsRouter());
   router.use("/jira", createJiraRouter());
+  router.use("/github-issues", createGitHubIssuesRouter());
   router.use("/pull-requests", createPullRequestsRouter(docker));
   router.use("/webhooks", createWebhooksRouter());
   router.use("/settings", createSettingsRouter());
