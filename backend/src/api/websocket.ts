@@ -131,5 +131,11 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     for (const raw of pendingMessages) {
       await handleWsMessage(agent, ws, projectId, raw);
     }
+
+    // If a plan is already awaiting approval, notify the newly connected client
+    const currentProject = getProject(projectId);
+    if (currentProject?.plan && !currentProject.plan.approved) {
+      send(ws, { type: "plan_ready", plan: currentProject.plan });
+    }
   });
 }

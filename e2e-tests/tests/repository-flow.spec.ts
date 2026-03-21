@@ -76,12 +76,15 @@ test.describe('Repository Configuration Flow', () => {
     const taskMessage = [
       'Please execute these superpowers skills in order, keeping each step brief:',
       '1. /brainstorm — one paragraph analysis only',
-      '2. /writing-plans — write the implementation plan',
+      '2. /writing-plans — write the implementation plan using EXACTLY this format:',
+      '',
+      '### Task 1: Create e2e-marker.md',
+      '**Repository:** E2E Test Repo',
+      '**Description:**',
+      'Create a file called `e2e-marker.md` with the single line "# E2E Test Passed". Commit it to a new branch.',
       '',
       'Task: In the "E2E Test Repo" repository, create a file called `e2e-marker.md`',
       'with the single line "# E2E Test Passed". Commit it to a new branch.',
-      '',
-      'The plan must follow the exact format with ### Task, **Repository:**, and **Description:** sections.',
     ].join('\n');
 
     await page.getByPlaceholder(/type your message/i).fill(taskMessage);
