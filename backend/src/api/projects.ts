@@ -29,9 +29,9 @@ export function createProjectsRouter(docker: Dockerode): Router {
 
   // Create a new project
   router.post("/", (req, res) => {
-    const { name, source, repositoryIds } = req.body;
-    if (!name || !source || !repositoryIds) {
-      res.status(400).json({ error: "Missing required fields: name, source, repositoryIds" });
+    const { name, description, source, repositoryIds } = req.body;
+    if (!name) {
+      res.status(400).json({ error: "Missing required field: name" });
       return;
     }
 
@@ -40,8 +40,11 @@ export function createProjectsRouter(docker: Dockerode): Router {
       id: randomUUID(),
       name,
       status: "brainstorming",
-      source,
-      repositoryIds,
+      source: source || {
+        type: "freeform",
+        freeformDescription: description || "",
+      },
+      repositoryIds: repositoryIds || [],
       masterSessionPath: "",
       createdAt: now,
       updatedAt: now,

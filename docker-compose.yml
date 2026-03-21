@@ -13,7 +13,7 @@ services:
       - docker-proxy
 
   docker-proxy:
-    image: tecnativa/docker-socket-proxy:0.2.1
+    image: tecnativa/docker-socket-proxy:0.1.2
     environment:
       CONTAINERS: 1
       IMAGES: 1
@@ -25,7 +25,7 @@ services:
   frontend:
     build: ./frontend
     ports:
-      - "8080:80"
+      - "0:80"
     depends_on:
       - backend
 
