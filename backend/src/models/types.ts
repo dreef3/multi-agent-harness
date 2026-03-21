@@ -12,8 +12,9 @@ export interface Project {
     | "failed"
     | "cancelled";
   source: {
-    type: "jira" | "freeform";
+    type: "jira" | "freeform" | "github";
     jiraTickets?: string[];
+    githubIssues?: string[];          // e.g. ["owner/repo#123"]
     freeformDescription?: string;
   };
   repositoryIds: string[];

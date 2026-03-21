@@ -16,6 +16,20 @@ interface JiraIssue {
   issuetype: string;
 }
 
+interface GitHubIssue {
+  ref: string;          // "owner/repo#123"
+  number: number;
+  title: string;
+  body?: string;
+  labels: string[];
+  assignees: string[];
+  author: string;
+  createdAt: string;
+  updatedAt: string;
+  url: string;
+  repository: string;
+}
+
 export default function NewProject() {
   const navigate = useNavigate();
   const [name, setName] = useState("");
@@ -30,6 +44,14 @@ export default function NewProject() {
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [showJiraPicker, setShowJiraPicker] = useState(false);
+
+  // GitHub Issues integration state
+  const [ghQuery, setGhQuery] = useState("");
+  const [ghIssues, setGhIssues] = useState<GitHubIssue[]>([]);
+  const [selectedGhIssues, setSelectedGhIssues] = useState<string[]>([]);
+  const [ghLoading, setGhLoading] = useState(false);
+  const [ghError, setGhError] = useState<string | null>(null);
+  const [showGhPicker, setShowGhPicker] = useState(false);
   
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
@@ -71,13 +93,25 @@ export default function NewProject() {
           .filter(Boolean)
           .map(issue => `[${issue!.key}] ${issue!.summary}`)
           .join("\n");
-        finalDescription = `${description}\n\nJIRA Tickets:\n${jiraContext}`;
+        finalDescription = `${finalDescription}\n\nJIRA Tickets:\n${jiraContext}`;
       }
-      
+      if (selectedGhIssues.length > 0) {
+        const ghContext = selectedGhIssues
+          .map(ref => ghIssues.find(i => i.ref === ref))
+          .filter(Boolean)
+          .map(issue => `[${issue!.ref}] ${issue!.title}`)
+          .join("\n");
+        finalDescription = `${finalDescription}\n\nGitHub Issues:\n${ghContext}`;
+      }
+
+      const source = selectedGhIssues.length > 0
+        ? { type: "github" as const, githubIssues: selectedGhIssues, freeformDescription: finalDescription.trim() }
+        : { type: "freeform" as const, freeformDescription: finalDescription.trim() };
+
       const project = await api.projects.create({
         name: name.trim(),
-        description: finalDescription.trim(),
         repositoryIds: selectedRepoIds,
+        source,
       });
       navigate(`/projects/${project.id}/chat`);
     } catch (err) {
@@ -121,15 +155,72 @@ export default function NewProject() {
     const selectedIssuesData = selectedIssues
       .map(key => jiraIssues.find(i => i.key === key))
       .filter(Boolean);
-    
+
     if (selectedIssuesData.length === 0) return;
-    
+
     const jiraText = selectedIssuesData
       .map(issue => `[${issue!.key}] ${issue!.summary}\n${issue!.description || ""}`)
       .join("\n\n---\n\n");
-    
+
     setDescription(prev => prev ? `${prev}\n\n${jiraText}` : jiraText);
     setShowJiraPicker(false);
+  }
+
+  async function searchGitHubIssues() {
+    if (selectedRepoIds.length === 0) {
+      setGhError("Select at least one repository first");
+      return;
+    }
+
+    try {
+      setGhLoading(true);
+      setGhError(null);
+
+      const params = new URLSearchParams({
+        repositoryIds: selectedRepoIds.join(","),
+        maxResults: "20",
+      });
+      if (ghQuery.trim()) {
+        params.set("q", ghQuery.trim());
+      }
+
+      const response = await fetch(`/api/github-issues/search?${params}`);
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Failed to search GitHub Issues");
+      }
+
+      const data = await response.json();
+      setGhIssues(data.issues || []);
+    } catch (err) {
+      setGhError(err instanceof Error ? err.message : "Failed to search GitHub Issues");
+    } finally {
+      setGhLoading(false);
+    }
+  }
+
+  function toggleGhIssueSelection(ref: string) {
+    setSelectedGhIssues(prev =>
+      prev.includes(ref) ? prev.filter(r => r !== ref) : [...prev, ref]
+    );
+  }
+
+  function addSelectedGhIssuesToDescription() {
+    const selected = selectedGhIssues
+      .map(ref => ghIssues.find(i => i.ref === ref))
+      .filter(Boolean);
+
+    if (selected.length === 0) return;
+
+    const ghText = selected
+      .map(issue => {
+        const body = issue!.body ? `\n\`\`\`\n${issue!.body}\n\`\`\`` : "";
+        return `[${issue!.ref}] ${issue!.title}${body}`;
+      })
+      .join("\n\n---\n\n");
+
+    setDescription(prev => prev ? `${prev}\n\n${ghText}` : ghText);
+    setShowGhPicker(false);
   }
 
   return (
@@ -156,13 +247,22 @@ export default function NewProject() {
             <label className="block text-sm font-medium text-gray-300">
               Description
             </label>
-            <button
-              type="button"
-              onClick={() => setShowJiraPicker(!showJiraPicker)}
-              className="text-xs text-blue-400 hover:text-blue-300"
-            >
-              {showJiraPicker ? "Hide JIRA Picker" : "+ Add JIRA Tickets"}
-            </button>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowJiraPicker(!showJiraPicker)}
+                className="text-xs text-blue-400 hover:text-blue-300"
+              >
+                {showJiraPicker ? "Hide JIRA Picker" : "+ Add JIRA Tickets"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowGhPicker(!showGhPicker)}
+                className="text-xs text-purple-400 hover:text-purple-300"
+              >
+                {showGhPicker ? "Hide GitHub Issues" : "+ Add GitHub Issues"}
+              </button>
+            </div>
           </div>
           
           {showJiraPicker && (
@@ -185,11 +285,11 @@ export default function NewProject() {
                   {jiraLoading ? "Searching..." : "Search"}
                 </button>
               </div>
-              
+
               {jiraError && (
                 <div className="text-red-400 text-sm">{jiraError}</div>
               )}
-              
+
               {jiraIssues.length > 0 && (
                 <div className="space-y-2 max-h-60 overflow-y-auto">
                   {jiraIssues.map(issue => (
@@ -217,7 +317,7 @@ export default function NewProject() {
                   ))}
                 </div>
               )}
-              
+
               {selectedIssues.length > 0 && (
                 <div className="flex items-center justify-between pt-2 border-t border-gray-700">
                   <span className="text-sm text-gray-400">
@@ -226,6 +326,82 @@ export default function NewProject() {
                   <button
                     type="button"
                     onClick={addSelectedIssuesToDescription}
+                    className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-medium"
+                  >
+                    Add to Description
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {showGhPicker && (
+            <div className="bg-gray-900 border border-purple-900 rounded-lg p-4 mb-3 space-y-3">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={ghQuery}
+                  onChange={(e) => setGhQuery(e.target.value)}
+                  placeholder="Search open issues by title..."
+                  className="flex-1 bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), searchGitHubIssues())}
+                />
+                <button
+                  type="button"
+                  onClick={searchGitHubIssues}
+                  disabled={ghLoading || selectedRepoIds.length === 0}
+                  className="bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 px-4 py-2 rounded text-sm font-medium"
+                >
+                  {ghLoading ? "Searching..." : "Search"}
+                </button>
+              </div>
+
+              {selectedRepoIds.length === 0 && (
+                <div className="text-yellow-400 text-sm">Select repositories above to search their issues.</div>
+              )}
+
+              {ghError && (
+                <div className="text-red-400 text-sm">{ghError}</div>
+              )}
+
+              {ghIssues.length > 0 && (
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {ghIssues.map(issue => (
+                    <div
+                      key={issue.ref}
+                      onClick={() => toggleGhIssueSelection(issue.ref)}
+                      className={`p-2 rounded cursor-pointer transition-colors ${
+                        selectedGhIssues.includes(issue.ref)
+                          ? "bg-purple-900/50 border border-purple-500"
+                          : "bg-gray-800 hover:bg-gray-750 border border-gray-700"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedGhIssues.includes(issue.ref)}
+                          onChange={() => {}}
+                          className="rounded"
+                        />
+                        <span className="font-medium text-sm text-purple-300">{issue.ref}</span>
+                        {issue.labels.length > 0 && (
+                          <span className="text-xs text-gray-400">{issue.labels.join(", ")}</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-gray-300 ml-6">{issue.title}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {selectedGhIssues.length > 0 && (
+                <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                  <span className="text-sm text-gray-400">
+                    {selectedGhIssues.length} issue(s) selected
+                  </span>
+                  <button
+                    type="button"
+                    onClick={addSelectedGhIssuesToDescription}
                     className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-medium"
                   >
                     Add to Description
