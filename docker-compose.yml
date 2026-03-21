@@ -1,8 +1,6 @@
 services:
   backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
+    build: ./backend
     image: multi-agent-harness/backend:latest
     ports:
       - "3000:3000"
@@ -27,9 +25,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
+    build: ./frontend
     image: multi-agent-harness/frontend:latest
     ports:
       - "${FRONTEND_PORT:-8080}:80"

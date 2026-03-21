@@ -43,8 +43,7 @@ jobs:
       - name: Build backend image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./backend/Dockerfile
+          context: ./backend
           tags: multi-agent-harness/backend:latest
           load: true
           cache-from: type=gha,scope=backend
@@ -53,8 +52,7 @@ jobs:
       - name: Build frontend image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          file: ./frontend/Dockerfile
+          context: ./frontend
           tags: multi-agent-harness/frontend:latest
           load: true
           cache-from: type=gha,scope=frontend
