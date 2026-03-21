@@ -16,10 +16,10 @@ test.describe('Multi-Agent Harness E2E', () => {
     
     // Fill in project details
     const projectName = `E2E Test Project ${Date.now()}`;
-    await page.getByLabel(/project name/i).fill(projectName);
-    
+    await page.getByPlaceholder(/my awesome project/i).fill(projectName);
+
     // Fill in description with a free form request
-    await page.getByLabel(/description/i).fill('Please analyze the codebase structure and tell me what you find');
+    await page.getByPlaceholder(/what do you want to build/i).fill('Please analyze the codebase structure and tell me what you find');
     
     // Submit the form
     await page.getByRole('button', { name: /create project/i }).click();
