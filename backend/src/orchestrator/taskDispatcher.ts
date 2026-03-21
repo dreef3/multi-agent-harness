@@ -7,7 +7,6 @@ import { insertAgentSession, updateAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
-import { SubAgentBridge } from "../agents/subAgentBridge.js";
 import { config } from "../config.js";
 
 export interface TaskResult {
@@ -109,6 +108,9 @@ export class TaskDispatcher {
       // Start container
       console.log(`[taskDispatcher] Starting container ${containerId}`);
       await startContainer(docker, containerId);
+
+      // Stream container logs to backend stdout for observability
+      this.streamContainerLogs(docker, containerId, `task-${task.id.slice(0, 8)}`);
 
       // Wait for completion
       console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
@@ -324,29 +326,23 @@ export class TaskDispatcher {
 
     try {
       // Create container for fix-run (using existing branch)
+      const taskDescription = `Address the following code review comments on the pull request branch "${pr.branch}":\n\n${commentsText}\n\nMake any necessary code changes and ensure the changes are committed.`;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName: pr.branch,
+        taskDescription,
       });
 
       updateAgentSession(sessionId, { containerId, status: "running" });
       await startContainer(docker, containerId);
 
-      // Attach to container to send fix instructions
-      const bridge = new SubAgentBridge();
-      await bridge.attach(docker, containerId);
-
-      // Send fix instructions
-      bridge.send({
-        type: "fix",
-        comments: commentsText,
-      });
+      // Stream container logs to backend stdout for observability
+      this.streamContainerLogs(docker, containerId, `fix-${sessionId.slice(0, 8)}`);
 
       // Wait for completion
       const completed = await this.waitForCompletion(docker, sessionId, containerId);
-
-      bridge.detach();
 
       if (!completed) {
         throw new Error("Fix-run timed out or container failed");
@@ -383,6 +379,35 @@ export class TaskDispatcher {
         }
       }
     }
+  }
+
+  /**
+   * Stream container stdout/stderr to backend process stdout for observability.
+   */
+  private streamContainerLogs(docker: Dockerode, containerId: string, label: string): void {
+    docker.getContainer(containerId).logs(
+      { follow: true, stdout: true, stderr: true, timestamps: false },
+      (err, stream) => {
+        if (err || !stream) return;
+        docker.modem.demuxStream(
+          stream as NodeJS.ReadableStream,
+          {
+            write: (chunk: Buffer) => {
+              for (const line of chunk.toString().split("\n")) {
+                if (line.trim()) console.log(`[container:${label}] ${line}`);
+              }
+            },
+          } as NodeJS.WritableStream,
+          {
+            write: (chunk: Buffer) => {
+              for (const line of chunk.toString().split("\n")) {
+                if (line.trim()) console.error(`[container:${label}] ${line}`);
+              }
+            },
+          } as NodeJS.WritableStream
+        );
+      }
+    );
   }
 
   /**

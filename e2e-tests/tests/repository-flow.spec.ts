@@ -125,7 +125,7 @@ test.describe('Repository Configuration Flow', () => {
             tasks: [{
               id: `e2e-task-${Date.now()}`,
               repositoryId: testRepo!.id,
-              description: 'Create a file called `e2e-marker.md` with the single line "# E2E Test Passed". Commit it to a new branch.',
+              description: 'Create a file called `e2e-marker.md` with the content "# E2E Test Passed" and commit it to the current branch.',
               status: 'pending',
             }],
             approved: false,
