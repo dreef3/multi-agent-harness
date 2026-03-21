@@ -31,7 +31,7 @@ FROM node:20.18-slim
 WORKDIR /app
 COPY --from=builder /app/backend/package.json ./package.json
 COPY --from=builder /app/backend/dist ./dist
-COPY --from=builder /app/backend/node_modules ./node_modules
+COPY --from=builder /app/node_modules ./node_modules
 RUN mkdir -p /app/data /pi-agent && chown -R node:node /app /pi-agent
 ENV PI_CODING_AGENT_DIR=/pi-agent
 USER node
