@@ -10,6 +10,37 @@ import path from "path";
 import fs from "fs";
 
 const agentSessions = new Map<string, MasterAgent>();
+const agentInitPromises = new Map<string, Promise<MasterAgent>>();
+let globalDataDir = "";
+
+async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
+  const existing = agentSessions.get(projectId);
+  if (existing) return existing;
+
+  const existingPromise = agentInitPromises.get(projectId);
+  if (existingPromise) return existingPromise;
+
+  const promise = (async () => {
+    const sessionDir = path.join(globalDataDir, "sessions", projectId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const sessionPath = path.join(sessionDir, "master.jsonl");
+    const agent = new MasterAgent(projectId, sessionPath);
+    await agent.init();
+    agentSessions.set(projectId, agent);
+    agentInitPromises.delete(projectId);
+    return agent;
+  })();
+
+  agentInitPromises.set(projectId, promise);
+  return promise;
+}
+
+export function preInitAgent(projectId: string): void {
+  if (agentSessions.has(projectId) || agentInitPromises.has(projectId)) return;
+  getOrInitAgent(projectId).catch((err) => {
+    console.error(`[preInitAgent] Failed to init agent for ${projectId}:`, err);
+  });
+}
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
 interface WsServerMessage { type: "delta" | "message_complete" | "replay" | "error" | "plan_ready"; [key: string]: unknown; }
@@ -48,6 +79,8 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
           }
         }
       }
+      // Send message_complete AFTER appendMessage so the client can safely reload messages
+      send(ws, { type: "message_complete" });
     } catch (err) {
       send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
     } finally {
@@ -63,6 +96,7 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
 }
 
 export function setupWebSocket(server: Server, dataDir: string): void {
+  globalDataDir = dataDir;
   const wss = new WebSocketServer({ server });
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
     const match = /\/ws\/projects\/([^/]+)\/chat/.exec(req.url ?? "");
@@ -81,24 +115,16 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     });
 
     if (!agent) {
-      const sessionDir = path.join(dataDir, "sessions", projectId);
-      fs.mkdirSync(sessionDir, { recursive: true });
-      const sessionPath = path.join(sessionDir, "master.jsonl");
-      agent = new MasterAgent(projectId, sessionPath);
-      await agent.init();
-      agentSessions.set(projectId, agent);
+      agent = await getOrInitAgent(projectId);
     }
 
     const onDeltaFwd = (text: string) => send(ws, { type: "delta", text });
-    const onCompleteFwd = () => send(ws, { type: "message_complete" });
     const onErrorFwd = (err: Error) => send(ws, { type: "error", message: err.message });
     agent.on("delta", onDeltaFwd);
-    agent.on("message_complete", onCompleteFwd);
     agent.on("error", onErrorFwd);
 
     ws.on("close", () => {
       agent!.off("delta", onDeltaFwd);
-      agent!.off("message_complete", onCompleteFwd);
       agent!.off("error", onErrorFwd);
     });
 
