@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { api, Config, ModelConfig } from "../lib/api";
+import { api, Config, ModelConfig, Repository } from "../lib/api";
+import RepositoryForm from "../components/RepositoryForm";
 
 interface Settings {
   masterAgent: ModelConfig;
@@ -12,10 +13,61 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [showRepoForm, setShowRepoForm] = useState(false);
+  const [editingRepo, setEditingRepo] = useState<Repository | null>(null);
+  const [repoLoading, setRepoLoading] = useState(false);
+  const [repoError, setRepoError] = useState<string | null>(null);
 
   useEffect(() => {
     loadConfig();
   }, []);
+
+  useEffect(() => {
+    loadRepositories();
+  }, []);
+
+  async function loadRepositories() {
+    try {
+      setRepoLoading(true);
+      const repos = await api.repositories.list();
+      setRepositories(repos);
+    } catch (err) {
+      setRepoError(err instanceof Error ? err.message : "Failed to load repositories");
+    } finally {
+      setRepoLoading(false);
+    }
+  }
+
+  async function handleCreateRepo(data: Omit<Repository, "id" | "createdAt" | "updatedAt">) {
+    try {
+      const newRepo = await api.repositories.create(data);
+      setRepositories((prev) => [newRepo, ...prev]);
+      setShowRepoForm(false);
+    } catch (err) {
+      setRepoError(err instanceof Error ? err.message : "Failed to create repository");
+    }
+  }
+
+  async function handleUpdateRepo(id: string, data: Partial<Omit<Repository, "id" | "createdAt" | "updatedAt">>) {
+    try {
+      const updated = await api.repositories.update(id, data);
+      setRepositories((prev) => prev.map((r) => (r.id === id ? updated : r)));
+      setEditingRepo(null);
+    } catch (err) {
+      setRepoError(err instanceof Error ? err.message : "Failed to update repository");
+    }
+  }
+
+  async function handleDeleteRepo(id: string) {
+    if (!confirm("Are you sure you want to delete this repository?")) return;
+    try {
+      await api.repositories.delete(id);
+      setRepositories((prev) => prev.filter((r) => r.id !== id));
+    } catch (err) {
+      setRepoError(err instanceof Error ? err.message : "Failed to delete repository");
+    }
+  }
 
   async function loadConfig() {
     try {
@@ -227,6 +279,104 @@ export default function Settings() {
             />
           </div>
         </div>
+      </div>
+
+      {repoError && (
+        <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg">
+          {repoError}
+        </div>
+      )}
+
+      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold">Repositories</h2>
+          <button
+            onClick={() => setShowRepoForm(true)}
+            className="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-lg text-sm font-medium"
+          >
+            + Add Repository
+          </button>
+        </div>
+
+        {repoLoading ? (
+          <div className="text-gray-400">Loading repositories...</div>
+        ) : repositories.length === 0 ? (
+          <div className="text-gray-400">No repositories configured. Add one to get started.</div>
+        ) : (
+          <div className="space-y-2">
+            {repositories.map((repo) => (
+              <div
+                key={repo.id}
+                className="bg-gray-800 border border-gray-700 rounded-lg p-4 flex items-center justify-between"
+              >
+                <div>
+                  <div className="font-medium">{repo.name}</div>
+                  <div className="text-sm text-gray-400">{repo.cloneUrl}</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    <span
+                      className={`inline-block px-2 py-0.5 rounded ${
+                        repo.provider === "github"
+                          ? "bg-gray-700 text-gray-300"
+                          : "bg-blue-900 text-blue-300"
+                      }`}
+                    >
+                      {repo.provider === "github" ? "GitHub" : "Bitbucket Server"}
+                    </span>
+                    {repo.provider === "github" && (
+                      <span className="ml-2">
+                        {repo.providerConfig?.owner}/{repo.providerConfig?.repo}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setEditingRepo(repo)}
+                    className="text-gray-400 hover:text-white px-3 py-1"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleDeleteRepo(repo.id)}
+                    className="text-red-400 hover:text-red-300 px-3 py-1"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {showRepoForm && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-lg w-full mx-4">
+              <h3 className="text-lg font-semibold mb-4">Add Repository</h3>
+              <RepositoryForm
+                onSubmit={handleCreateRepo}
+                onCancel={() => setShowRepoForm(false)}
+              />
+            </div>
+          </div>
+        )}
+
+        {editingRepo && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-gray-900 border border-gray-700 rounded-lg p-6 max-w-lg w-full mx-4">
+              <h3 className="text-lg font-semibold mb-4">Edit Repository</h3>
+              <RepositoryForm
+                repository={editingRepo}
+                onSubmit={(data) => handleUpdateRepo(editingRepo.id, data)}
+                onCancel={() => setEditingRepo(null)}
+              />
+            </div>
+          </div>
+        )}
+
+        <p className="text-xs text-gray-500">
+          Credentials are configured via environment variables (GITHUB_TOKEN for GitHub,
+          BITBUCKET_TOKEN and BITBUCKET_BASE_URL for Bitbucket Server).
+        </p>
       </div>
 
       <button
