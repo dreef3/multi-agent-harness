@@ -39,7 +39,8 @@ test.describe('Repository Configuration Flow', () => {
     // 3. Select repository
     const repoDropdown = page.getByRole('button', { name: /select repositories/i });
     await repoDropdown.click();
-    await page.getByText('E2E Test Repo').click();
+    // Use .first() in case there are multiple repos with same name
+    await page.getByRole('button', { name: /E2E Test Repo/ }).first().click();
     await repoDropdown.click(); // Close dropdown
 
     // Verify repository is selected
