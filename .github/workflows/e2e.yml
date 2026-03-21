@@ -35,6 +35,9 @@ jobs:
           BITBUCKET_TOKEN=
           EOF
 
+      - name: Build sub-agent image
+        run: docker build -t multi-agent-harness/sub-agent:latest ./sub-agent
+
       - name: Build and start services
         run: |
           docker compose build
