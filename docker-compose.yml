@@ -5,7 +5,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./data:/app/data
+      - harness-data:/app/data
       - harness-pi-auth:/pi-agent
     env_file:
       - .env
@@ -38,5 +38,7 @@ networks:
     internal: false
 
 volumes:
+  harness-data:
+    name: harness-data
   harness-pi-auth:
     name: harness-pi-auth
