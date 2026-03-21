@@ -37,11 +37,10 @@ test.describe('Multi-Agent Harness E2E', () => {
     await page.getByPlaceholder(/what do you want to build/i).fill('Please analyze the codebase structure and tell me what you find');
 
     // Select repository (required)
-    const repoDropdown = page.getByRole('button', { name: /select repositories/i });
-    await repoDropdown.click();
-    // Use .first() in case there are multiple repos with same name
-    await page.getByRole('button', { name: /E2E Test Repo/ }).first().click();
-    await repoDropdown.click(); // Close dropdown
+    await page.locator('button:has-text("Select repositories")').click();
+    await page.locator('button:has-text("E2E Test Repo")').first().click();
+    // Close dropdown by clicking outside or pressing Escape
+    await page.keyboard.press('Escape');
     
     // Submit the form
     await page.getByRole('button', { name: /create project/i }).click();

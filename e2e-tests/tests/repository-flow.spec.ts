@@ -27,7 +27,7 @@ test.describe('Repository Configuration Flow', () => {
     const projectName = `E2E Repo Test ${Date.now()}`;
 
     // 1. Navigate to new project
-    await page.getByRole('link', { name: /\+ new project/i }).click();
+    await page.getByRole('main').getByRole('link', { name: /\+ new project/i }).click();
     await expect(page.getByRole('heading', { name: /create new project/i })).toBeVisible();
 
     // 2. Fill in project details
@@ -37,11 +37,9 @@ test.describe('Repository Configuration Flow', () => {
     );
 
     // 3. Select repository
-    const repoDropdown = page.getByRole('button', { name: /select repositories/i });
-    await repoDropdown.click();
-    // Use .first() in case there are multiple repos with same name
-    await page.getByRole('button', { name: /E2E Test Repo/ }).first().click();
-    await repoDropdown.click(); // Close dropdown
+    await page.locator('button:has-text("Select repositories")').click();
+    await page.locator('button:has-text("E2E Test Repo")').first().click();
+    await page.keyboard.press('Escape'); // Close dropdown
 
     // Verify repository is selected
     await expect(page.getByText('E2E Test Repo')).toBeVisible();
