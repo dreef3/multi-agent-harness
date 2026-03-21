@@ -3,6 +3,9 @@ import { test, expect } from '@playwright/test';
 const API_BASE = process.env.HARNESS_API_URL || 'http://localhost:3000/api';
 
 test.describe('Repository Configuration Flow', () => {
+  // AI-dependent tests need longer timeout
+  test.describe.configure({ timeout: 300000 });
+
   test.beforeEach(async ({ page, request }) => {
     // Seed a test repository
     await request.post(`${API_BASE}/repositories`, {
