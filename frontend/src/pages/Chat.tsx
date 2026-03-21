@@ -26,7 +26,15 @@ export default function Chat() {
         if (msg.type === "delta" && msg.text) {
           setStreamingContent((prev) => prev + msg.text);
         } else if (msg.type === "message_complete") {
-          loadMessages().then(() => setStreamingContent(""));
+          loadMessages().then(async () => {
+            setStreamingContent("");
+            try {
+              const project = await api.projects.get(id!);
+              if (project.status === "awaiting_approval") {
+                navigate(`/projects/${id}/plan`);
+              }
+            } catch { /* ignore */ }
+          });
         } else if (msg.type === "plan_ready") {
           navigate(`/projects/${id}/plan`);
         }
