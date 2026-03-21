@@ -35,12 +35,20 @@ jobs:
           BITBUCKET_TOKEN=
           EOF
 
+      - name: Build sub-agent image
+        run: docker build -t multi-agent-harness/sub-agent:latest ./sub-agent
+
       - name: Build and start services
         run: |
           docker compose build
           docker compose up -d
           sleep 10
           docker compose ps
+
+      - name: Set frontend URL
+        run: |
+          FRONTEND_PORT=$(docker compose port frontend 80 | cut -d: -f2)
+          echo "HARNESS_URL=http://localhost:$FRONTEND_PORT" >> $GITHUB_ENV
 
       - name: Wait for backend to be ready
         run: |
@@ -80,7 +88,7 @@ jobs:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
           AGENT_PROVIDER: opencode-go
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          HARNESS_URL: http://localhost:8080
+          HARNESS_URL: ${{ env.HARNESS_URL }}
         run: bunx playwright test
 
       - name: Upload test results
