@@ -21,7 +21,8 @@
 | `frontend/src/components/RepositoryForm.tsx` | New file: repository form modal |
 | `frontend/src/pages/NewProject.tsx` | Add repository multi-select |
 | `e2e-tests/tests/repository-flow.spec.ts` | New file: E2E test for full flow |
-| `e2e-tests/package.json` | Add test dependencies |
+| `e2e-tests/package.json` | Add test:repo script |
+| `e2e-tests/README.md` | Create: E2E test documentation |
 
 ---
 
@@ -141,9 +142,9 @@ export interface SettingsInfo {
 }
 ```
 
-- [ ] **Step 2: Update repositories API methods**
+- [ ] **Step 2: Update repositories API methods and add settings**
 
-Replace the `repositories` object in the `api` object:
+Update the `repositories` object in the `api` object (replacing the existing `repositories` property) and add a new `settings` property after it:
 
 ```typescript
   repositories: {
@@ -405,14 +406,17 @@ git commit -m "feat(frontend): repository form component"
 
 - [ ] **Step 1: Add repositories section to Settings page**
 
-Modify `frontend/src/pages/Settings.tsx` to add repository management. Add imports and state for repositories:
+Modify `frontend/src/pages/Settings.tsx` to add repository management.
+
+**Update imports** - modify line 1 to add Repository and add RepositoryForm import:
 
 ```typescript
-import { useEffect, useState } from "react";
+// Existing import: import { useEffect, useState } from "react";
 import { api, Config, ModelConfig, Repository } from "../lib/api";
 import RepositoryForm from "../components/RepositoryForm";
+```
 
-// ... inside Settings component, add state:
+**Add state for repositories** (inside Settings component):
 const [repositories, setRepositories] = useState<Repository[]>([]);
 const [showRepoForm, setShowRepoForm] = useState(false);
 const [editingRepo, setEditingRepo] = useState<Repository | null>(null);
@@ -602,12 +606,17 @@ git commit -m "feat(frontend): add repositories section to Settings page"
 
 - [ ] **Step 1: Add repository state and loading**
 
-Modify `frontend/src/pages/NewProject.tsx` to add repository selection. Add imports and state:
+Modify `frontend/src/pages/NewProject.tsx` to add repository selection.
+
+**Update imports** - modify line 3 to add Repository type:
 
 ```typescript
+// Existing: import { api } from "../lib/api";
+// Change to:
 import { api, Repository } from "../lib/api";
+```
 
-// ... inside NewProject component, add state:
+**Add state for repositories** (inside NewProject component):
 const [repositories, setRepositories] = useState<Repository[]>([]);
 const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
 const [repoLoading, setRepoLoading] = useState(true);
@@ -972,21 +981,39 @@ test.describe('Repository Configuration Flow', () => {
 
 - [ ] **Step 2: Update playwright config for longer timeouts**
 
-Modify `e2e-tests/playwright.config.ts` to increase timeout for AI-related tests:
+**Replace** the `timeout` and `expect` properties in `e2e-tests/playwright.config.ts` (lines 23-26). The full config should look like:
 
 ```typescript
 export default defineConfig({
-  // ... existing config
+  testDir: './tests',
+  fullyParallel: true,
+  forbidOnly: !!process.env.CI,
+  retries: process.env.CI ? 1 : 0,
+  workers: process.env.CI ? 1 : undefined,
+  reporter: 'html',
+  use: {
+    baseURL: process.env.HARNESS_URL || 'http://localhost:8080',
+    trace: 'on-first-retry',
+    screenshot: 'only-on-failure',
+    video: 'retain-on-failure',
+    actionTimeout: 10000,
+  },
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
   timeout: 60000, // Increased from 30000 for AI response times
   expect: {
-    timeout: 50000, // Increased from25000
+    timeout: 50000, // Increased from 25000
   },
 });
 ```
 
 - [ ] **Step 3: Create test script for repository flow**
 
-Add to `e2e-tests/package.json`:
+**Add** the `test:repo` script to the existing `scripts` object in `e2e-tests/package.json`:
 
 ```json
 {
