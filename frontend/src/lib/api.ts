@@ -24,16 +24,18 @@ export interface Message {
 export interface Plan {
   id: string;
   projectId: string;
+  content?: string;
   tasks: Task[];
-  status: "draft" | "pending_approval" | "approved" | "rejected";
-  createdAt: string;
+  approved: boolean;
+  approvedAt?: string;
 }
 
 export interface Task {
   id: string;
+  repositoryId: string;
   description: string;
-  status: "pending" | "in_progress" | "completed" | "failed";
-  dependencies: string[];
+  status: "pending" | "executing" | "completed" | "failed" | "cancelled";
+  dependsOn?: string[];
 }
 
 export interface ModelConfig {
@@ -55,6 +57,32 @@ export interface Config {
   };
 }
 
+export interface Repository {
+  id: string;
+  name: string;
+  cloneUrl: string;
+  provider: "github" | "bitbucket-server";
+  providerConfig: {
+    owner?: string;
+    repo?: string;
+    projectKey?: string;
+    repoSlug?: string;
+    baseUrl?: string;
+  };
+  defaultBranch: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderStatus {
+  name: "github" | "bitbucket-server";
+  configured: boolean;
+}
+
+export interface SettingsInfo {
+  providers: ProviderStatus[];
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -74,7 +102,7 @@ export const api = {
   projects: {
     list: () => fetchJson<Project[]>(`${API_BASE}/projects`),
     get: (id: string) => fetchJson<Project>(`${API_BASE}/projects/${id}`),
-    create: (data: { name: string; description: string }) =>
+    create: (data: { name: string; description: string; repositoryIds?: string[] }) =>
       fetchJson<Project>(`${API_BASE}/projects`, {
         method: "POST",
         body: JSON.stringify(data),
@@ -95,19 +123,22 @@ export const api = {
       }),
   },
   repositories: {
-    list: () => fetchJson<unknown[]>(`${API_BASE}/repositories`),
-    get: (id: string) => fetchJson<unknown>(`${API_BASE}/repositories/${id}`),
-    create: (data: unknown) =>
-      fetchJson<unknown>(`${API_BASE}/repositories`, {
+    list: () => fetchJson<Repository[]>(`${API_BASE}/repositories`),
+    get: (id: string) => fetchJson<Repository>(`${API_BASE}/repositories/${id}`),
+    create: (data: Omit<Repository, "id" | "createdAt" | "updatedAt">) =>
+      fetchJson<Repository>(`${API_BASE}/repositories`, {
         method: "POST",
         body: JSON.stringify(data),
       }),
-    update: (id: string, data: unknown) =>
-      fetchJson<unknown>(`${API_BASE}/repositories/${id}`, {
+    update: (id: string, data: Partial<Omit<Repository, "id" | "createdAt" | "updatedAt">>) =>
+      fetchJson<Repository>(`${API_BASE}/repositories/${id}`, {
         method: "PATCH",
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
       fetch(`${API_BASE}/repositories/${id}`, { method: "DELETE" }),
+  },
+  settings: {
+    providers: () => fetchJson<SettingsInfo>(`${API_BASE}/settings/providers`),
   },
 };

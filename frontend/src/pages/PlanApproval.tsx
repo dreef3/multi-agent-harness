@@ -67,14 +67,10 @@ export default function PlanApproval() {
         <div className="flex items-center gap-2">
           <span
             className={`text-xs px-3 py-1 rounded-full ${
-              plan.status === "approved"
-                ? "bg-green-600"
-                : plan.status === "rejected"
-                ? "bg-red-600"
-                : "bg-yellow-600"
+              plan.approved ? "bg-green-600" : "bg-yellow-600"
             }`}
           >
-            {plan.status}
+            {plan.approved ? "approved" : "pending approval"}
           </span>
         </div>
       </div>
@@ -96,16 +92,16 @@ export default function PlanApproval() {
                   </span>
                   <div className="flex-1 space-y-2">
                     <p className="text-gray-100">{task.description}</p>
-                    {task.dependencies.length > 0 && (
+                    {task.dependsOn && task.dependsOn.length > 0 && (
                       <p className="text-gray-400 text-sm">
-                        Depends on: {task.dependencies.join(", ")}
+                        Depends on: {task.dependsOn.join(", ")}
                       </p>
                     )}
                     <span
                       className={`inline-block text-xs px-2 py-1 rounded ${
                         task.status === "completed"
                           ? "bg-green-600"
-                          : task.status === "in_progress"
+                          : task.status === "executing"
                           ? "bg-blue-600"
                           : task.status === "failed"
                           ? "bg-red-600"
@@ -122,7 +118,7 @@ export default function PlanApproval() {
         )}
       </div>
 
-      {plan.status === "pending_approval" && (
+      {!plan.approved && (
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
           <h2 className="text-lg font-semibold">Feedback (optional for reject)</h2>
           <textarea

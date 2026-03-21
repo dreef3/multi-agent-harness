@@ -20,8 +20,8 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] },
     },
   ],
-  timeout: 30000,
+  timeout: 60000, // Increased from 30000 for AI response times
   expect: {
-    timeout: 25000,
+    timeout: 50000, // Increased from 25000
   },
 });

@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, Repository } from "../lib/api";
 
 interface JiraIssue {
   key: string;
@@ -30,16 +30,40 @@ export default function NewProject() {
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraError, setJiraError] = useState<string | null>(null);
   const [showJiraPicker, setShowJiraPicker] = useState(false);
+  
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
+  const [repoLoading, setRepoLoading] = useState(true);
+  const [showRepoDropdown, setShowRepoDropdown] = useState(false);
+  
+  useEffect(() => {
+    loadRepositories();
+  }, []);
+
+  async function loadRepositories() {
+    try {
+      setRepoLoading(true);
+      const repos = await api.repositories.list();
+      setRepositories(repos);
+    } catch (err) {
+      console.error("Failed to load repositories:", err);
+    } finally {
+      setRepoLoading(false);
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    if (selectedRepoIds.length === 0) {
+      setError("Please select at least one repository");
+      return;
+    }
 
     try {
       setLoading(true);
       setError(null);
       
-      // Include JIRA tickets in description if selected
       let finalDescription = description;
       if (selectedIssues.length > 0) {
         const jiraContext = selectedIssues
@@ -53,6 +77,7 @@ export default function NewProject() {
       const project = await api.projects.create({
         name: name.trim(),
         description: finalDescription.trim(),
+        repositoryIds: selectedRepoIds,
       });
       navigate(`/projects/${project.id}/chat`);
     } catch (err) {
@@ -219,6 +244,80 @@ export default function NewProject() {
           />
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1">
+            Repositories *
+          </label>
+          {repoLoading ? (
+            <div className="text-gray-400">Loading repositories...</div>
+          ) : repositories.length === 0 ? (
+            <div className="text-gray-400">
+              No repositories configured.{" "}
+              <a href="/settings" className="text-blue-400 hover:text-blue-300">
+                Add repositories in Settings
+              </a>
+            </div>
+          ) : (
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowRepoDropdown(!showRepoDropdown)}
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-left text-white focus:outline-none focus:border-blue-500"
+              >
+                {selectedRepoIds.length === 0
+                  ? "Select repositories..."
+                  : `${selectedRepoIds.length} selected`}
+              </button>
+              {showRepoDropdown && (
+                <div className="absolute z-10 mt-1 w-full bg-gray-800 border border-gray-700 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {repositories.map((repo) => (
+                    <button
+                      key={repo.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRepoIds((prev) =>
+                          prev.includes(repo.id)
+                            ? prev.filter((id) => id !== repo.id)
+                            : [...prev, repo.id]
+                        );
+                      }}
+                      className={`w-full px-4 py-2 text-left hover:bg-gray-700 ${
+                        selectedRepoIds.includes(repo.id) ? "bg-blue-900/50" : ""
+                      }`}
+                    >
+                      <div className="font-medium">{repo.name}</div>
+                      <div className="text-sm text-gray-400">{repo.cloneUrl}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {selectedRepoIds.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {selectedRepoIds.map((id) => {
+                const repo = repositories.find((r) => r.id === id);
+                if (!repo) return null;
+                return (
+                  <span
+                    key={id}
+                    className="bg-blue-900/50 border border-blue-700 rounded px-2 py-1 text-sm flex items-center gap-1"
+                  >
+                    {repo.name}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRepoIds((prev) => prev.filter((rid) => rid !== id))}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
         {error && (
           <div className="bg-red-900/50 border border-red-700 text-red-200 px-4 py-2 rounded-lg">
             {error}
@@ -228,7 +327,7 @@ export default function NewProject() {
         <div className="flex items-center gap-4">
           <button
             type="submit"
-            disabled={loading || !name.trim()}
+            disabled={loading || !name.trim() || selectedRepoIds.length === 0}
             className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-medium"
           >
             {loading ? "Creating..." : "Create Project"}

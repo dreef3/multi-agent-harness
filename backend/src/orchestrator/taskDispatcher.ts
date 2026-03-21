@@ -72,6 +72,7 @@ export class TaskDispatcher {
 
     const sessionId = randomUUID();
     const branchName = `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
+    console.log(`[taskDispatcher] Starting task ${task.id} for project ${project.id}, repo ${repository.id}, branch ${branchName}`);
 
     // Create agent session record
     const agentSession: AgentSession = {
@@ -90,23 +91,29 @@ export class TaskDispatcher {
 
     try {
       // Create branch via VCS connector
+      console.log(`[taskDispatcher] Creating branch ${branchName} in repo ${repository.id}`);
       await this.createBranch(repository, branchName);
+      console.log(`[taskDispatcher] Branch created, spinning up container`);
 
       // Create container
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName,
+        taskDescription: task.description,
       });
 
       // Update session with container ID
       updateAgentSession(sessionId, { containerId, status: "running" });
 
       // Start container
+      console.log(`[taskDispatcher] Starting container ${containerId}`);
       await startContainer(docker, containerId);
 
       // Wait for completion
+      console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
       const completed = await this.waitForCompletion(docker, sessionId, containerId);
+      console.log(`[taskDispatcher] Container completed: ${completed}`);
 
       if (!completed) {
         throw new Error("Task timed out or container failed");
@@ -115,17 +122,26 @@ export class TaskDispatcher {
       // Update session status
       updateAgentSession(sessionId, { status: "completed" });
 
-      // Create PR
-      const pr = await this.createPr(project, repository, agentSession, branchName, task.description);
-
-      return {
-        taskId: task.id,
-        success: true,
-        agentSessionId: sessionId,
-        pullRequestId: pr.id,
-      };
+      // Try to create PR — non-fatal since the branch might have no new commits
+      try {
+        const pr = await this.createPr(project, repository, agentSession, branchName, task.description);
+        return {
+          taskId: task.id,
+          success: true,
+          agentSessionId: sessionId,
+          pullRequestId: pr.id,
+        };
+      } catch (prErr) {
+        console.warn(`[taskDispatcher] PR creation failed for task ${task.id} (non-fatal):`, prErr instanceof Error ? prErr.message : String(prErr));
+        return {
+          taskId: task.id,
+          success: true,
+          agentSessionId: sessionId,
+        };
+      }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[taskDispatcher] Task ${task.id} failed:`, errorMessage);
       updateAgentSession(sessionId, { status: "failed" });
 
       return {

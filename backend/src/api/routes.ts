@@ -6,6 +6,7 @@ import { createAgentsRouter } from "./agents.js";
 import { createJiraRouter } from "./jira.js";
 import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
+import { createSettingsRouter } from "./settings.js";
 import { config } from "../config.js";
 
 export function createRouter(dataDir: string, docker: Dockerode): Router {
@@ -33,6 +34,7 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
   router.use("/jira", createJiraRouter());
   router.use("/pull-requests", createPullRequestsRouter(docker));
   router.use("/webhooks", createWebhooksRouter());
+  router.use("/settings", createSettingsRouter());
 
   return router;
 }

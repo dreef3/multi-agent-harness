@@ -25,7 +25,7 @@ jobs:
       - name: Create .env file
         run: |
           cat > .env << 'EOF'
-          GITHUB_TOKEN=${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
           SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
@@ -121,6 +121,7 @@ jobs:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
           AGENT_PROVIDER: opencode-go
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
         run: bunx playwright test
 

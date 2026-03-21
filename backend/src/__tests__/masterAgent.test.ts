@@ -19,7 +19,10 @@ const mocks = vi.hoisted(() => {
   const mockSessionManager = { create: vi.fn().mockReturnValue({ type: "file" }) };
   const mockSettingsManagerInstance = { type: "in-memory" };
   const mockSettingsManager = { inMemory: vi.fn().mockReturnValue(mockSettingsManagerInstance) };
-  const mockResourceLoaderInstance = { type: "resource-loader" };
+  const mockResourceLoaderInstance = { 
+    type: "resource-loader",
+    reload: vi.fn().mockResolvedValue(undefined),
+  };
   const MockDefaultResourceLoader = vi.fn().mockImplementation(() => mockResourceLoaderInstance);
   const mockAuthStorageInstance = { type: "auth-storage" };
   const mockAuthStorage = { create: vi.fn().mockReturnValue(mockAuthStorageInstance) };

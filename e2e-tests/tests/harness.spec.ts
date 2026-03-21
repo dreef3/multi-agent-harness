@@ -1,7 +1,22 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Multi-Agent Harness E2E', () => {
-  test('create project and run free form request', async ({ page }) => {
+  test('create project and run free form request', async ({ page, request }) => {
+    // Seed a test repository first (required for project creation)
+    const repoResponse = await request.post('http://localhost:3000/api/repositories', {
+      data: {
+        name: 'E2E Test Repo',
+        provider: 'github',
+        providerConfig: {
+          owner: 'dreef3',
+          repo: 'multi-agent-harness-test-repo',
+        },
+        defaultBranch: 'main',
+        cloneUrl: 'https://github.com/dreef3/multi-agent-harness-test-repo.git',
+      },
+    });
+    expect(repoResponse.ok()).toBeTruthy();
+
     // Navigate to the home page
     await page.goto('/');
     
@@ -20,6 +35,12 @@ test.describe('Multi-Agent Harness E2E', () => {
 
     // Fill in description with a free form request
     await page.getByPlaceholder(/what do you want to build/i).fill('Please analyze the codebase structure and tell me what you find');
+
+    // Select repository (required)
+    await page.locator('button:has-text("Select repositories")').click();
+    await page.locator('button:has-text("E2E Test Repo")').first().click();
+    // Close dropdown by clicking outside or pressing Escape
+    await page.keyboard.press('Escape');
     
     // Submit the form
     await page.getByRole('button', { name: /create project/i }).click();
@@ -52,6 +73,17 @@ test.describe('Multi-Agent Harness E2E', () => {
     
     // Take a screenshot for verification
     await page.screenshot({ path: 'test-results/e2e-success.png', fullPage: true });
+
+    // Cleanup: Delete test repository
+    const repos = await request.get('http://localhost:3000/api/repositories');
+    if (repos.ok) {
+      const data = await repos.json();
+      for (const repo of data) {
+        if (repo.name === 'E2E Test Repo') {
+          await request.delete(`http://localhost:3000/api/repositories/${repo.id}`);
+        }
+      }
+    }
   });
   
   test('health check', async ({ request }) => {

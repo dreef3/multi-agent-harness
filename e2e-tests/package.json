@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "test": "bunx playwright test",
+    "test:repo": "bunx playwright test tests/repository-flow.spec.ts",
     "test:ui": "bunx playwright test --ui"
   },
   "devDependencies": {
