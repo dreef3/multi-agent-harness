@@ -320,9 +320,8 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       await svc.recoverOrphanedProject(proj);
 
-      expect(mockNotify).toHaveBeenCalledWith("proj-orphan-1", expect.stringContaining("no tasks"));
-      // project status should NOT be changed — master decides what to do
-      expect(getProject("proj-orphan-1")!.status).toBe("executing");
+      expect(mockNotify).toHaveBeenCalledWith("proj-orphan-1", expect.stringContaining("awaiting_plan_approval"));
+      expect(getProject("proj-orphan-1")!.status).toBe("awaiting_plan_approval"); // reverted
     });
 
     it("calls checkAllTerminal when all tasks are already terminal", async () => {

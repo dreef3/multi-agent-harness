@@ -211,6 +211,15 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         // plan.content and tasks were stored by write_planning_document(type: "plan") tool handler
         const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
 
+        // Invariant: "executing" requires at least one task in the plan
+        if (!project.plan?.tasks?.length) {
+          console.warn(
+            `[polling] LGTM detected for project ${project.id} but plan has no tasks — ` +
+            `not transitioning to "executing". Master agent must add tasks to the plan first.`
+          );
+          continue;
+        }
+
         updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
           status: "executing",

@@ -275,13 +275,13 @@ export class RecoveryService {
    */
   private async recoverOrphanedProject(project: Project): Promise<void> {
     if (!project.plan?.tasks?.length) {
-      console.warn(`[recoveryService] Project ${project.id} is stuck in executing with no tasks — notifying master`);
+      console.warn(`[recoveryService] Project ${project.id} is stuck in "executing" with no tasks — reverting to "awaiting_plan_approval"`);
+      updateProject(project.id, { status: "awaiting_plan_approval" });
       await this.notifyMaster(
         project.id,
-        `[SYSTEM] This project is in "executing" state but has no tasks in its plan. ` +
-        `Sub-agent dispatch was likely never triggered (possibly due to a server restart or ` +
-        `the plan not having structured tasks). Please review the plan content and re-approve ` +
-        `the planning PR to trigger dispatch, or update the project status manually.`
+        `[SYSTEM] This project was stuck in "executing" state with no tasks in its plan. ` +
+        `Status has been reverted to "awaiting_plan_approval". ` +
+        `Please ensure the plan has structured tasks before re-approving.`
       );
       return;
     }
