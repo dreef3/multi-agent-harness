@@ -84,5 +84,35 @@ function migrate(database: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_review_comments_pr ON review_comments (pull_request_id, status);
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    );
+  `);
+
+  // Run idempotent ALTER TABLE migrations
+  const addColumnIfMissing = (table: string, column: string, def: string) => {
+    const cols = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some(c => c.name === column)) {
+      database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+    }
+  };
+
+  addColumnIfMissing("projects", "primary_repository_id", "TEXT");
+  addColumnIfMissing("projects", "planning_branch", "TEXT");
+  addColumnIfMissing("projects", "planning_pr_json", "TEXT");
+
+  // Backfill primary_repository_id from first repositoryId
+  database.exec(`
+    UPDATE projects
+    SET primary_repository_id = json_extract(repository_ids, '$[0]')
+    WHERE primary_repository_id IS NULL
+      AND json_array_length(repository_ids) > 0
+  `);
+
+  // Move any stale awaiting_approval projects to failed
+  database.exec(`
+    UPDATE projects SET status = 'failed' WHERE status = 'awaiting_approval'
   `);
 }
