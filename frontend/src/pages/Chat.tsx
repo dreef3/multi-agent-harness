@@ -160,6 +160,7 @@ export default function Chat() {
                 className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
               >
                 <div
+                  data-testid={msg.role === "assistant" ? "assistant-message" : undefined}
                   className={`max-w-[80%] rounded-lg px-4 py-2 ${
                     msg.role === "user"
                       ? "bg-blue-600 text-white"
