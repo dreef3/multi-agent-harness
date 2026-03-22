@@ -47,10 +47,10 @@ describe("projects store", () => {
 
   it("updates name and status", () => {
     insertProject(baseProject);
-    updateProject("proj-1", { name: "Renamed Project", status: "planning" });
+    updateProject("proj-1", { name: "Renamed Project", status: "executing" });
     const found = getProject("proj-1");
     expect(found?.name).toBe("Renamed Project");
-    expect(found?.status).toBe("planning");
+    expect(found?.status).toBe("executing");
   });
 
   it("updates plan", () => {
