@@ -1,10 +1,10 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server } from "http";
-import { randomUUID } from "crypto";
 import { MasterAgent } from "../agents/masterAgent.js";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { createWritePlanningDocumentTool } from "../agents/planningTool.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
-import { parsePlan } from "../agents/planParser.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 import path from "path";
@@ -14,7 +14,7 @@ const agentSessions = new Map<string, MasterAgent>();
 const agentInitPromises = new Map<string, Promise<MasterAgent>>();
 let globalDataDir = "";
 
-async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
+export async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
   const existing = agentSessions.get(projectId);
   if (existing) { console.log(`[ws] getOrInitAgent(${projectId}): returning cached agent`); return existing; }
 
@@ -26,7 +26,9 @@ async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
     const sessionDir = path.join(globalDataDir, "sessions", projectId);
     fs.mkdirSync(sessionDir, { recursive: true });
     const sessionPath = path.join(sessionDir, "master.jsonl");
-    const agent = new MasterAgent(projectId, sessionPath);
+
+    const planningTool = createWritePlanningDocumentTool(projectId, globalDataDir);
+    const agent = new MasterAgent(projectId, sessionPath, [planningTool as unknown as ToolDefinition]);
     await agent.init();
     agentSessions.set(projectId, agent);
     agentInitPromises.delete(projectId);
@@ -58,42 +60,111 @@ function buildMasterAgentContext(project: Project, repos: Repository[]): string 
   } else if (project.source.type === "github") {
     const parts: string[] = [];
     if (project.source.freeformDescription) parts.push(project.source.freeformDescription);
-    if (project.source.githubIssues?.length) {
-      parts.push(`Issue refs: ${project.source.githubIssues.join(", ")}`);
-    }
+    if (project.source.githubIssues?.length) parts.push(`Issue refs: ${project.source.githubIssues.join(", ")}`);
     if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}`;
   }
 
   return `## Your Role
-You are a master planning agent. Your ONLY job is to understand requirements and produce a structured implementation plan that sub-agents will execute. You must NOT write files, make code changes, or use any tools — output your plan directly as text in your response.
+You are a master planning agent. You operate in two phases, each driven by a
+dedicated superpowers skill. Follow each skill's process exactly.
+
+---
+
+## Phase 1 — Design Spec
+
+Invoke the \`superpowers:brainstorming\` skill. Follow its full process:
+
+1. Explore the project context (repositories, existing code, recent commits).
+2. Ask clarifying questions one at a time (multiple-choice preferred).
+3. Propose 2–3 design approaches with trade-offs and a recommendation.
+4. Present the design in sections; get approval after each section.
+5. Write the spec to:
+   \`docs/superpowers/specs/{YYYY-MM-DD}-{project-slug}-design.md\`
+6. Dispatch the \`spec-document-reviewer\` subagent (from the brainstorming skill's
+   \`spec-document-reviewer-prompt.md\`). Fix any issues and re-dispatch until
+   approved (max 3 iterations; surface to user if still failing after 3).
+7. Ask the user to review the written spec file before proceeding.
+8. Once the user approves the written spec, call:
+   \`write_planning_document(type: "spec", content: <full spec markdown>)\`
+9. After the tool returns, post the PR URL in chat:
+   "The spec is ready for review at {url}. Add a LGTM comment to the PR when you
+   are happy with it."
+
+---
+
+## Phase 2 — Implementation Plan
+
+Triggered when you receive:
+\`[SYSTEM] The spec has been approved (LGTM received on the PR).\`
+
+Invoke the \`superpowers:writing-plans\` skill. Follow its full process:
+
+1. Re-read the approved spec carefully.
+2. Define the file structure and task boundaries.
+3. Write a detailed plan with bite-sized tasks (2–5 min each), each containing:
+   - Files to create/modify/test
+   - Exact code snippets
+   - Exact commands with expected output
+   - Step-by-step checkboxes
+4. Save the plan to:
+   \`docs/superpowers/plans/{YYYY-MM-DD}-{project-slug}-plan.md\`
+   Include this header for the sub-agents that will execute it:
+   > **For agentic workers:** Tasks will be executed by containerised sub-agents.
+   > Each sub-agent receives its task via the TASK_DESCRIPTION environment variable.
+5. Dispatch the \`plan-document-reviewer\` subagent (from the writing-plans skill's
+   \`plan-document-reviewer-prompt.md\`). Fix issues and re-dispatch until approved
+   (max 3 iterations).
+6. Ask the user to review the written plan file before proceeding.
+7. Once the user approves the written plan, call:
+   \`write_planning_document(type: "plan", content: <full plan markdown>)\`
+8. After the tool returns, post the PR URL in chat:
+   "The implementation plan is ready for review at {url}. Add a LGTM comment when
+   you are ready to start implementation."
+
+**Important:** The \`writing-plans\` skill normally ends by asking the user to choose
+between subagent-driven or inline execution. **Skip that step entirely.** In this
+harness, execution is handled automatically by containerised Docker sub-agents after
+the plan LGTM is received. Do not ask about worktrees or execution modes.
+
+The plan must use this task format exactly (used by the task parser):
+
+### Task 1: [Brief Task Title]
+**Repository:** [exact repository name from the list above]
+**Description:**
+[Detailed description — self-contained enough for a sub-agent with no other context]
+
+### Task 2: ...
+
+---
+
+## Phase 3 — Implementation Started
+
+Triggered when you receive:
+\`[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\`
+
+Tell the user:
+"The plan has been approved. Implementation is starting — the sub-agents will take
+it from here. I'll let you know when they're done."
+
+Do NOT invoke any execution skill. Sub-agent execution is handled automatically
+by the harness.
+
+---
+
+## Important Rules
+- Do NOT make code changes yourself at any point.
+- Do NOT skip the spec-document-reviewer or plan-document-reviewer subagent steps.
+- Communicate every state transition explicitly in chat.
+- Follow superpowers skill processes exactly — do not shortcut them.
 
 ## Available Repositories
 ${repoList}
 
-${sourceSection}
-
-## How to Present a Plan
-When you are ready to present a plan, include it directly in your response text using exactly this format (it will be parsed automatically):
-
-### Task 1: [Brief Task Title]
-**Repository:** [repository-name-exactly-as-listed-above]
-**Description:**
-[Detailed description of what to implement]
-
-### Task 2: [Brief Task Title]
-**Repository:** [repository-name-exactly-as-listed-above]
-**Description:**
-[Detailed description]
-
-Important rules:
-- Use the exact repository name from the list above (case-sensitive)
-- Output the plan as plain text in your response — do NOT write it to a file
-- Do NOT attempt to make code changes yourself; sub-agents handle execution
-- You may ask clarifying questions before presenting the plan`;
+${sourceSection}`;
 }
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
-interface WsServerMessage { type: "delta" | "message_complete" | "replay" | "error" | "plan_ready"; [key: string]: unknown; }
+interface WsServerMessage { type: "delta" | "message_complete" | "replay" | "error"; [key: string]: unknown; }
 
 function send(ws: WebSocket, msg: WsServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -126,6 +197,8 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
         const context = buildMasterAgentContext(project, projectRepos);
         promptText = `${context}\n\n---\n\n${msg.text}`;
         console.log(`[ws] final prompt length with context=${promptText.length}`);
+        // Transition to spec_in_progress on first user message
+        updateProject(projectId, { status: "spec_in_progress" });
       }
     }
 
@@ -140,21 +213,9 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
       if (fullResponse) {
         appendMessage(projectId, "assistant", fullResponse);
         console.log(`[ws] assistant message saved`);
-        if (fullResponse.includes("### Task") && fullResponse.includes("**Repository:**")) {
-          const repos = listRepositories();
-          const tasks = parsePlan(projectId, fullResponse, repos);
-          console.log(`[ws] plan detected, parsed ${tasks.length} tasks`);
-          if (tasks.length > 0) {
-            const plan = { id: randomUUID(), projectId, content: fullResponse, tasks, approved: false };
-            updateProject(projectId, { plan, status: "awaiting_approval" });
-            send(ws, { type: "plan_ready", plan });
-            console.log(`[ws] plan_ready sent`);
-          }
-        }
       } else {
         console.warn(`[ws] agent returned empty response (deltaCount=${deltaCount})`);
       }
-      // Send message_complete AFTER appendMessage so the client can safely reload messages
       send(ws, { type: "message_complete" });
       console.log(`[ws] message_complete sent`);
     } catch (err) {
@@ -183,7 +244,6 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     const project = getProject(projectId);
     if (!project) { console.error(`[ws] project not found: ${projectId}`); ws.close(4004, "Project not found"); return; }
 
-    // Buffer messages received before agent is ready to avoid losing them during init
     const pendingMessages: Buffer[] = [];
     let agent: MasterAgent | undefined = agentSessions.get(projectId);
     console.log(`[ws] agent already cached: ${!!agent}`);
@@ -218,12 +278,6 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     }
     for (const raw of pendingMessages) {
       await handleWsMessage(agent, ws, projectId, raw);
-    }
-
-    // If a plan is already awaiting approval, notify the newly connected client
-    const currentProject = getProject(projectId);
-    if (currentProject?.plan && !currentProject.plan.approved) {
-      send(ws, { type: "plan_ready", plan: currentProject.plan });
     }
   });
 }

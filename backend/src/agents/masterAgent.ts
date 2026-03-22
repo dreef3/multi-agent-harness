@@ -1,5 +1,6 @@
 import { EventEmitter } from "events";
 import { createAgentSession, SessionManager, SettingsManager, DefaultResourceLoader, ModelRegistry, AuthStorage } from "@mariozechner/pi-coding-agent";
+import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import path from "path";
 import { config } from "../config.js";
 import { existsSync } from "fs";
@@ -12,7 +13,11 @@ interface PiEvent {
 export class MasterAgent extends EventEmitter {
   private session: Awaited<ReturnType<typeof createAgentSession>>["session"] | null = null;
 
-  constructor(private readonly projectId: string, private readonly sessionFilePath: string) {
+  constructor(
+    private readonly projectId: string,
+    private readonly sessionFilePath: string,
+    private readonly customTools: ToolDefinition[] = []
+  ) {
     super();
   }
 
@@ -21,7 +26,6 @@ export class MasterAgent extends EventEmitter {
     const sessionDir = path.dirname(this.sessionFilePath);
     const settingsManager = SettingsManager.inMemory();
 
-    // Find superpowers skills directory
     const superpowersSkillsPaths = this.findSuperpowersSkills();
 
     const resourceLoader = new DefaultResourceLoader({
@@ -33,7 +37,6 @@ export class MasterAgent extends EventEmitter {
       additionalSkillPaths: superpowersSkillsPaths,
     });
 
-    // Reload to discover skills
     console.log(`[MasterAgent:${this.projectId}] loading resources...`);
     await resourceLoader.reload();
 
@@ -52,6 +55,7 @@ export class MasterAgent extends EventEmitter {
       resourceLoader,
       modelRegistry,
       ...(model ? { model } : {}),
+      ...(this.customTools.length > 0 ? { customTools: this.customTools } : {}),
     });
     console.log(`[MasterAgent:${this.projectId}] session created`);
 
@@ -74,25 +78,17 @@ export class MasterAgent extends EventEmitter {
 
   private findSuperpowersSkills(): string[] {
     const possiblePaths = [
-      // Installed in node_modules
       path.join(process.cwd(), "node_modules", "superpowers", "skills"),
-      // Global install
       path.join(process.env.HOME || "", ".local", "share", "npm", "node_modules", "superpowers", "skills"),
-      // Bun global install
       path.join(process.env.HOME || "", ".bun", "install", "global", "node_modules", "superpowers", "skills"),
     ];
-    
     const skillPaths: string[] = [];
     for (const p of possiblePaths) {
-      if (existsSync(p)) {
-        skillPaths.push(p);
-      }
+      if (existsSync(p)) skillPaths.push(p);
     }
-    
     if (skillPaths.length === 0) {
       console.warn("[MasterAgent] No superpowers skills directory found. Skills may not be available.");
     }
-    
     return skillPaths;
   }
 
