@@ -15,16 +15,15 @@ The current master agent is an in-process LLM wrapper (`MasterAgent` in `websock
 
 1. Give the planning agent access to cloned project repositories at a well-known filesystem path
 2. Move planning logic out of the backend process and into an isolated Docker container (same infrastructure as implementation sub-agents)
-3. Allow the planning agent to dispatch and communicate with implementation sub-agents via HTTP tools calling the backend API
+3. Allow the planning agent to dispatch and communicate with implementation sub-agents via typed SDK tools calling the backend API
 4. Allow implementation sub-agents to report completion back to the planning agent automatically
-5. Keep the existing WebSocket chat interface working — users continue chatting through the browser
+5. Keep the existing WebSocket chat interface working — users continue chatting through the browser, with streaming tokens and tool call indicators
 
 ---
 
 ## Non-Goals
 
 - Persistent planning agent process between unrelated projects (one container per project)
-- Streaming tokens back to the frontend in real time (full-turn messages only, for now)
 - Planning agent writing to repo branches directly (only implementation sub-agents write code)
 - GUI changes beyond the existing chat UX
 
@@ -33,19 +32,19 @@ The current master agent is an in-process LLM wrapper (`MasterAgent` in `websock
 ## Architecture
 
 ```
-Browser ──WS──▶ backend/websocket.ts ──attach──▶ planning-agent container
-                                                  │
-                                                  │  HTTP tools
-                                                  ▼
-                                        http://backend:3000/api/
-                                                  │
-                                                  ▼
-                                        RecoveryService ──▶ implementation containers
-                                                  │
-                                                  └─ completion events ──▶ planning-agent stdin
+Browser ──WS──▶ backend/websocket.ts ──JSON-RPC (stdin/stdout)──▶ planning-agent container
+                                                                    │
+                                                                    │  SDK custom tools → HTTP
+                                                                    ▼
+                                                          http://backend:3000/api/
+                                                                    │
+                                                                    ▼
+                                                          RecoveryService ──▶ implementation containers
+                                                                    │
+                                                                    └─ completion events ──▶ planning-agent stdin (JSON-RPC prompt)
 ```
 
-The backend proxies WebSocket messages to/from the planning agent container via Docker stdin/stdout attach. The planning agent calls backend API endpoints as tools. Implementation sub-agents push their completion events back into the planning agent's stdin as `[SYSTEM]` messages.
+The backend communicates with the planning agent container via the pi SDK's JSON-RPC protocol over Docker stdin/stdout attach. The planning agent has typed SDK tools that call backend API endpoints over HTTP. Implementation sub-agent completions are injected as new prompts into the planning agent via the same RPC channel.
 
 ---
 
@@ -53,20 +52,26 @@ The backend proxies WebSocket messages to/from the planning agent container via 
 
 ### Image
 
-`planning-agent/` at the repo root — a new top-level directory alongside `backend/` and `frontend/`. Contains:
+`planning-agent/` at the repo root — a new top-level directory alongside `backend/`, `sub-agent/`, and `frontend/`. Contains:
 
 ```
 planning-agent/
-  Dockerfile          # FROM node:22-slim; installs git + claude-code CLI
-  run.sh              # entrypoint: clone repos, exec claude
+  Dockerfile          # FROM node:22-slim; installs git + pi package
+  runner.mjs          # entrypoint: clone repos, create session with custom tools, run RPC mode
   system-prompt.md    # planning-specific system prompt template
 ```
 
-The container runs a single `claude` CLI process with `--dangerously-skip-permissions` for non-interactive approval and with stdin/stdout available for the attach stream. The entrypoint:
+The container mirrors the `sub-agent/` pattern: a `runner.mjs` script imports `@mariozechner/pi-coding-agent`, creates an `AgentSession` with custom tools and a custom system prompt, then calls `runRpcMode(session)`. This exposes the pi JSON-RPC protocol on stdin/stdout for the backend to speak.
+
+The entrypoint (`runner.mjs`):
 
 1. Clones all project repositories into `/workspace/{repoName}/` using `GIT_CLONE_URLS` env var (JSON array of `{name, url}`)
-2. Writes the rendered system prompt to a temp file
-3. Execs `claude --dangerously-skip-permissions --system-prompt-file <path>` (or `--print` mode with `--continue` for per-turn invocations — see Container Lifecycle below)
+2. Creates an `AgentSession` with:
+   - Custom system prompt (from `system-prompt.md`, with project context injected)
+   - `codingTools` (read, bash, edit, write) scoped to `/workspace/`
+   - Custom tools for backend API calls (see Tools section)
+   - Session persisted to `/pi-agent/sessions/planning-{projectId}.jsonl` on the shared volume
+3. Calls `runRpcMode(session)` — blocks, speaking JSON-RPC on stdin/stdout until the process exits
 
 ### Repository Access
 
@@ -75,33 +80,31 @@ Repos are cloned at container startup using credentials passed via env:
 - `GIT_CLONE_URLS` — JSON array of `{ name: string; url: string }` objects (authenticated HTTPS URLs including token)
 - Each repo lands at `/workspace/{repoName}/` and is readable by the agent
 
-The system prompt tells the agent: "Project repositories are available at `/workspace/`. Use standard shell tools to read source code."
+The system prompt tells the agent: "Project repositories are available at `/workspace/`. Use standard file tools to read source code."
 
 ### Tools
 
-The planning agent has access to backend API endpoints via HTTP tool calls:
+The planning agent has four custom SDK tools (registered via `customTools` in `createAgentSession`) that call the backend API:
 
 | Tool | Endpoint | Purpose |
 |------|----------|---------|
 | `dispatch_tasks` | `POST /api/projects/:id/tasks` | Submit plan tasks for dispatch |
 | `get_task_status` | `GET /api/projects/:id/tasks` | Poll task completion status |
-| `restart_failed_tasks` | `POST /api/projects/:id/tasks/restart` | Re-dispatch permanently-failed tasks |
-| `get_pull_requests` | `GET /api/pull-requests/project/:id` | List PRs created by sub-agents |
+| `restart_failed_tasks` | `POST /api/projects/:id/tasks/restart` | Re-dispatch permanently-failed tasks (new endpoint, wraps `RecoveryService.dispatchFailedTasks`) |
+| `get_pull_requests` | `GET /api/pull-requests/project/:id` | List PRs created by sub-agents (endpoint already exists) |
 
-These tools call `http://backend:3000/api/` from inside the container on the `harness-agents` Docker network (same network used by implementation sub-agents).
-
-Tool definitions are injected via the system prompt as JSON schemas (claude-code MCP format or `--allowedTools` flag, TBD during implementation).
+Each tool's `execute` function makes a `fetch` call to `http://backend:3000/api/` on the `harness-agents` Docker network (same network used by implementation sub-agents). `PROJECT_ID` and `BACKEND_URL` are passed as env vars.
 
 ### Container Lifecycle
 
 - **Start:** Backend starts the container when a project needs a planning agent (first WebSocket connection for a project, or after a LGTM triggers task dispatch). Container runs with `docker run -d --name planning-{projectId} ...`.
-- **Keep-alive:** Container stays running while there is activity — active WebSocket connections or running implementation sub-agents for the project.
-- **Stop:** Backend stops the container when the project reaches a terminal state (`completed` / `failed`) or when the last WebSocket client disconnects and all sub-agents finish.
-- **Restart:** If the backend restarts and a `planning-{projectId}` container already exists (created externally or from a prior run), the backend attaches to it rather than creating a new one. This reuses the existing filesystem context, including already-cloned repos.
+- **Keep-alive:** Container stays running while there is any activity: at least one active WebSocket connection for the project OR at least one running/starting implementation sub-agent session for the project.
+- **Stop:** `PlanningAgentManager` tracks an open-connections counter per project. When it reaches zero AND `RecoveryService.checkAllTerminal` fires (all tasks terminal), `PlanningAgentManager.stopContainer(projectId)` is called. `RecoveryService.checkAllTerminal` calls a new `PlanningAgentManager.onProjectTerminal(projectId)` hook to trigger this check. WebSocket connect/disconnect events update the counter and also trigger the same stop check.
+- **Restart:** If the backend restarts and a `planning-{projectId}` container already exists (from a prior run), the backend attaches to it rather than creating a new one. This reuses the existing filesystem context including already-cloned repos.
 
-### Named Volume for Session Continuity
+### Session Continuity
 
-The Claude CLI session JSONL (`~/.claude/projects/.../session.jsonl`) is stored on a Docker named volume `planning-sessions` mounted at `/root/.claude/`. This persists conversation history across container restarts and backend process restarts.
+The pi session JSONL is stored on the existing `harness-pi-auth` Docker named volume (same volume already used by sub-agents and the backend), mounted at `/pi-agent/` in the planning agent container. Session file path: `/pi-agent/sessions/planning-{projectId}.jsonl`. `runner.mjs` uses `SessionManager.open(sessionPath)` to continue an existing session or `SessionManager.create(cwd, sessionDir)` to start a new one.
 
 ---
 
@@ -126,24 +129,44 @@ class PlanningAgentManager {
   // Send a user or system message to the planning agent for a project
   async sendPrompt(projectId: string, message: string): Promise<void>
 
-  // Register a callback for output from the planning agent
-  onOutput(projectId: string, handler: (text: string) => void): () => void
+  // Register callbacks for streaming output and tool call events from the planning agent
+  onOutput(projectId: string, handler: (event: PlanningAgentEvent) => void): () => void
 
   // True if the container for this project is running
   isRunning(projectId: string): boolean
 
   // Stop the container for this project
   async stopContainer(projectId: string): Promise<void>
+
+  // Called by RecoveryService when all tasks reach terminal state
+  onProjectTerminal(projectId: string): void
 }
+
+type PlanningAgentEvent =
+  | { type: "delta"; text: string }
+  | { type: "tool_call"; toolName: string; args?: Record<string, unknown> }
+  | { type: "message_complete" }
+  | { type: "conversation_complete" }
 ```
 
 ### Concurrency
 
-Each project has at most one active planning container. `sendPrompt` queues messages if a prior prompt is still streaming — it does not interrupt mid-turn. The queue drains in FIFO order.
+Each project has at most one active planning container. `sendPrompt` queues messages if the agent is currently streaming (RPC `isStreaming` state) — it does not interrupt mid-turn. The queue drains in FIFO order using the RPC `follow_up` command for system injections and `prompt` for user messages.
 
 ### Communication Protocol
 
-The backend attaches to the container's stdin/stdout via `docker.getContainer(id).attach({ stream: true, stdin: true, stdout: true, stderr: true })`. Text from stdout is buffered and emitted via `onOutput` callbacks. Text written to stdin is the raw user/system message text followed by `\n`.
+The backend attaches to the container via `docker.getContainer(id).attach({ stream: true, stdin: true, stdout: true, stderr: true })`. The pi SDK's **JSON-RPC protocol** runs over this channel:
+
+- **Input (stdin):** `sendPrompt` writes a JSON-RPC command followed by `\n`:
+  - User messages: `{"type": "prompt", "message": "<text>"}\n`
+  - System injections during streaming: `{"type": "follow_up", "message": "<text>"}\n`
+- **Output (stdout):** A stream of newline-delimited JSON events. The backend parses each line and maps to `PlanningAgentEvent`:
+  - `{"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "..."}}` → `{ type: "delta", text }`
+  - `{"type": "tool_execution_start", "toolName": "...", "args": {...}}` → `{ type: "tool_call", toolName, args }`
+  - `{"type": "message_end"}` → `{ type: "message_complete" }`
+  - `{"type": "agent_end"}` → `{ type: "conversation_complete" }`
+
+stderr is captured separately for logging but not forwarded to the frontend.
 
 ---
 
@@ -157,21 +180,26 @@ When a WebSocket message arrives with `type: "prompt"`, instead of calling `agen
 
 ### Outbound (planning agent → browser)
 
-The `PlanningAgentManager.onOutput` callback streams planning agent output to all connected WebSocket clients for the project, the same way `MasterAgent` output events are currently forwarded.
+`PlanningAgentManager.onOutput` emits typed `PlanningAgentEvent` objects. The backend maps these to the existing WS message types:
+
+- `delta` → `{ type: "delta", text }` — forwarded to all connected clients
+- `tool_call` → `{ type: "tool_call", toolName, args }` — forwarded to all connected clients
+- `message_complete` → `{ type: "message_complete" }` — triggers message persistence + broadcast
+- `conversation_complete` → `{ type: "conversation_complete" }` — broadcast
+
+This preserves the existing frontend behaviour: streaming bubble, tool call indicators, message persistence on completion.
 
 ### LGTM Approval
 
-When polling detects a LGTM comment and transitions the project to `executing`, it injects a system message into the planning agent via `getPlanningAgentManager().sendPrompt(projectId, "[SYSTEM] Plan approved. Begin dispatching tasks.")` rather than calling `getOrInitAgent().prompt()`.
+When polling detects a LGTM comment and transitions the project to `executing`, it injects a system message via `getPlanningAgentManager().sendPrompt(projectId, "[SYSTEM] Plan approved. Begin dispatching tasks.")` rather than calling `getOrInitAgent().prompt()`.
 
 ### Sub-Agent Completion Injection
 
-When `RecoveryService.checkAllTerminal` or `notifyMasterPartialFailure` wants to notify the master agent, instead of calling `agent.prompt(message)`, it calls `getPlanningAgentManager().sendPrompt(projectId, message)`. This injects the completion status as a new turn for the planning agent to act on.
+When `RecoveryService.checkAllTerminal` or `notifyMasterPartialFailure` wants to notify the planning agent, it calls `getPlanningAgentManager().sendPrompt(projectId, message)`. This injects the completion status as a new turn for the planning agent to act on.
 
 ---
 
 ## New API Endpoints
-
-Two new endpoints support planning agent tool calls:
 
 ### `POST /api/projects/:id/tasks`
 
@@ -181,7 +209,7 @@ Accepts a task list and dispatches them via `RecoveryService.dispatchTasksForPro
 ```json
 {
   "tasks": [
-    { "id": "...", "repositoryId": "...", "description": "...", "status": "pending" }
+    { "id": "...", "repositoryId": "...", "description": "..." }
   ]
 }
 ```
@@ -194,28 +222,36 @@ Returns the current task list with statuses. Called by the planning agent `get_t
 
 **Response:** `{ "tasks": PlanTask[] }`
 
+### `POST /api/projects/:id/tasks/restart`
+
+Re-queues all permanently-failed tasks and dispatches them. Wraps `RecoveryService.dispatchFailedTasks(projectId)`.
+
+**Response:** `{ "count": number }` — number of tasks re-queued.
+
 ---
 
 ## Migration from MasterAgent
 
 1. `MasterAgent` class and its `getOrInitAgent` factory are removed
 2. `websocket.ts` imports `PlanningAgentManager` instead
-3. `restartFailedTasksTool` wiring moves from `getOrInitAgent` tool list to planning agent system prompt / tool injection
+3. Custom backend-dispatch tools (`restart_failed_tasks` etc.) move from `getOrInitAgent` tool list to planning agent `customTools` in `runner.mjs`
 4. `RecoveryService.notifyMaster` implementation switches from `getOrInitAgent().prompt()` to `getPlanningAgentManager().sendPrompt()`
 
 ---
 
 ## Testing
 
-- Unit tests for `PlanningAgentManager`: mock Docker client, verify `sendPrompt` queuing, `onOutput` registration, `stopContainer`
+- Unit tests for `PlanningAgentManager`: mock Docker client, verify `sendPrompt` queuing, `onOutput` event mapping (delta, tool_call, message_complete, conversation_complete), `stopContainer`
+- Unit tests for new `/api/projects/:id/tasks` and `/api/projects/:id/tasks/restart` endpoints
 - Integration test (extends existing E2E pattern): project created → planning agent started → LGTM posted → planning agent dispatches task → sub-agent completes → completion injected back → project reaches `completed`
-- Unit tests for new `/api/projects/:id/tasks` endpoint: verify dispatch call and status response
 
 ---
 
 ## Open Questions (resolved during design)
 
 - **Per-turn vs persistent process:** Persistent process (container stays running) to preserve repo state and conversation context — avoids re-cloning on every turn.
-- **Communication channel:** Docker stdin/stdout attach (bidirectional, low-latency) rather than named pipes or HTTP polling.
-- **Session continuity:** Named Docker volume for JSONL session file — persists conversation across backend restarts without manual handoff.
-- **Tool mechanism:** HTTP calls from inside container to `http://backend:3000/api/` on the `harness-agents` Docker network — same pattern used by implementation sub-agents.
+- **Communication channel:** pi JSON-RPC protocol over Docker stdin/stdout attach — structured events, no fragile text parsing.
+- **Turn end detection:** `agent_end` RPC event — reliable, no idle timeout heuristic needed.
+- **Streaming and tool call visibility:** Both work natively via RPC events (`text_delta` → WS `delta`, `tool_execution_start` → WS `tool_call`). No extra work required in the frontend.
+- **Tool mechanism:** Typed SDK `customTools` in `runner.mjs` — fetch calls to `http://backend:3000/api/` on the `harness-agents` network.
+- **Session continuity:** Pi session JSONL stored on the existing `harness-pi-auth` named volume at a per-project path.
