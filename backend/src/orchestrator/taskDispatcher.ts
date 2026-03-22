@@ -149,6 +149,7 @@ Stage and commit all changes. The harness will open the pull request automatical
         repoCloneUrl: repository.cloneUrl,
         branchName,
         taskDescription: this.buildTaskPrompt(task),
+        taskId: task.id,
       });
 
       // Update session with container ID

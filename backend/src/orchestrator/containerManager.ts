@@ -43,6 +43,7 @@ export interface ContainerCreateOptions {
   taskDescription?: string;
   agentProvider?: string;
   agentModel?: string;
+  taskId?: string;
 }
 
 export async function createSubAgentContainer(docker: Dockerode, opts: ContainerCreateOptions): Promise<string> {
@@ -54,6 +55,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
     `AGENT_PROVIDER=${opts.agentProvider ?? config.agentProvider}`,
     `AGENT_MODEL=${opts.agentModel ?? config.models[config.agentProvider as keyof typeof config.models]?.workerAgent?.model ?? "minimax-m2.7"}`,
+    `TASK_ID=${opts.taskId ?? ""}`,
   ];
 
   const container = await docker.createContainer({

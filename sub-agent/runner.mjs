@@ -21,6 +21,7 @@ const TASK_DESCRIPTION =
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "opencode-go";
 const AGENT_MODEL = process.env.AGENT_MODEL ?? "minimax-m2.7";
+const TASK_ID = process.env.TASK_ID ?? "unknown";
 
 /** Run a shell command, redacting secrets from log output. */
 function exec(cmd, opts = {}) {
@@ -39,8 +40,10 @@ function git(...args) {
 }
 
 // ── Git setup ────────────────────────────────────────────────────────────────
-exec("git config --global user.email sub-agent@harness");
-exec("git config --global user.name 'Sub Agent'");
+const GIT_AUTHOR_NAME = process.env.GIT_COMMIT_AUTHOR_NAME ?? "Harness Bot";
+const GIT_AUTHOR_EMAIL = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply";
+exec(`git config --global user.email "${GIT_AUTHOR_EMAIL}"`);
+exec(`git config --global user.name "${GIT_AUTHOR_NAME}"`);
 
 // Build authenticated HTTPS clone URL
 let cloneUrl = REPO_CLONE_URL;
@@ -107,11 +110,12 @@ try {
 }
 
 // ── Commit & push ─────────────────────────────────────────────────────────────
+let exitCode = aiSucceeded ? 0 : 1;
+
 try {
   git("add", "-A");
   const diff = execSync("git diff --cached --stat").toString().trim();
   if (!diff) {
-    // No staged changes — create a marker so there's always something to commit
     const note = aiSucceeded
       ? "AI agent completed but made no file changes."
       : "AI agent unavailable; placeholder created.";
@@ -131,7 +135,35 @@ try {
   }
 } catch (commitErr) {
   console.warn("[sub-agent] Commit/push failed:", commitErr.message);
+  exitCode = 1;
 }
 
-console.log("[sub-agent] Done");
-process.exit(0);
+// ── Commit session log ────────────────────────────────────────────────────────
+try {
+  const { mkdirSync, copyFileSync, existsSync: fsExistsSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const sessionJsonl = join(sessionDir, "session.jsonl");
+  const logDir = `.harness/logs/sub-agents/${TASK_ID}`;
+  const logDest = `${logDir}/session.jsonl`;
+
+  if (fsExistsSync(sessionJsonl)) {
+    mkdirSync(logDir, { recursive: true });
+    copyFileSync(sessionJsonl, logDest);
+    git("add", logDest);
+    const logDiff = execSync("git diff --cached --stat").toString().trim();
+    if (logDiff) {
+      git("commit", "-m", `chore: add agent log for task ${TASK_ID}`);
+      git("push", "origin", `HEAD:${BRANCH_NAME}`);
+      console.log("[sub-agent] Session log committed for task:", TASK_ID);
+    }
+  } else {
+    console.warn("[sub-agent] No session.jsonl found at:", sessionJsonl);
+  }
+} catch (logErr) {
+  // Best-effort — do not change exit code
+  console.warn("[sub-agent] Failed to commit session log:", logErr.message);
+}
+
+console.log("[sub-agent] Done, exit code:", exitCode);
+process.exit(exitCode);
