@@ -40,8 +40,6 @@ export default function Dashboard() {
     awaiting_spec_approval: "bg-amber-600",
     plan_in_progress: "bg-blue-600",
     awaiting_plan_approval: "bg-amber-600",
-    planning: "bg-yellow-600",
-    approved: "bg-green-600",
     executing: "bg-blue-700",
     completed: "bg-purple-600",
     failed: "bg-red-600",
@@ -50,6 +48,7 @@ export default function Dashboard() {
   };
 
   const statusLabels: Record<string, string> = {
+    draft: "Draft",
     brainstorming: "Brainstorming",
     spec_in_progress: "Writing Spec",
     awaiting_spec_approval: "Awaiting Spec Approval",
@@ -59,6 +58,7 @@ export default function Dashboard() {
     completed: "Completed",
     failed: "Failed",
     cancelled: "Cancelled",
+    error: "Error",
   };
 
   if (loading) return <div className="text-gray-400">Loading...</div>;
@@ -110,13 +110,15 @@ export default function Dashboard() {
                 >
                   Chat
                 </Link>
-                {project.status === "awaiting_plan_approval" && (
-                  <Link
-                    to={`/projects/${project.id}/plan`}
-                    className="text-green-400 hover:text-green-300 px-3 py-1 text-sm"
+                {(project.status === "awaiting_spec_approval" || project.status === "awaiting_plan_approval") && project.planningPr?.url && (
+                  <a
+                    href={project.planningPr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-amber-400 hover:text-amber-300 px-3 py-1 text-sm"
                   >
-                    Review Plan
-                  </Link>
+                    Review PR ↗
+                  </a>
                 )}
                 {project.status === "executing" && (
                   <Link

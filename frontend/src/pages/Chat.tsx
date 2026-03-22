@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { api, Message, Project } from "../lib/api";
 import { wsClient } from "../lib/ws";
 
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const location = useLocation();
   const locationProject = (location.state as { project?: Project } | null)?.project;
   const [messages, setMessages] = useState<Message[]>([]);
@@ -60,7 +59,7 @@ export default function Chat() {
     return () => {
       unsubscribe();
     };
-  }, [id, navigate]);
+  }, [id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -111,12 +110,6 @@ export default function Chat() {
     <div className="h-[calc(100vh-8rem)] flex flex-col space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Chat</h1>
-        <button
-          onClick={() => navigate(`/projects/${id}/plan`)}
-          className="text-green-400 hover:text-green-300 text-sm"
-        >
-          View Plan →
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-4 bg-gray-900 border border-gray-800 rounded-lg p-4">
