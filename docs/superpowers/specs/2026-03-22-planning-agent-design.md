@@ -88,9 +88,8 @@ The planning agent has four custom SDK tools (registered via `customTools` in `c
 
 | Tool | Endpoint | Purpose |
 |------|----------|---------|
-| `dispatch_tasks` | `POST /api/projects/:id/tasks` | Submit plan tasks for dispatch |
+| `dispatch_tasks` | `POST /api/projects/:id/tasks` | Submit or re-submit tasks for dispatch (handles both new tasks and retrying failed ones) |
 | `get_task_status` | `GET /api/projects/:id/tasks` | Poll task completion status |
-| `restart_failed_tasks` | `POST /api/projects/:id/tasks/restart` | Re-dispatch permanently-failed tasks (new endpoint, wraps `RecoveryService.dispatchFailedTasks`) |
 | `get_pull_requests` | `GET /api/pull-requests/project/:id` | List PRs created by sub-agents (endpoint already exists) |
 
 Each tool's `execute` function makes a `fetch` call to `http://backend:3000/api/` on the `harness-agents` Docker network (same network used by implementation sub-agents). `PROJECT_ID` and `BACKEND_URL` are passed as env vars.
@@ -222,19 +221,13 @@ Returns the current task list with statuses. Called by the planning agent `get_t
 
 **Response:** `{ "tasks": PlanTask[] }`
 
-### `POST /api/projects/:id/tasks/restart`
-
-Re-queues all permanently-failed tasks and dispatches them. Wraps `RecoveryService.dispatchFailedTasks(projectId)`.
-
-**Response:** `{ "count": number }` — number of tasks re-queued.
-
 ---
 
 ## Migration from MasterAgent
 
 1. `MasterAgent` class and its `getOrInitAgent` factory are removed
 2. `websocket.ts` imports `PlanningAgentManager` instead
-3. Custom backend-dispatch tools (`restart_failed_tasks` etc.) move from `getOrInitAgent` tool list to planning agent `customTools` in `runner.mjs`
+3. `restartFailedTasksTool.ts` and `RecoveryService.dispatchFailedTasks` are deleted — superseded by the planning agent calling `dispatch_tasks` directly
 4. `RecoveryService.notifyMaster` implementation switches from `getOrInitAgent().prompt()` to `getPlanningAgentManager().sendPrompt()`
 
 ---
