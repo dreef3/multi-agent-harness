@@ -6,13 +6,10 @@ import { getRepository } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
-import { TaskDispatcher } from "../orchestrator/taskDispatcher.js";
 import { preInitAgent } from "./websocket.js";
 
 export function createProjectsRouter(docker: Dockerode): Router {
   const router = Router();
-  const taskDispatcher = new TaskDispatcher();
-
   // List all projects
   router.get("/", (_req, res) => {
     const projects = listProjects();
@@ -31,9 +28,14 @@ export function createProjectsRouter(docker: Dockerode): Router {
 
   // Create a new project
   router.post("/", (req, res) => {
-    const { name, description, source, repositoryIds } = req.body;
+    const { name, description, source, repositoryIds, primaryRepositoryId } = req.body;
     if (!name) {
       res.status(400).json({ error: "Missing required field: name" });
+      return;
+    }
+
+    if (!repositoryIds || (Array.isArray(repositoryIds) && repositoryIds.length === 0)) {
+      res.status(400).json({ error: "At least one repository is required" });
       return;
     }
 
@@ -52,6 +54,10 @@ export function createProjectsRouter(docker: Dockerode): Router {
       }
     }
 
+    const resolvedRepoIds: string[] = repositoryIds || [];
+    const resolvedPrimaryRepoId: string | undefined =
+      primaryRepositoryId ?? (resolvedRepoIds.length === 1 ? resolvedRepoIds[0] : undefined);
+
     const now = new Date().toISOString();
     const project: Project = {
       id: randomUUID(),
@@ -61,7 +67,8 @@ export function createProjectsRouter(docker: Dockerode): Router {
         type: "freeform",
         freeformDescription: description || "",
       },
-      repositoryIds: repositoryIds || [],
+      repositoryIds: resolvedRepoIds,
+      primaryRepositoryId: resolvedPrimaryRepoId,
       masterSessionPath: "",
       createdAt: now,
       updatedAt: now,
@@ -113,38 +120,6 @@ export function createProjectsRouter(docker: Dockerode): Router {
     }
     const sessions = listAgentSessions(req.params.id);
     res.json(sessions);
-  });
-
-  // Approve plan
-  router.post("/:id/approve", async (req, res) => {
-    const project = getProject(req.params.id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    if (!project.plan) {
-      res.status(400).json({ error: "No plan to approve" });
-      return;
-    }
-    if (project.plan.approved) {
-      res.status(400).json({ error: "Plan already approved" });
-      return;
-    }
-
-    const approvedPlan = {
-      ...project.plan,
-      approved: true,
-      approvedAt: new Date().toISOString(),
-    };
-    updateProject(req.params.id, { plan: approvedPlan, status: "executing" });
-
-    // Start dispatching tasks asynchronously
-    // Don't await - let it run in background
-    taskDispatcher.dispatchTasks(docker, req.params.id).catch(err => {
-      console.error(`Task dispatch failed for project ${req.params.id}:`, err);
-    });
-
-    res.json({ success: true, plan: approvedPlan });
   });
 
   // Delete project
