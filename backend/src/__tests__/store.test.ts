@@ -4,9 +4,34 @@ import os from "os";
 import path from "path";
 import fs from "fs";
 import { insertRepository, getRepository, listRepositories, updateRepository, deleteRepository } from "../store/repositories.js";
-import type { Repository } from "../models/types.js";
+import type { Repository, Project } from "../models/types.js";
 import { insertAgentSession, getAgentSession, listAgentSessions, updateAgentSession } from "../store/agents.js";
 import type { AgentSession } from "../models/types.js";
+import { insertProject, getProject, updateTaskInPlan } from "../store/projects.js";
+
+function makeProject(overrides: Partial<Project> = {}): Project {
+  const now = new Date().toISOString();
+  return {
+    id: "proj-1",
+    name: "Test Project",
+    status: "executing" as const,
+    source: { type: "freeform" as const, freeformDescription: "test" },
+    repositoryIds: ["repo-1"],
+    masterSessionPath: "",
+    createdAt: now,
+    updatedAt: now,
+    plan: {
+      id: "plan-1",
+      projectId: "proj-1",
+      content: "# Plan",
+      tasks: [
+        { id: "task-1", repositoryId: "repo-1", description: "Do A", status: "pending" as const },
+        { id: "task-2", repositoryId: "repo-1", description: "Do B", status: "pending" as const },
+      ],
+    },
+    ...overrides,
+  };
+}
 
 describe("db", () => {
   let tmpDir: string;
@@ -134,5 +159,37 @@ describe("agent sessions store", () => {
   });
   it("throws when updating a nonexistent session", () => {
     expect(() => updateAgentSession("missing", { status: "failed" })).toThrow("AgentSession not found");
+  });
+});
+
+describe("updateTaskInPlan", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
+    initDb(tmpDir);
+    insertProject(makeProject());
+  });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("updates the target task without touching sibling tasks", () => {
+    updateTaskInPlan("proj-1", "task-1", { status: "executing", retryCount: 0 });
+    const project = getProject("proj-1")!;
+    const t1 = project.plan!.tasks.find(t => t.id === "task-1")!;
+    const t2 = project.plan!.tasks.find(t => t.id === "task-2")!;
+    expect(t1.status).toBe("executing");
+    expect(t1.retryCount).toBe(0);
+    expect(t2.status).toBe("pending");
+  });
+
+  it("does nothing when project has no plan", () => {
+    const proj2: Project = { ...makeProject(), id: "proj-2", plan: undefined };
+    insertProject(proj2);
+    expect(() => updateTaskInPlan("proj-2", "task-1", { status: "completed" })).not.toThrow();
+  });
+
+  it("does nothing when taskId is not found", () => {
+    expect(() => updateTaskInPlan("proj-1", "nonexistent", { status: "completed" })).not.toThrow();
+    const project = getProject("proj-1")!;
+    expect(project.plan!.tasks[0].status).toBe("pending");
   });
 });

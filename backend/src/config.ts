@@ -22,7 +22,12 @@ export const config = {
     process.env.SUB_AGENT_IDLE_TIMEOUT_MS ?? String(60 * 60 * 1000),
     10
   ),
-  subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "3", 10),
+  // Must exceed subAgentTimeoutMs (default 30 min). Use literal — config object cannot reference its own properties during construction.
+  staleSessionThresholdMs: parseInt(
+    process.env.STALE_SESSION_THRESHOLD_MS ?? String(35 * 60 * 1000),
+    10
+  ),
+  subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "1", 10),
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
   // Named Docker volume shared between backend and sub-agents for pi agent auth (OAuth tokens)

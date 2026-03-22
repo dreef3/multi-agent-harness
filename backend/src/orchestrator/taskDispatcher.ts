@@ -129,7 +129,7 @@ Stage and commit all changes. The harness will open the pull request automatical
   /**
    * Run a single task: create container, run sub-agent, wait for completion.
    */
-  private async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
+  public async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
     const repository = getRepository(task.repositoryId);
     if (!repository) {
       return {
