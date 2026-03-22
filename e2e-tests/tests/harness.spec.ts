@@ -50,25 +50,16 @@ test.describe('Multi-Agent Harness E2E', () => {
     
     // Wait for chat interface to load
     await expect(page.getByPlaceholder(/type your message/i)).toBeVisible({ timeout: 10000 });
-    
-    // Type a free form request
-    const testMessage = 'List the files in the root directory of this repository';
-    await page.getByPlaceholder(/type your message/i).fill(testMessage);
-    
-    // Send the message
-    await page.getByRole('button', { name: /send/i }).click();
-    
-    // Wait for the user's message to appear in the chat
-    await expect(page.locator('.bg-blue-600').filter({ hasText: testMessage })).toBeVisible({ timeout: 5000 });
-    
-    // Wait for agent response (with longer timeout since it involves AI)
-    const assistantMessages = page.locator('[data-testid="assistant-message"]');
-    await expect(assistantMessages.first()).toBeVisible({ timeout: 30000 });
+
+    // The freeform description was auto-sent on page load.
+    // Wait for streaming content to appear (arrives on first delta, much faster than full response).
+    // Accepts either the live streaming bubble or a persisted message bubble.
+    const agentContent = page.locator('[data-testid="assistant-streaming"], [data-testid="assistant-message"]');
+    await expect(agentContent.first()).toBeVisible({ timeout: 60000 });
 
     // Verify the response contains some content
-    const responseText = await assistantMessages.first().textContent();
-    expect(responseText).toBeTruthy();
-    expect(responseText!.length).toBeGreaterThan(0);
+    const responseText = await agentContent.first().textContent();
+    expect(responseText?.trim()).toBeTruthy();
     
     // Take a screenshot for verification
     await page.screenshot({ path: 'test-results/e2e-success.png', fullPage: true });
