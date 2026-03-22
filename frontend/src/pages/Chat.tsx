@@ -40,7 +40,6 @@ export default function Chat() {
         const desc = locationProject?.source?.freeformDescription?.trim();
         if (desc) {
           autoSentRef.current = true;
-          setSending(true);
           setThinkingMode("processing");
           wsClient.send({ type: "prompt", text: desc });
           const userMessage: Message = {
@@ -71,7 +70,6 @@ export default function Chat() {
         // The full prompt/response cycle is done
         setStreamingContent("");
         setThinkingMode("none");
-        setSending(false);
         loadMessages();
       } else if (msg.type === "tool_call" && msg.toolName) {
         setToolEvents((prev) => [
@@ -131,9 +129,10 @@ export default function Chat() {
       setMessages((prev) => [...prev, userMessage]);
       setInput("");
     } catch (err) {
-      setSending(false);
       setThinkingMode("none");
       alert(err instanceof Error ? err.message : "Failed to send message");
+    } finally {
+      setSending(false);
     }
   }
 
@@ -226,15 +225,14 @@ export default function Chat() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder="Type your message..."
-          disabled={sending}
-          className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 disabled:opacity-50"
+          className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
         />
         <button
           type="submit"
-          disabled={sending || !input.trim()}
+          disabled={thinkingMode !== "none" || !input.trim()}
           className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-medium"
         >
-          {sending ? "..." : "Send"}
+          {thinkingMode !== "none" ? "..." : "Send"}
         </button>
       </form>
     </div>
