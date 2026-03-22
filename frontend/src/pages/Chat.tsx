@@ -53,13 +53,6 @@ export default function Chat() {
           loadMessages().then(() => {
             setStreamingContent("");
           });
-        } else if (msg.type === "plan_ready") {
-          // Only navigate if we received deltas in this session (fresh plan).
-          // Ignore plan_ready sent on WS reconnect for a pre-existing plan.
-          if (hasStreamedRef.current) {
-            hasStreamedRef.current = false;
-            navigate(`/projects/${id}/plan`, { state: { plan: msg.plan } });
-          }
         }
       }
     });
