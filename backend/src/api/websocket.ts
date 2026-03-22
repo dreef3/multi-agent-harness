@@ -4,6 +4,7 @@ import { MasterAgent } from "../agents/masterAgent.js";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { createWritePlanningDocumentTool } from "../agents/planningTool.js";
 import { createSubAgentStatusTool } from "../agents/subAgentStatusTool.js";
+import { createRestartFailedTasksTool } from "../agents/restartFailedTasksTool.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
 import { listRepositories } from "../store/repositories.js";
@@ -29,10 +30,12 @@ export async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
     const sessionPath = path.join(sessionDir, "master.jsonl");
     const planningTool = createWritePlanningDocumentTool(projectId, globalDataDir);
     const statusTool = createSubAgentStatusTool(projectId);
+    const restartTool = createRestartFailedTasksTool(projectId);
     // TypeBox generic contravariance prevents direct assignment; cast is safe at runtime
     const agent = new MasterAgent(projectId, sessionPath, [
       planningTool as unknown as ToolDefinition,
       statusTool as unknown as ToolDefinition,
+      restartTool as unknown as ToolDefinition,
     ]);
     try {
       await agent.init();

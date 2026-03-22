@@ -305,3 +305,34 @@ describe("RecoveryService", () => {
     });
   });
 });
+
+describe("createRestartFailedTasksTool", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-recovery-tool-test-"));
+    initDb(tmpDir);
+    vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("calls dispatchFailedTasks and returns count message", async () => {
+    const { createRestartFailedTasksTool } = await import("../agents/restartFailedTasksTool.js");
+    const { setRecoveryService, RecoveryService } = await import("../orchestrator/recoveryService.js");
+
+    insertProject(makeProject("proj-tool"));
+    const svc = new RecoveryService({} as never);
+    vi.spyOn(svc, "dispatchFailedTasks").mockResolvedValue({ count: 3 });
+    setRecoveryService(svc);
+
+    const tool = createRestartFailedTasksTool("proj-tool");
+    const result = await tool.execute("call-id", {}, undefined, undefined, {} as never);
+    const firstContent = result.content[0] as { type: string; text: string };
+    expect(firstContent.text).toContain("3");
+    expect(svc.dispatchFailedTasks).toHaveBeenCalledWith("proj-tool");
+  });
+});
