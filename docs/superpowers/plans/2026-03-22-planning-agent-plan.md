@@ -33,6 +33,8 @@
 | `backend/src/config.ts` | Add `planningAgentImage` config key |
 | `backend/src/index.ts` | Initialise `PlanningAgentManager` singleton at startup |
 | `backend/src/api/websocket.ts` | Replace `MasterAgent`/`getOrInitAgent` with `PlanningAgentManager` |
+| `backend/src/polling.ts` | Replace 3 `getOrInitAgent` call-sites with `getPlanningAgentManager().sendPrompt(...)` |
+| `docker-compose.yml` | Add `planning-agent` build target |
 
 ### Deleted files
 | File | Reason |
@@ -115,8 +117,8 @@ it("sets errorMessage on task when permanently failed", async () => {
       runTask: vi.fn().mockResolvedValue({ success: false, error: "container exited 1" }),
     })),
   }));
-  vi.mock("../api/websocket.js", () => ({
-    getOrInitAgent: vi.fn().mockResolvedValue({ prompt: vi.fn() }),
+  vi.mock("../orchestrator/planningAgentManager.js", () => ({
+    getPlanningAgentManager: vi.fn().mockReturnValue({ sendPrompt: vi.fn().mockResolvedValue(undefined) }),
   }));
 
   const { RecoveryService } = await import("../orchestrator/recoveryService.js");
@@ -132,6 +134,38 @@ it("sets errorMessage on task when permanently failed", async () => {
   const updatedTask = updated.plan!.tasks[0];
   expect(updatedTask.status).toBe("failed");
   expect(updatedTask.errorMessage).toContain("container exited 1");
+});
+
+it("sets errorMessage on task when recoverSession exhausts retries", async () => {
+  const project = makeProject("proj-recover");
+  insertProject(project);
+  const session = makeSession("sess-recover", "proj-recover", "running");
+  insertAgentSession(session);
+
+  vi.mock("../orchestrator/planningAgentManager.js", () => ({
+    getPlanningAgentManager: vi.fn().mockReturnValue({ sendPrompt: vi.fn().mockResolvedValue(undefined) }),
+  }));
+
+  const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+  const mockDocker = {
+    getContainer: vi.fn().mockReturnValue({
+      inspect: vi.fn().mockResolvedValue({ State: { Status: "exited" } }),
+    }),
+  } as never;
+  const svc = new RecoveryService(mockDocker);
+
+  // Simulate max retries exceeded (session has retryCount at limit)
+  const freshProject = getProject("proj-recover")!;
+  const task = freshProject.plan!.tasks[0];
+  // Update session retryCount to be at max
+  updateAgentSession(session.id, { retryCount: config.subAgentMaxRetries });
+
+  await svc.recoverSession(session);
+
+  const updated = getProject("proj-recover")!;
+  const updatedTask = updated.plan!.tasks.find(t => t.id === task.id)!;
+  expect(updatedTask.status).toBe("failed");
+  expect(updatedTask.errorMessage).toContain("Permanently failed");
 });
 ```
 
@@ -169,9 +203,16 @@ git commit -m "feat: add errorMessage to PlanTask, populate on permanent failure
 
 - [ ] **Step 1: Write failing tests for the two new endpoints**
 
-Open `backend/src/__tests__/projects.test.ts`. Find how existing routes are tested (supertest + express app). Add tests for the new endpoints.
+Open `backend/src/__tests__/projects.test.ts`. Find how existing routes are tested (supertest + express app). Add at the **top of the test file** (after existing `vi.mock` calls, before `describe` blocks) the following mock — Vitest hoists `vi.mock` to the top of the file, so it must be at module scope:
 
-Check the test file header to understand the test setup pattern, then add:
+```typescript
+// Add this alongside existing top-level vi.mock calls:
+vi.mock("../orchestrator/recoveryService.js", () => ({
+  getRecoveryService: () => ({ dispatchTasksForProject: vi.fn().mockResolvedValue(undefined) }),
+}));
+```
+
+Then add the test cases inside the existing test file:
 
 ```typescript
 describe("POST /projects/:id/tasks", () => {
@@ -196,11 +237,6 @@ describe("POST /projects/:id/tasks", () => {
       status: "executing",
     });
 
-    const mockDispatch = vi.fn().mockResolvedValue(undefined);
-    vi.mock("../orchestrator/recoveryService.js", () => ({
-      getRecoveryService: () => ({ dispatchTasksForProject: mockDispatch }),
-    }));
-
     const res = await request(app).post(`/projects/${project.id}/tasks`).send({
       tasks: [
         { id: "task-1", repositoryId: "repo-1", description: "Retried task" },  // upsert
@@ -210,7 +246,6 @@ describe("POST /projects/:id/tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.dispatched).toBe(2);
-    expect(mockDispatch).toHaveBeenCalledWith(project.id);
     const updated = getProject(project.id)!;
     const task1 = updated.plan!.tasks.find(t => t.id === "task-1")!;
     expect(task1.status).toBe("pending");
@@ -1249,9 +1284,13 @@ Replace `MasterAgent`/`getOrInitAgent` in `websocket.ts` with `PlanningAgentMana
 
 This is a complete rewrite of the WebSocket module's agent interaction. The external interface (`setupWebSocket`, `preInitAgent`) is preserved for callers.
 
+- [ ] **Step 0: Read the current `websocket.ts` and extract `buildMasterAgentContext`**
+
+Read `backend/src/api/websocket.ts`. Locate the `buildMasterAgentContext` function (currently around line 90–207). Copy its full implementation. You will paste it verbatim into the replacement file below.
+
 - [ ] **Step 1: Rewrite `websocket.ts`**
 
-Replace the entire file with the following. Read the current file carefully before replacing — preserve the `buildMasterAgentContext` function and `WsClientMessage`/`WsServerMessage` types.
+Replace the entire file with the following. Paste the full `buildMasterAgentContext` function body you copied in Step 0 into the marked location.
 
 Key changes:
 1. Import `getPlanningAgentManager` instead of `MasterAgent`
@@ -1278,6 +1317,8 @@ function send(ws: WebSocket, msg: WsServerMessage) {
 
 // Track all active WebSocket connections per project
 const projectConnections = new Map<string, Set<WebSocket>>();
+// Track which projects already have an output broadcaster registered (one per project)
+const projectBroadcasters = new Set<string>();
 
 function broadcastToProject(projectId: string, msg: WsServerMessage) {
   const connections = projectConnections.get(projectId);
@@ -1286,8 +1327,7 @@ function broadcastToProject(projectId: string, msg: WsServerMessage) {
 }
 
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
-  // [KEEP THE EXISTING buildMasterAgentContext IMPLEMENTATION UNCHANGED]
-  // Copy the full function body from the current websocket.ts
+  // [PASTE THE FULL FUNCTION BODY YOU COPIED IN STEP 0 HERE — DO NOT SUMMARISE OR TRUNCATE]
 }
 
 export async function getOrInitAgent(projectId: string): Promise<{ prompt: (text: string) => Promise<void> }> {
@@ -1344,33 +1384,32 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
     };
     const unsubscribeDelta = manager.onOutput(projectId, onDeltaFwd);
 
-    // Subscribe once for project-wide event broadcasting
-    let messageBuffer = "";
-    const onProjectEvent = (event: PlanningAgentEvent) => {
-      switch (event.type) {
-        case "delta":
-          messageBuffer += event.text;
-          break;
-        case "message_complete":
-          if (messageBuffer) {
-            appendMessage(projectId, "assistant", messageBuffer);
-            messageBuffer = "";
-          }
-          broadcastToProject(projectId, { type: "message_complete" });
-          break;
-        case "tool_call":
-          broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
-          break;
-        case "conversation_complete":
-          broadcastToProject(projectId, { type: "conversation_complete" });
-          break;
-      }
-    };
-    // Register broadcaster only once per project (use a flag to avoid double-registration)
-    const broadcasterKey = `broadcaster-${projectId}`;
-    if (!projectConnections.get(projectId)!.size || !(ws as unknown as Record<string, boolean>)[broadcasterKey]) {
-      (ws as unknown as Record<string, boolean>)[broadcasterKey] = true;
-      manager.onOutput(projectId, onProjectEvent);
+    // Register project-wide event broadcaster exactly once per project.
+    // This handler persists for the lifetime of the project's planning agent;
+    // it accumulates deltas and saves/broadcasts on message_complete.
+    if (!projectBroadcasters.has(projectId)) {
+      projectBroadcasters.add(projectId);
+      let messageBuffer = "";
+      manager.onOutput(projectId, (event: PlanningAgentEvent) => {
+        switch (event.type) {
+          case "delta":
+            messageBuffer += event.text;
+            break;
+          case "message_complete":
+            if (messageBuffer) {
+              appendMessage(projectId, "assistant", messageBuffer);
+              messageBuffer = "";
+            }
+            broadcastToProject(projectId, { type: "message_complete" });
+            break;
+          case "tool_call":
+            broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
+            break;
+          case "conversation_complete":
+            broadcastToProject(projectId, { type: "conversation_complete" });
+            break;
+        }
+      });
     }
 
     ws.on("message", async (raw: Buffer) => {
@@ -1425,8 +1464,6 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
 }
 ```
 
-**Note:** The `onProjectEvent` broadcaster logic above is simplified — in practice only one broadcaster per project is needed. A clean approach is to register it when the first connection arrives for a project and remove it when the last one leaves. The exact implementation can be refined; what matters is: delta → buffer, message_complete → save + broadcast, tool_call → broadcast, conversation_complete → broadcast.
-
 - [ ] **Step 2: Compile to catch type errors**
 
 ```bash
@@ -1453,12 +1490,13 @@ git commit -m "feat: migrate WebSocket to PlanningAgentManager, remove MasterAge
 
 ---
 
-## Task 8: RecoveryService `notifyMaster` Migration
+## Task 8: RecoveryService and Polling Migration
 
-Switch `notifyMaster` in `recoveryService.ts` from `getOrInitAgent` to `getPlanningAgentManager`. Also update the notification messages to remove references to the deleted `restart_failed_tasks` tool.
+Switch `notifyMaster` in `recoveryService.ts` from `getOrInitAgent` to `getPlanningAgentManager`. Also migrate the three `getOrInitAgent` call-sites in `polling.ts`, and update notification messages to remove references to the deleted `restart_failed_tasks` tool.
 
 **Files:**
 - Modify: `backend/src/orchestrator/recoveryService.ts`
+- Modify: `backend/src/polling.ts`
 
 - [ ] **Step 1: Update `notifyMaster`**
 
@@ -1498,7 +1536,41 @@ private async notifyMasterPartialFailure(projectId: string, task: PlanTask, atte
 }
 ```
 
-- [ ] **Step 3: Run tests**
+- [ ] **Step 3: Migrate `polling.ts` — replace 3 `getOrInitAgent` call-sites**
+
+In `backend/src/polling.ts`, there are two `import` + call-site blocks:
+
+**Block 1** (PR closed before approval, around line 163–168):
+```typescript
+// BEFORE:
+const { getOrInitAgent } = await import("./api/websocket.js");
+const closedAgent = await getOrInitAgent(project.id);
+await closedAgent.prompt(
+  "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
+);
+
+// AFTER:
+const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+await getPlanningAgentManager().sendPrompt(
+  project.id,
+  "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
+);
+```
+
+**Block 2** (LGTM detected, single import used for both spec-approved and plan-approved branches, around line 193–196):
+```typescript
+// BEFORE:
+const { getOrInitAgent } = await import("./api/websocket.js");
+const agent = await getOrInitAgent(project.id);
+
+// AFTER:
+const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+const planningManager = getPlanningAgentManager();
+```
+
+Then replace all `agent.prompt(...)` calls in Block 2 with `await planningManager.sendPrompt(project.id, ...)`.
+
+- [ ] **Step 4: Run tests**
 
 ```bash
 cd /home/ae/multi-agent-harness/backend && npm test 2>&1 | tail -20
@@ -1506,12 +1578,12 @@ cd /home/ae/multi-agent-harness/backend && npm test 2>&1 | tail -20
 
 Expected: all tests PASS. The recovery service tests mock `getOrInitAgent` — update those mocks to mock `planningAgentManager.js` instead if they fail.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
 cd /home/ae/multi-agent-harness
-git add backend/src/orchestrator/recoveryService.ts
-git commit -m "feat: switch RecoveryService.notifyMaster to PlanningAgentManager"
+git add backend/src/orchestrator/recoveryService.ts backend/src/polling.ts
+git commit -m "feat: switch RecoveryService.notifyMaster and polling.ts to PlanningAgentManager"
 ```
 
 ---
