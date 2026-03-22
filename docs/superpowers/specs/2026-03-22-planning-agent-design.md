@@ -84,15 +84,71 @@ The system prompt tells the agent: "Project repositories are available at `/work
 
 ### Tools
 
-The planning agent has four custom SDK tools (registered via `customTools` in `createAgentSession`) that call the backend API:
+The planning agent has three custom SDK tools (registered via `customTools` in `createAgentSession`) that call the backend API. Each tool's `execute` function makes a `fetch` call to `http://backend:3000/api/` on the `harness-agents` Docker network. `PROJECT_ID` and `BACKEND_URL` are injected as env vars.
 
-| Tool | Endpoint | Purpose |
-|------|----------|---------|
-| `dispatch_tasks` | `POST /api/projects/:id/tasks` | Submit or re-submit tasks for dispatch (handles both new tasks and retrying failed ones) |
-| `get_task_status` | `GET /api/projects/:id/tasks` | Poll task completion status |
-| `get_pull_requests` | `GET /api/pull-requests/project/:id` | List PRs created by sub-agents (endpoint already exists) |
+RecoveryService handles transient retries silently — the planning agent is only involved when it needs to make a deliberate decision (initial dispatch, responding to permanent failure notifications, or reviewing completed PRs). It does not poll for task status during normal execution.
 
-Each tool's `execute` function makes a `fetch` call to `http://backend:3000/api/` on the `harness-agents` Docker network (same network used by implementation sub-agents). `PROJECT_ID` and `BACKEND_URL` are passed as env vars.
+#### `dispatch_tasks`
+
+Submit new tasks or re-dispatch existing failed tasks. When a task `id` matches an existing plan task, it is upserted (status reset to `pending`). When `id` is omitted, a new task is created.
+
+**Input:**
+```json
+{
+  "tasks": [
+    { "id": "optional — omit for new tasks, provide to re-dispatch an existing task",
+      "repositoryId": "string",
+      "description": "string" }
+  ]
+}
+```
+
+**Response:**
+```json
+{ "dispatched": 2 }
+```
+
+#### `get_task_status`
+
+Returns the full task list with current status, retry count, and failure details. Called when the planning agent needs to inspect task state — typically after receiving a permanent failure notification.
+
+**Response:**
+```json
+{
+  "tasks": [
+    {
+      "id": "string",
+      "repositoryId": "string",
+      "description": "string",
+      "status": "pending | executing | completed | failed",
+      "retryCount": 0,
+      "errorMessage": "string | null"
+    }
+  ]
+}
+```
+
+`errorMessage` is populated by RecoveryService when a task permanently fails, containing the last error from the container run.
+
+#### `get_pull_requests`
+
+List PRs created by implementation sub-agents for this project.
+
+**Response:**
+```json
+{
+  "pullRequests": [
+    {
+      "id": "string",
+      "taskId": "string",
+      "branch": "string",
+      "title": "string",
+      "url": "string",
+      "status": "open | merged | closed"
+    }
+  ]
+}
+```
 
 ### Container Lifecycle
 
@@ -104,6 +160,22 @@ Each tool's `execute` function makes a `fetch` call to `http://backend:3000/api/
 ### Session Continuity
 
 The pi session JSONL is stored on the existing `harness-pi-auth` Docker named volume (same volume already used by sub-agents and the backend), mounted at `/pi-agent/` in the planning agent container. Session file path: `/pi-agent/sessions/planning-{projectId}.jsonl`. `runner.mjs` uses `SessionManager.open(sessionPath)` to continue an existing session or `SessionManager.create(cwd, sessionDir)` to start a new one.
+
+---
+
+## RecoveryService Role
+
+RecoveryService continues to own all mechanical recovery — it operates without involving the planning agent:
+
+- **Transient retry:** When a sub-agent container fails, RecoveryService automatically retries up to `config.subAgentMaxRetries` times. No planning agent prompt, no LLM tokens consumed.
+- **Stale session recovery:** On backend restart and in each polling cycle, RecoveryService detects stuck sessions and re-dispatches them.
+- **Terminal detection:** When all tasks reach a terminal state (`completed` / `failed`), RecoveryService updates project status and calls `getPlanningAgentManager().sendPrompt()` to notify the planning agent.
+
+The planning agent is notified in two cases only:
+1. **All tasks completed** — `[SYSTEM] Sub-agent execution complete. Succeeded: [...]. Use get_pull_requests to review the results.`
+2. **Permanent failure** (all retries exhausted for a task) — `[SYSTEM] Task "<description>" permanently failed after N attempts. Error: <errorMessage>. Use get_task_status for details, then decide whether to re-dispatch with dispatch_tasks or inform the user.`
+
+`PlanTask` gains an `errorMessage?: string` field, populated by RecoveryService on permanent failure. This field is what `get_task_status` returns and what the planning agent uses to reason about whether to retry.
 
 ---
 
