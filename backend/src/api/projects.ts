@@ -1,5 +1,4 @@
 import { Router } from "express";
-import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
@@ -8,7 +7,7 @@ import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
 
-export function createProjectsRouter(docker: Dockerode): Router {
+export function createProjectsRouter(): Router {
   const router = Router();
   // List all projects
   router.get("/", (_req, res) => {
@@ -131,46 +130,6 @@ export function createProjectsRouter(docker: Dockerode): Router {
     }
     deleteProject(req.params.id);
     res.json({ success: true });
-  });
-
-  // Approve plan and start execution (manual override / test bypass for PR-based approval)
-  router.post("/:id/approve", async (req, res) => {
-    const project = getProject(req.params.id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    if (project.status === "completed" || project.status === "cancelled") {
-      res.status(400).json({ error: `Cannot approve project with status: ${project.status}` });
-      return;
-    }
-
-    const { plan } = req.body;
-    const now = new Date().toISOString();
-
-    const updates: Partial<Omit<Project, "id" | "createdAt">> = {
-      status: "executing",
-      planningPr: {
-        ...(project.planningPr ?? { number: 0, url: "" }),
-        specApprovedAt: project.planningPr?.specApprovedAt ?? now,
-        planApprovedAt: now,
-      },
-    };
-    if (plan !== undefined) updates.plan = plan;
-
-    updateProject(req.params.id, updates);
-
-    try {
-      const { TaskDispatcher } = await import("../orchestrator/taskDispatcher.js");
-      const dispatcher = new TaskDispatcher();
-      dispatcher.dispatchTasks(docker, req.params.id).catch((err: Error) => {
-        console.error(`[projects] Task dispatch failed for project ${req.params.id}:`, err.message);
-      });
-    } catch (err) {
-      console.warn("[projects] Could not import TaskDispatcher:", err);
-    }
-
-    res.json({ success: true, status: "executing" });
   });
 
   // Cancel project
