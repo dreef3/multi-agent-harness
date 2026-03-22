@@ -26,14 +26,17 @@ export async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
     const sessionDir = path.join(globalDataDir, "sessions", projectId);
     fs.mkdirSync(sessionDir, { recursive: true });
     const sessionPath = path.join(sessionDir, "master.jsonl");
-
     const planningTool = createWritePlanningDocumentTool(projectId, globalDataDir);
+    // TypeBox generic contravariance prevents direct assignment; cast is safe at runtime
     const agent = new MasterAgent(projectId, sessionPath, [planningTool as unknown as ToolDefinition]);
-    await agent.init();
-    agentSessions.set(projectId, agent);
-    agentInitPromises.delete(projectId);
-    console.log(`[ws] getOrInitAgent(${projectId}): init complete, agent stored`);
-    return agent;
+    try {
+      await agent.init();
+      agentSessions.set(projectId, agent);
+      console.log(`[ws] getOrInitAgent(${projectId}): init complete, agent stored`);
+      return agent;
+    } finally {
+      agentInitPromises.delete(projectId);
+    }
   })();
 
   agentInitPromises.set(projectId, promise);
@@ -114,10 +117,13 @@ Invoke the \`superpowers:writing-plans\` skill. Follow its full process:
 5. Dispatch the \`plan-document-reviewer\` subagent (from the writing-plans skill's
    \`plan-document-reviewer-prompt.md\`). Fix issues and re-dispatch until approved
    (max 3 iterations).
-6. Ask the user to review the written plan file before proceeding.
-7. Once the user approves the written plan, call:
+6. Post the path of the written plan file in chat. Ask the user to add a LGTM comment
+   on the PR when they are satisfied with the plan. Do NOT call write_planning_document yet.
+7. Wait for: \`[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\`
+   Do NOT proceed until you receive this exact system message — do not act on chat approval.
+8. Once you receive the [SYSTEM] message, call:
    \`write_planning_document(type: "plan", content: <full plan markdown>)\`
-8. After the tool returns, post the PR URL in chat:
+9. After the tool returns, post the PR URL in chat:
    "The implementation plan is ready for review at {url}. Add a LGTM comment when
    you are ready to start implementation."
 
@@ -197,8 +203,10 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
         const context = buildMasterAgentContext(project, projectRepos);
         promptText = `${context}\n\n---\n\n${msg.text}`;
         console.log(`[ws] final prompt length with context=${promptText.length}`);
-        // Transition to spec_in_progress on first user message
-        updateProject(projectId, { status: "spec_in_progress" });
+        // Transition to spec_in_progress on first user message; guard against replay/test re-entry
+        if (isFirstMessage && project.status === "brainstorming") {
+          updateProject(projectId, { status: "spec_in_progress" });
+        }
       }
     }
 
