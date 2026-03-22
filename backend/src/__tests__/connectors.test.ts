@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { GitHubConnector } from "../connectors/github.js";
 import { BitbucketConnector } from "../connectors/bitbucket.js";
 import type { Repository } from "../models/types.js";
@@ -52,6 +52,10 @@ describe("GitHubConnector", () => {
   beforeEach(() => {
     connector = new GitHubConnector();
     vi.clearAllMocks();
+    process.env.GITHUB_TOKEN = "test-token";
+  });
+
+  afterEach(() => {
     process.env.GITHUB_TOKEN = "test-token";
   });
 
@@ -317,6 +321,16 @@ describe("GitHubConnector", () => {
       }));
     });
 
+    it("calls createBranch when createBranch option is true", async () => {
+      const createBranchSpy = vi.spyOn(connector, "createBranch").mockResolvedValue(undefined);
+      mockGetContent.mockRejectedValue(new Error("Not Found"));
+      mockCreateOrUpdateFileContents.mockResolvedValue({});
+
+      await connector.commitFile(repo, "feature-branch", "docs/spec.md", "# Spec", "chore: add spec", true);
+
+      expect(createBranchSpy).toHaveBeenCalledWith(repo, "feature-branch", repo.defaultBranch);
+    });
+
     it("throws ConnectorError on failure", async () => {
       mockGetContent.mockRejectedValue(new Error("Not Found"));
       mockCreateOrUpdateFileContents.mockRejectedValue(new Error("API error"));
@@ -345,8 +359,7 @@ describe("GitHubConnector", () => {
 
 describe("BitbucketConnector", () => {
   let connector: BitbucketConnector;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let mockFetch: any;
+  let mockFetch: ReturnType<typeof vi.fn>;
   const repo: Repository = {
     id: "repo-1",
     name: "test-repo",
@@ -635,8 +648,24 @@ describe("BitbucketConnector", () => {
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.stringContaining("/rest/api/1.0/projects/TEST/repos/test-repo/browse/docs/spec.md"),
-        expect.objectContaining({ method: "PUT" })
+        expect.objectContaining({
+          method: "PUT",
+          headers: expect.objectContaining({ Authorization: "Bearer test-token" }),
+          body: expect.any(FormData),
+        })
       );
+    });
+
+    it("calls createBranch when createBranch option is true", async () => {
+      const createBranchSpy = vi.spyOn(connector, "createBranch").mockResolvedValue(undefined);
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await connector.commitFile(repo, "feature-branch", "docs/spec.md", "# Spec", "chore: add spec", true);
+
+      expect(createBranchSpy).toHaveBeenCalledWith(repo, "feature-branch", repo.defaultBranch);
     });
 
     it("throws ConnectorError when response is not ok", async () => {
