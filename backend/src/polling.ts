@@ -119,33 +119,6 @@ async function pollPullRequest(
   }
 }
 
-/**
- * Clean up poll state for PRs that are no longer open
- */
-function cleanupClosedPrs(): void {
-  // Get all PR IDs from all projects
-  const { listProjects } = require("./store/projects.js");
-  const projects = listProjects();
-  const openPrIds = new Set<string>();
-
-  for (const project of projects) {
-    const prs = listPullRequestsByProject(project.id);
-    for (const pr of prs) {
-      if (pr.status === "open") {
-        openPrIds.add(pr.id);
-      }
-    }
-  }
-
-  // Remove poll state for closed PRs
-  for (const prId of pollStates.keys()) {
-    if (!openPrIds.has(prId)) {
-      pollStates.delete(prId);
-      console.log(`[polling] Cleaned up poll state for closed PR ${prId}`);
-    }
-  }
-}
-
 // ── LGTM detection ────────────────────────────────────────────────────────────
 
 export function detectLgtm(body: string): boolean {
@@ -180,6 +153,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
         const { updateProject } = await import("./store/projects.js");
         updateProject(project.id, { status: "failed" });
+        lgtmPollStates.delete(project.id);
         const { getOrInitAgent } = await import("./api/websocket.js");
         const closedAgent = await getOrInitAgent(project.id);
         await closedAgent.prompt(
@@ -200,6 +174,11 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       const hasLgtm = comments.some(c => detectLgtm(c.body));
       if (!hasLgtm) continue;
 
+      // Re-fetch to confirm status hasn't changed
+      const { getProject: getFreshStatus } = await import("./store/projects.js");
+      const currentProject = getFreshStatus(project.id);
+      if (!currentProject || currentProject.status !== project.status) continue;
+
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
 
       // Import here to avoid circular dependency
@@ -212,6 +191,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           planningPr: { ...project.planningPr, specApprovedAt: new Date().toISOString() },
           status: "plan_in_progress",
         });
+        lgtmPollStates.delete(project.id);
         await agent.prompt(
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
           'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
@@ -226,6 +206,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
           status: "executing",
         });
+        lgtmPollStates.delete(project.id);
 
         // Create branches and commit plan file to non-primary repos
         const freshProject = getFreshProject(project.id);
@@ -335,7 +316,7 @@ export function startPolling(docker: Dockerode): void {
   }
 
   isRunning = true;
-  console.log(`[polling] Starting Bitbucket Server polling (interval: ${POLL_INTERVAL_MS}ms)`);
+  console.log(`[polling] Starting polling (interval: ${POLL_INTERVAL_MS}ms)`);
 
   // Run initial poll immediately
   void pollAllPullRequests(docker);
