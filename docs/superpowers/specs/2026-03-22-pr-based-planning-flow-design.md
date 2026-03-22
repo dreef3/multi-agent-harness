@@ -340,6 +340,11 @@ Invoke the `superpowers:writing-plans` skill. Follow its full process:
    "The implementation plan is ready for review at {url}. Add a LGTM comment when
    you are ready to start implementation."
 
+**Important:** The `writing-plans` skill normally ends by asking the user to choose
+between subagent-driven or inline execution. **Skip that step entirely.** In this
+harness, execution is handled automatically by containerised Docker sub-agents after
+the plan LGTM is received. Do not ask about worktrees or execution modes.
+
 The plan must use this task format exactly (used by the task parser):
 
 ### Task 1: [Brief Task Title]
@@ -371,6 +376,108 @@ by the harness.
 - Communicate every state transition explicitly in chat.
 - Follow superpowers skill processes exactly — do not shortcut them.
 ```
+
+---
+
+## Sub-Agent Task Prompt
+
+Sub-agents currently receive only `TASK_DESCRIPTION` with no system prompt and superpowers skills disabled in the runner. To give them structured guidance, `TaskDispatcher` prepends a **workflow preamble** to every `TASK_DESCRIPTION` before passing it to the container. The preamble encodes the key superpowers skill behaviors inline so no skill loading is required.
+
+### Preamble Template
+
+```
+You are a software engineering sub-agent. Follow this workflow exactly.
+
+## Step 1 — Understand the Task
+Read the task description below carefully. If a plan file exists in the repository
+at docs/superpowers/plans/, read it to understand the full project context before
+starting.
+
+## Step 2 — Test-Driven Development (superpowers:test-driven-development)
+Follow strict TDD. For every behaviour you implement:
+1. Write a failing test first. Run it and confirm it fails for the right reason.
+2. Write the minimum code to make it pass. Run it and confirm it passes.
+3. Refactor. Keep tests green.
+Never write production code without a failing test first. If you find yourself
+writing implementation before a test, stop and write the test first.
+
+## Step 3 — Implement
+Work through the task description step by step. Commit logical units of work with
+clear messages. Do not make changes beyond the scope of the task.
+
+## Step 4 — Systematic Debugging (superpowers:systematic-debugging)
+If you encounter a bug or unexpected behaviour:
+1. Reproduce it reliably first.
+2. Form a hypothesis about the root cause.
+3. Test the hypothesis before attempting a fix.
+4. Fix only after confirming the root cause.
+Never guess-and-check. Root cause first, always.
+
+## Step 5 — Verify Before Finishing (superpowers:verification-before-completion)
+Before considering the task done:
+1. Run the full test suite. Show the command and its output.
+2. Confirm every acceptance criterion in the task description is met.
+3. Do not claim completion without fresh evidence. "Should work" is not evidence.
+If verification fails, go back and fix — do not push broken code.
+
+## Step 6 — Commit and Push
+Stage and commit all changes. The harness will open the pull request automatically.
+
+---
+
+## Your Task
+
+{TASK_DESCRIPTION}
+```
+
+### Implementation Note
+
+`TaskDispatcher.buildTaskPrompt(task)` is introduced as a helper that returns the preamble with `{TASK_DESCRIPTION}` replaced by `task.description`. The container manager passes the result of this function as the `TASK_DESCRIPTION` env var.
+
+---
+
+## Observability: Log Commits to Git
+
+Both master and sub-agent execution logs must be committed to the planning branch so they are visible alongside the spec, plan, and implementation — and available for troubleshooting even when an agent fails midway.
+
+### Log Locations (on planning branch)
+
+```
+.harness/
+  logs/
+    master/
+      session.jsonl          # full pi-coding-agent session transcript
+    sub-agents/
+      {taskId}/
+        session.jsonl        # pi-coding-agent session transcript
+        task-output.md       # human-readable summary (already exists)
+```
+
+Logs are committed to the **planning branch** (`harness/{prefix}{slug}-{suffix}`) in the primary repo. For sub-agents on non-primary repos, logs are committed to their respective branch (`harness/{prefix}{slug}-{suffix}` in that repo).
+
+### Sub-Agent Log Commit
+
+`runner.mjs` is updated to commit the session log **unconditionally** at exit, regardless of success or failure:
+
+1. After `session.prompt()` resolves or rejects, locate the session JSONL file written by pi-coding-agent (in the agent's working directory / session path)
+2. Copy it to `.harness/logs/sub-agents/{taskId}/session.jsonl`
+3. Stage and commit with message: `chore: add agent log for task {taskId}`
+4. Push to the branch
+5. Exit with original exit code (failure is preserved for the harness to detect)
+
+If the push fails (e.g. network error), log to stdout and continue — log preservation is best-effort.
+
+### Master Agent Log Commit
+
+The backend commits the master session log at each major state transition:
+
+| Trigger | Committed to |
+|---------|-------------|
+| `write_planning_document(type: "spec")` called | `.harness/logs/master/session.jsonl` (first commit) |
+| `write_planning_document(type: "plan")` called | `.harness/logs/master/session.jsonl` (update commit) |
+| Project reaches `executing`, `failed`, or `cancelled` | `.harness/logs/master/session.jsonl` (final commit) |
+
+The master session file is already written by pi-coding-agent to `data/sessions/{projectId}/master.jsonl`. The `write_planning_document` tool handler reads this file and commits it as part of the same VCS operation that commits the spec/plan file.
 
 ---
 
