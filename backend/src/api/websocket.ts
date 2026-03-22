@@ -5,9 +5,10 @@ import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { createWritePlanningDocumentTool } from "../agents/planningTool.js";
 import { createSubAgentStatusTool } from "../agents/subAgentStatusTool.js";
 import { createRestartFailedTasksTool } from "../agents/restartFailedTasksTool.js";
+import { execSync } from "child_process";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
-import { listRepositories } from "../store/repositories.js";
+import { listRepositories, getRepository } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 import path from "path";
 import fs from "fs";
@@ -15,6 +16,34 @@ import fs from "fs";
 const agentSessions = new Map<string, MasterAgent>();
 const agentInitPromises = new Map<string, Promise<MasterAgent>>();
 let globalDataDir = "";
+
+function cloneReposForProject(projectId: string, repos: Repository[], dataDir: string): string {
+  const reposDir = path.join(dataDir, "repos", projectId);
+  fs.mkdirSync(reposDir, { recursive: true });
+
+  for (const repo of repos) {
+    const repoDir = path.join(reposDir, repo.name);
+    const token = process.env.GITHUB_TOKEN;
+    const cloneUrl = token
+      ? repo.cloneUrl.replace("https://", `https://${token}@`)
+      : repo.cloneUrl;
+
+    try {
+      if (fs.existsSync(path.join(repoDir, ".git"))) {
+        console.log(`[ws] repo ${repo.name}: fetching latest`);
+        execSync(`git fetch --all`, { cwd: repoDir, stdio: "pipe" });
+        execSync(`git reset --hard origin/${repo.defaultBranch}`, { cwd: repoDir, stdio: "pipe" });
+      } else {
+        console.log(`[ws] repo ${repo.name}: cloning to ${repoDir}`);
+        execSync(`git clone ${cloneUrl} ${repoDir}`, { stdio: "pipe" });
+      }
+    } catch (err) {
+      console.error(`[ws] Failed to clone/fetch repo ${repo.name}:`, err);
+    }
+  }
+
+  return reposDir;
+}
 
 export async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
   const existing = agentSessions.get(projectId);

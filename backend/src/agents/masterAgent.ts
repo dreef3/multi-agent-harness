@@ -16,7 +16,8 @@ export class MasterAgent extends EventEmitter {
   constructor(
     private readonly projectId: string,
     private readonly sessionFilePath: string,
-    private readonly customTools: ToolDefinition[] = []
+    private readonly customTools: ToolDefinition[] = [],
+    private readonly workingDir?: string
   ) {
     super();
   }
@@ -50,7 +51,7 @@ export class MasterAgent extends EventEmitter {
 
     console.log(`[MasterAgent:${this.projectId}] creating agent session...`);
     const { session } = await createAgentSession({
-      sessionManager: SessionManager.create(sessionDir, sessionDir),
+      sessionManager: SessionManager.create(this.workingDir ?? sessionDir, sessionDir),
       settingsManager,
       resourceLoader,
       modelRegistry,
