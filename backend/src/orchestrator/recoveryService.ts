@@ -45,6 +45,9 @@ export class RecoveryService {
     for (const session of allSessions) {
       await this.recoverSession(session);
     }
+    // Also recover executing projects that have no sessions at all
+    // (e.g., dispatch missed due to server restart or empty task list)
+    await this.recoverOrphanedExecutingProjects();
   }
 
   /**
@@ -71,6 +74,11 @@ export class RecoveryService {
         if (session.taskId && this.activeTaskIds.has(session.taskId)) continue;
 
         await this.recoverSession(session);
+      }
+
+      // If no active sessions at all, check for orphaned tasks/missing dispatch
+      if (sessions.length === 0) {
+        await this.recoverOrphanedProject(project);
       }
     }
   }
@@ -256,5 +264,66 @@ export class RecoveryService {
 
   private async getContainerStatus(containerId: string): Promise<string> {
     return getContainerStatus(this.docker, containerId);
+  }
+
+  /**
+   * Called when an executing project has no active sub-agent sessions.
+   * Handles three cases:
+   *   1. No tasks → notify master (plan was never structured)
+   *   2. All tasks terminal → run checkAllTerminal to clean up project status
+   *   3. Non-terminal tasks → re-dispatch them
+   */
+  private async recoverOrphanedProject(project: Project): Promise<void> {
+    if (!project.plan?.tasks?.length) {
+      console.warn(`[recoveryService] Project ${project.id} is stuck in executing with no tasks — notifying master`);
+      await this.notifyMaster(
+        project.id,
+        `[SYSTEM] This project is in "executing" state but has no tasks in its plan. ` +
+        `Sub-agent dispatch was likely never triggered (possibly due to a server restart or ` +
+        `the plan not having structured tasks). Please review the plan content and re-approve ` +
+        `the planning PR to trigger dispatch, or update the project status manually.`
+      );
+      return;
+    }
+
+    const terminal = new Set(["completed", "failed", "cancelled"]);
+    const nonTerminal = project.plan.tasks.filter(t => !terminal.has(t.status));
+
+    if (nonTerminal.length === 0) {
+      // All tasks are already done — checkAllTerminal will update project status
+      await this.checkAllTerminal(project.id);
+      return;
+    }
+
+    // Non-terminal tasks with no active sessions — re-dispatch them
+    console.log(
+      `[recoveryService] Recovering orphaned executing project ${project.id}: ` +
+      `${nonTerminal.length} non-terminal task(s), 0 active sessions`
+    );
+
+    for (const task of nonTerminal) {
+      if (this.activeTaskIds.has(task.id)) continue; // already in-flight
+
+      // Tasks stuck as "executing" with no session — reset to pending before dispatch
+      if (task.status === "executing") {
+        updateTaskInPlan(project.id, task.id, { status: "pending" });
+      }
+
+      // Read fresh task state after potential update
+      const freshProject = getProject(project.id);
+      const freshTask = freshProject?.plan?.tasks.find(t => t.id === task.id) ?? task;
+      void this.dispatchWithRetry(freshProject ?? project, freshTask);
+    }
+  }
+
+  private async recoverOrphanedExecutingProjects(): Promise<void> {
+    const projects = listExecutingProjects();
+    for (const project of projects) {
+      const activeSessions = listAgentSessions(project.id).filter(
+        s => s.type === "sub" && (s.status === "starting" || s.status === "running")
+      );
+      if (activeSessions.length > 0) continue; // sessions exist — handled elsewhere
+      await this.recoverOrphanedProject(project);
+    }
   }
 }

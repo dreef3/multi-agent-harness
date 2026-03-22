@@ -304,6 +304,128 @@ describe("RecoveryService", () => {
       expect(dispatchSpy).not.toHaveBeenCalled(); // container running → no recovery
     });
   });
+
+  describe("recoverOrphanedProject — orphaned executing project detection", () => {
+    it("notifies master when project is executing with no tasks", async () => {
+      const proj = makeProject("proj-orphan-1");
+      proj.plan!.tasks = [];
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverOrphanedProject(proj);
+
+      expect(mockNotify).toHaveBeenCalledWith("proj-orphan-1", expect.stringContaining("no tasks"));
+      // project status should NOT be changed — master decides what to do
+      expect(getProject("proj-orphan-1")!.status).toBe("executing");
+    });
+
+    it("calls checkAllTerminal when all tasks are already terminal", async () => {
+      const proj = makeProject("proj-orphan-2");
+      proj.plan!.tasks[0].status = "completed";
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverOrphanedProject(proj);
+
+      // checkAllTerminal should transition project to completed and notify
+      expect(getProject("proj-orphan-2")!.status).toBe("completed");
+      expect(mockNotify).toHaveBeenCalledWith("proj-orphan-2", expect.stringContaining("complete"));
+    });
+
+    it("re-dispatches pending tasks when no active sessions", async () => {
+      const proj = makeProject("proj-orphan-3");
+      proj.plan!.tasks[0].status = "pending";
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverOrphanedProject(proj);
+
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("skips tasks already in activeTaskIds when re-dispatching", async () => {
+      const proj = makeProject("proj-orphan-4");
+      proj.plan!.tasks[0].status = "pending";
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.activeTaskIds.add("task-1");
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverOrphanedProject(proj);
+
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+
+    it("resets executing tasks to pending before re-dispatch when no session", async () => {
+      const proj = makeProject("proj-orphan-5");
+      proj.plan!.tasks[0].status = "executing";
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverOrphanedProject(proj);
+
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+      // task should have been reset to pending before dispatch
+      expect(getProject("proj-orphan-5")!.plan!.tasks[0].status).toBe("pending");
+    });
+  });
+
+  describe("recoverExecutingProjects — orphan detection", () => {
+    it("calls recoverOrphanedProject when project has no active sessions", async () => {
+      const proj = makeProject("proj-orphan-6");
+      proj.plan!.tasks[0].status = "pending";
+      insertProject(proj);
+      // No sessions inserted
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const orphanSpy = vi.spyOn(svc as never, "recoverOrphanedProject").mockResolvedValue(undefined);
+
+      await svc.recoverExecutingProjects();
+
+      expect(orphanSpy).toHaveBeenCalledWith(expect.objectContaining({ id: "proj-orphan-6" }));
+    });
+
+    it("does NOT call recoverOrphanedProject when active sessions exist", async () => {
+      insertProject(makeProject("proj-orphan-7"));
+      // Insert a fresh session (5 min ago — not stale)
+      insertAgentSession(makeSession("sess-orphan", "proj-orphan-7", "running", "task-1", 5));
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const orphanSpy = vi.spyOn(svc as never, "recoverOrphanedProject").mockResolvedValue(undefined);
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = vi.fn().mockResolvedValue("running"); // not stale
+
+      await svc.recoverExecutingProjects();
+
+      expect(orphanSpy).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe("createRestartFailedTasksTool", () => {
