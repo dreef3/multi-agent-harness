@@ -97,20 +97,20 @@ test.describe('Repository Configuration Flow', () => {
     // Wait for agent response to appear in the chat
     await expect(page.locator('.bg-gray-800').first()).toBeVisible({ timeout: 120000 });
 
-    // Wait for the project to reach awaiting_approval (plan detected by agent).
-    // If the agent didn't produce the required plan format, create the plan via API directly.
+    // Wait for the project to reach awaiting_plan_approval (agent wrote spec + plan).
+    // If the agent didn't complete the full planning flow in time, inject a plan via API.
     const projectInApproval = await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
-        if (!res.ok) return false;
+        if (!res.ok()) return false;
         const project = await res.json() as { status: string };
-        return project.status === 'awaiting_approval';
+        return project.status === 'awaiting_plan_approval';
       },
       { timeout: 90000, intervals: [5000] }
     ).toBe(true).then(() => true).catch(() => false);
 
     if (!projectInApproval) {
-      // Agent didn't produce a recognized plan format — inject a plan via API
+      // Agent didn't complete planning — inject a plan via API
       const reposRes = await request.get(`${API_BASE}/repositories`);
       const repos = await reposRes.json() as { id: string; name: string }[];
       const testRepo = repos.find(r => r.name === 'E2E Test Repo');
@@ -128,23 +128,14 @@ test.describe('Repository Configuration Flow', () => {
               description: 'Create a file called `e2e-marker.md` with the content "# E2E Test Passed" and commit it to the current branch.',
               status: 'pending',
             }],
-            approved: false,
           },
-          status: 'awaiting_approval',
         },
       });
     }
 
-    // Navigate to plan page (either via WS auto-navigate or manual)
-    if (page.url().includes('/plan')) {
-      // Already navigated by the WS plan_ready event
-    } else {
-      await page.goto(`/projects/${projectId}/plan`);
-    }
-
-    // Approve the plan
-    await expect(page.getByRole('button', { name: /approve/i })).toBeVisible({ timeout: 10000 });
-    await page.getByRole('button', { name: /approve/i }).click();
+    // Approve the plan via API — sets planningPr.planApprovedAt and triggers task dispatch
+    const approveRes = await request.post(`${API_BASE}/projects/${projectId}/approve`);
+    expect(approveRes.ok()).toBe(true);
 
     // Poll for sub-agent session completing — proves the container was spun up and ran
     await expect.poll(
