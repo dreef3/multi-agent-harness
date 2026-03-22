@@ -210,7 +210,6 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       } else if (project.status === "awaiting_plan_approval") {
         // plan.content and tasks were stored by write_planning_document(type: "plan") tool handler
         const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
-        const { TaskDispatcher } = await import("./orchestrator/taskDispatcher.js");
 
         updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
@@ -259,14 +258,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         const taskCount = freshProject2?.plan?.tasks?.length ?? 0;
         console.log(`[polling] project ${project.id}: plan has ${taskCount} task(s) — starting dispatch`);
 
-        const dispatcher = new TaskDispatcher();
-        dispatcher.dispatchTasks(docker, project.id).then(results => {
-          console.log(`[polling] dispatchTasks completed for project ${project.id}: ${results.length} result(s)`);
-          for (const r of results) {
-            console.log(`[polling]   task ${r.taskId}: success=${r.success} sessionId=${r.agentSessionId ?? "n/a"} error=${r.error ?? "none"}`);
-          }
-        }).catch(err => {
-          console.error(`[polling] Task dispatch failed for project ${project.id}:`, err);
+        const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
+        getRecoveryService().dispatchTasksForProject(project.id).catch(err => {
+          console.error(`[polling] dispatchTasksForProject failed for project ${project.id}:`, err);
         });
       }
     } catch (error) {
@@ -282,6 +276,10 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
 
   try {
+    // Recover any stale sub-agent sessions
+    const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
+    await getRecoveryService().recoverExecutingProjects();
+
     // Import here to avoid circular dependency issues
     const { listProjects } = await import("./store/projects.js");
     const projects = listProjects();
