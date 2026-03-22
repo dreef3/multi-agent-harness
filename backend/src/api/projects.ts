@@ -81,7 +81,7 @@ export function createProjectsRouter(): Router {
 
   // Update a project
   router.patch("/:id", (req, res) => {
-    const { name, source, repositoryIds, plan, status } = req.body;
+    const { name, source, repositoryIds, plan, status, planningBranch, planningPr } = req.body;
     const existing = getProject(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Project not found" });
@@ -94,6 +94,8 @@ export function createProjectsRouter(): Router {
     if (repositoryIds !== undefined) updates.repositoryIds = repositoryIds;
     if (plan !== undefined) updates.plan = plan;
     if (status !== undefined) updates.status = status;
+    if (planningBranch !== undefined) updates.planningBranch = planningBranch;
+    if (planningPr !== undefined) updates.planningPr = planningPr;
 
     updateProject(req.params.id, updates);
     res.json(getProject(req.params.id));
