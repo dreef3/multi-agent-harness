@@ -293,6 +293,12 @@ Returns the current task list with statuses. Called by the planning agent `get_t
 
 **Response:** `{ "tasks": PlanTask[] }`
 
+### `GET /api/pull-requests/project/:id`
+
+Returns PRs created by implementation sub-agents for this project. **This endpoint already exists** — no implementation needed, documented here for completeness.
+
+**Response:** `{ pullRequests: PullRequest[] }` where each entry includes `id`, `taskId`, `branch`, `title`, `url`, `status`.
+
 ---
 
 ## Migration from MasterAgent
@@ -307,7 +313,7 @@ Returns the current task list with statuses. Called by the planning agent `get_t
 ## Testing
 
 - Unit tests for `PlanningAgentManager`: mock Docker client, verify `sendPrompt` queuing, `onOutput` event mapping (delta, tool_call, message_complete, conversation_complete), `stopContainer`
-- Unit tests for new `/api/projects/:id/tasks` and `/api/projects/:id/tasks/restart` endpoints
+- Unit tests for new `/api/projects/:id/tasks` (POST and GET) endpoints
 - Integration test (extends existing E2E pattern): project created → planning agent started → LGTM posted → planning agent dispatches task → sub-agent completes → completion injected back → project reaches `completed`
 
 ---
