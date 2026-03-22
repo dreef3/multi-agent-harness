@@ -105,7 +105,9 @@ describe("RecoveryService", () => {
 
       expect(mockRunTask).toHaveBeenCalledTimes(2);
       expect(getProject("proj-2")!.plan!.tasks[0].status).toBe("completed");
-      expect(mockNotify).not.toHaveBeenCalled(); // succeeded on retry — no failure notification
+      // notifyMaster called once for project completion, NOT for failure
+      expect(mockNotify).toHaveBeenCalledWith("proj-2", expect.stringContaining("complete"));
+      expect(mockNotify).toHaveBeenCalledTimes(1);
     });
 
     it("permanently fails after all retries — notifies master and clears activeTaskIds", async () => {

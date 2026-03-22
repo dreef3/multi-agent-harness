@@ -147,6 +147,7 @@ export class RecoveryService {
         if (result.success) {
           updateTaskInPlan(project.id, task.id, { status: "completed" });
           console.log(`[recoveryService] task ${task.id} completed successfully`);
+          await this.checkAllTerminal(project.id);
           return;
         }
 
