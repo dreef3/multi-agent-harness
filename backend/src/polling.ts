@@ -139,8 +139,16 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
     return;
   }
 
+  console.log(`[polling] pollPlanningPrs: ${projects.length} project(s) awaiting LGTM`);
+  for (const p of projects) {
+    console.log(`[polling]   project id=${p.id} name="${p.name}" status=${p.status} planningPr=${p.planningPr?.number ?? "none"}`);
+  }
+
   for (const project of projects) {
-    if (!project.planningPr || !project.primaryRepositoryId) continue;
+    if (!project.planningPr || !project.primaryRepositoryId) {
+      console.warn(`[polling] project ${project.id} skipped — missing planningPr or primaryRepositoryId`);
+      continue;
+    }
     const repo = getRepository(project.primaryRepositoryId);
     if (!repo) continue;
 
@@ -171,7 +179,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         lgtmPollStates.set(project.id, latest);
       }
 
+      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
       const hasLgtm = comments.some(c => detectLgtm(c.body));
+      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
       if (!hasLgtm) continue;
 
       // Re-fetch to confirm status hasn't changed
@@ -245,8 +255,17 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           'Tell the user that implementation is starting and the sub-agents will take it from here.'
         );
 
+        const freshProject2 = getFreshProject(project.id);
+        const taskCount = freshProject2?.plan?.tasks?.length ?? 0;
+        console.log(`[polling] project ${project.id}: plan has ${taskCount} task(s) — starting dispatch`);
+
         const dispatcher = new TaskDispatcher();
-        dispatcher.dispatchTasks(docker, project.id).catch(err => {
+        dispatcher.dispatchTasks(docker, project.id).then(results => {
+          console.log(`[polling] dispatchTasks completed for project ${project.id}: ${results.length} result(s)`);
+          for (const r of results) {
+            console.log(`[polling]   task ${r.taskId}: success=${r.success} sessionId=${r.agentSessionId ?? "n/a"} error=${r.error ?? "none"}`);
+          }
+        }).catch(err => {
           console.error(`[polling] Task dispatch failed for project ${project.id}:`, err);
         });
       }

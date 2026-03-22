@@ -94,8 +94,18 @@ Stage and commit all changes. The harness will open the pull request automatical
       throw new Error(`Project ${projectId} does not have an approved plan (planningPr.planApprovedAt not set)`);
     }
 
-    if (!project.plan || project.plan.tasks.length === 0) {
+    if (!project.plan) {
+      console.warn(`[taskDispatcher] Project ${projectId} has no plan — nothing to dispatch`);
       return [];
+    }
+    if (project.plan.tasks.length === 0) {
+      console.warn(`[taskDispatcher] Project ${projectId} plan has 0 tasks — nothing to dispatch`);
+      return [];
+    }
+
+    console.log(`[taskDispatcher] Dispatching ${project.plan.tasks.length} task(s) for project ${projectId}`);
+    for (const t of project.plan.tasks) {
+      console.log(`[taskDispatcher]   task id=${t.id} repoId=${t.repositoryId} status=${t.status}`);
     }
 
     // Launch all tasks in parallel
@@ -250,8 +260,11 @@ Stage and commit all changes. The harness will open the pull request automatical
 
     return new Promise((resolve) => {
       const checkInterval = setInterval(async () => {
+        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+
         // Check timeout
         if (Date.now() - startTime > timeoutMs) {
+          console.warn(`[taskDispatcher] waitForCompletion: timeout after ${elapsedSec}s for container ${containerId}`);
           clearInterval(checkInterval);
           resolve(false);
           return;
@@ -259,6 +272,7 @@ Stage and commit all changes. The harness will open the pull request automatical
 
         // Check container status
         const status = await getContainerStatus(docker, containerId);
+        console.log(`[taskDispatcher] waitForCompletion: elapsed=${elapsedSec}s container=${containerId} status=${status}`);
 
         if (status === "exited") {
           clearInterval(checkInterval);

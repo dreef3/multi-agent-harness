@@ -14,8 +14,9 @@ async function main() {
   console.log("[startup] Initializing database...");
   initDb(config.dataDir);
 
-  console.log("[startup] Connecting to Docker proxy...");
+  console.log(`[startup] Connecting to Docker proxy at ${config.dockerProxyUrl}...`);
   const dockerUrl = new URL(config.dockerProxyUrl);
+  console.log(`[startup]   Docker host=${dockerUrl.hostname} port=${dockerUrl.port}`);
   const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port, 10) });
 
   console.log("[startup] Ensuring sub-agent image exists...");
