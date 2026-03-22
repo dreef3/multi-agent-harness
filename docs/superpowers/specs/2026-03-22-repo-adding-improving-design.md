@@ -165,13 +165,62 @@ No changes to stored schema. The simplification is at the input layer.
 
 ## Files to Modify/Create
 
-### New Files
+### Backend Files
 - `src/api/repositories.ts` — New endpoint `GET /repositories/available`
 - `src/connectors/github.ts` — `listAccessibleRepositories()` method
 - `src/store/repositories.ts` — `getConfiguredCloneUrls()` helper
 
+### Frontend Files
+- `frontend/src/components/RepositoryPicker.tsx` — New picker component
+- `frontend/src/components/AddRepositoryDialog.tsx` — New dialog component (or modify existing)
+- `frontend/src/hooks/useAvailableRepositories.ts` — Hook to fetch and cache available repos
+
 ### Tests
 - `__tests__/repositories.test.ts` — Test the new endpoint with mocked GitHub API
+
+---
+
+## Frontend Implementation
+
+### RepositoryPicker Component
+
+```tsx
+interface RepositoryPickerProps {
+  onSelect: (repo: AvailableRepository) => void;
+  disabled?: boolean;
+}
+
+interface AvailableRepository {
+  cloneUrl: string;
+  name: string;
+  owner: string;
+  defaultBranch: string;
+}
+
+// States:
+// - loading: Shows spinner "Loading repositories..."
+// - error: Shows error message with "Retry" button
+// - empty: Shows "No available repositories found"
+// - success: Shows searchable list of repos
+// - selected: Shows "Selected: owner/repo (main branch)" confirmation
+```
+
+### useAvailableRepositories Hook
+
+```tsx
+function useAvailableRepositories() {
+  // Fetches GET /api/repositories/available on mount
+  // Returns: { data, isLoading, error, refetch }
+  // Refetch function triggers retry on error
+}
+```
+
+### AddRepositoryDialog Component
+
+- Opens RepositoryPicker on mount (auto-fetches available repos)
+- Shows selected repo confirmation before enabling "Add" button
+- Calls POST /api/repositories with auto-filled data on submit
+- Handles success (close dialog) and error (show toast) states
 
 ---
 
