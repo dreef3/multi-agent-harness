@@ -45,6 +45,19 @@ export interface VcsConnector {
    * Add a comment to a pull request
    */
   addComment(repo: Repository, prId: string, body: string): Promise<void>;
+
+  /**
+   * Commit a file to a branch. Creates the branch from defaultBranch first
+   * if createBranch is true.
+   */
+  commitFile(
+    repo: Repository,
+    branch: string,
+    path: string,
+    content: string,
+    message: string,
+    createBranch?: boolean
+  ): Promise<void>;
 }
 
 export class ConnectorError extends Error {

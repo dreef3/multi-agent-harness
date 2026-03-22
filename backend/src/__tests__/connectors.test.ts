@@ -11,6 +11,8 @@ const mockGetPR = vi.fn();
 const mockListReviewComments = vi.fn();
 const mockListIssueComments = vi.fn();
 const mockCreateComment = vi.fn();
+const mockGetContent = vi.fn();
+const mockCreateOrUpdateFileContents = vi.fn();
 
 vi.mock("@octokit/rest", () => ({
   Octokit: vi.fn().mockImplementation(() => ({
@@ -26,6 +28,10 @@ vi.mock("@octokit/rest", () => ({
     issues: {
       listComments: mockListIssueComments,
       createComment: mockCreateComment,
+    },
+    repos: {
+      getContent: mockGetContent,
+      createOrUpdateFileContents: mockCreateOrUpdateFileContents,
     },
   })),
 }));
@@ -278,6 +284,46 @@ describe("GitHubConnector", () => {
     it("throws ConnectorError on failure", async () => {
       mockCreateComment.mockRejectedValue(new Error("API error"));
       await expect(connector.addComment(repo, "123", "Test")).rejects.toThrow(ConnectorError);
+    });
+  });
+
+  describe("commitFile", () => {
+    it("calls createOrUpdateFileContents with base64 content (new file)", async () => {
+      mockGetContent.mockRejectedValue(new Error("Not Found"));
+      mockCreateOrUpdateFileContents.mockResolvedValue({});
+
+      await connector.commitFile(repo, "main", "docs/spec.md", "# Spec", "chore: add spec");
+
+      expect(mockCreateOrUpdateFileContents).toHaveBeenCalledWith(expect.objectContaining({
+        owner: "test-org",
+        repo: "test-repo",
+        path: "docs/spec.md",
+        message: "chore: add spec",
+        branch: "main",
+        content: Buffer.from("# Spec", "utf-8").toString("base64"),
+      }));
+    });
+
+    it("passes sha when file already exists", async () => {
+      mockGetContent.mockResolvedValue({
+        data: { type: "file", sha: "abc123def456" },
+      });
+      mockCreateOrUpdateFileContents.mockResolvedValue({});
+
+      await connector.commitFile(repo, "main", "docs/spec.md", "# Spec v2", "chore: update spec");
+
+      expect(mockCreateOrUpdateFileContents).toHaveBeenCalledWith(expect.objectContaining({
+        sha: "abc123def456",
+      }));
+    });
+
+    it("throws ConnectorError on failure", async () => {
+      mockGetContent.mockRejectedValue(new Error("Not Found"));
+      mockCreateOrUpdateFileContents.mockRejectedValue(new Error("API error"));
+
+      await expect(
+        connector.commitFile(repo, "main", "docs/spec.md", "# Spec", "chore: add spec")
+      ).rejects.toThrow(ConnectorError);
     });
   });
 
@@ -575,6 +621,34 @@ describe("BitbucketConnector", () => {
     it("throws ConnectorError on failure", async () => {
       mockFetch.mockRejectedValue(new Error("API error"));
       await expect(connector.addComment(repo, "123", "Test")).rejects.toThrow(ConnectorError);
+    });
+  });
+
+  describe("commitFile", () => {
+    it("calls Files API with PUT and multipart/form-data", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({}),
+      } as unknown as Response);
+
+      await connector.commitFile(repo, "main", "docs/spec.md", "# Spec", "chore: add spec");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/rest/api/1.0/projects/TEST/repos/test-repo/browse/docs/spec.md"),
+        expect.objectContaining({ method: "PUT" })
+      );
+    });
+
+    it("throws ConnectorError when response is not ok", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => "Bad Request",
+      } as unknown as Response);
+
+      await expect(
+        connector.commitFile(repo, "main", "docs/spec.md", "# Spec", "chore: add spec")
+      ).rejects.toThrow(ConnectorError);
     });
   });
 

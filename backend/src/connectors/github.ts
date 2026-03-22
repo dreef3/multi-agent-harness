@@ -182,4 +182,53 @@ export class GitHubConnector implements VcsConnector {
       );
     }
   }
+
+  async commitFile(
+    repo: Repository,
+    branch: string,
+    path: string,
+    content: string,
+    message: string,
+    createBranch = false
+  ): Promise<void> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+    const authorName = process.env.GIT_COMMIT_AUTHOR_NAME ?? "Harness Bot";
+    const authorEmail = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply";
+
+    try {
+      if (createBranch) {
+        await this.createBranch(repo, branch, repo.defaultBranch);
+      }
+
+      // Get existing file SHA if the file already exists (needed for update)
+      let fileSha: string | undefined;
+      try {
+        const { data } = await octokit.repos.getContent({ owner, repo: repoName, path, ref: branch });
+        if (!Array.isArray(data) && data.type === "file") {
+          fileSha = data.sha;
+        }
+      } catch {
+        // File does not exist yet — that's fine for a create
+      }
+
+      await octokit.repos.createOrUpdateFileContents({
+        owner,
+        repo: repoName,
+        path,
+        message,
+        content: Buffer.from(content, "utf-8").toString("base64"),
+        branch,
+        ...(fileSha ? { sha: fileSha } : {}),
+        author: { name: authorName, email: authorEmail },
+        committer: { name: authorName, email: authorEmail },
+      });
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to commit file: ${error instanceof Error ? error.message : String(error)}`,
+        "github",
+        error
+      );
+    }
+  }
 }

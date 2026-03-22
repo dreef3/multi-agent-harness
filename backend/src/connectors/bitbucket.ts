@@ -231,4 +231,47 @@ export class BitbucketConnector implements VcsConnector {
       );
     }
   }
+
+  async commitFile(
+    repo: Repository,
+    branch: string,
+    path: string,
+    content: string,
+    message: string,
+    createBranch = false
+  ): Promise<void> {
+    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
+    const token = this.getToken();
+
+    try {
+      if (createBranch) {
+        await this.createBranch(repo, branch, repo.defaultBranch);
+      }
+
+      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/browse/${path}`;
+
+      const formData = new FormData();
+      // Bitbucket Server Files API expects the content as a file blob
+      formData.append("content", new Blob([content], { type: "text/plain" }), path.split("/").pop() ?? "file");
+      formData.append("message", message);
+      formData.append("branch", branch);
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "Unknown error");
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to commit file: ${error instanceof Error ? error.message : String(error)}`,
+        "bitbucket-server",
+        error
+      );
+    }
+  }
 }
