@@ -11,7 +11,8 @@ import {
   AuthStorage,
 } from "@mariozechner/pi-coding-agent";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
+import { join } from "node:path";
 
 const REPO_CLONE_URL = process.env.REPO_CLONE_URL ?? "";
 const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
@@ -42,8 +43,8 @@ function git(...args) {
 // ── Git setup ────────────────────────────────────────────────────────────────
 const GIT_AUTHOR_NAME = process.env.GIT_COMMIT_AUTHOR_NAME ?? "Harness Bot";
 const GIT_AUTHOR_EMAIL = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply";
-exec(`git config --global user.email "${GIT_AUTHOR_EMAIL}"`);
-exec(`git config --global user.name "${GIT_AUTHOR_NAME}"`);
+git("config", "--global", "user.email", GIT_AUTHOR_EMAIL);
+git("config", "--global", "user.name", GIT_AUTHOR_NAME);
 
 // Build authenticated HTTPS clone URL
 let cloneUrl = REPO_CLONE_URL;
@@ -140,9 +141,6 @@ try {
 
 // ── Commit session log ────────────────────────────────────────────────────────
 try {
-  const { mkdirSync, copyFileSync, existsSync: fsExistsSync } = await import("node:fs");
-  const { join } = await import("node:path");
-
   const sessionJsonl = join(sessionDir, "session.jsonl");
   const logDir = `.harness/logs/sub-agents/${TASK_ID}`;
   const logDest = `${logDir}/session.jsonl`;

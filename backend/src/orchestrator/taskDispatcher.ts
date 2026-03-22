@@ -383,6 +383,7 @@ Stage and commit all changes. The harness will open the pull request automatical
         repoCloneUrl: repository.cloneUrl,
         branchName: pr.branch,
         taskDescription,
+        taskId: `fix-${sessionId.slice(0, 8)}`,
       });
 
       updateAgentSession(sessionId, { containerId, status: "running" });
