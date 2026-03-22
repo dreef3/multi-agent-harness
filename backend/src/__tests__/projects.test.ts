@@ -3,7 +3,7 @@ import { initDb, getDb } from "../store/db.js";
 import os from "os";
 import path from "path";
 import fs from "fs";
-import { insertProject, getProject, listProjects, updateProject } from "../store/projects.js";
+import { insertProject, getProject, listProjects, updateProject, listProjectsAwaitingLgtm } from "../store/projects.js";
 import { appendMessage, listMessages, listMessagesSince } from "../store/messages.js";
 import { parsePlan } from "../agents/planParser.js";
 import type { Project, Plan } from "../models/types.js";
@@ -47,17 +47,17 @@ describe("projects store", () => {
 
   it("updates name and status", () => {
     insertProject(baseProject);
-    updateProject("proj-1", { name: "Renamed Project", status: "planning" });
+    updateProject("proj-1", { name: "Renamed Project", status: "executing" });
     const found = getProject("proj-1");
     expect(found?.name).toBe("Renamed Project");
-    expect(found?.status).toBe("planning");
+    expect(found?.status).toBe("executing");
   });
 
   it("updates plan", () => {
     insertProject(baseProject);
     const plan: Plan = {
       id: "plan-1", projectId: "proj-1", content: "Plan content",
-      tasks: [], approved: false,
+      tasks: [],
     };
     updateProject("proj-1", { plan });
     const found = getProject("proj-1");
@@ -72,6 +72,50 @@ describe("projects store", () => {
 
   it("throws when updating a nonexistent project", () => {
     expect(() => updateProject("missing", { name: "x" })).toThrow("Project not found");
+  });
+
+  it("stores and retrieves primaryRepositoryId, planningBranch, planningPr", () => {
+    const proj: Project = {
+      ...baseProject,
+      id: "proj-pr",
+      primaryRepositoryId: "repo-1",
+      planningBranch: "harness/add-auth-a3b2c",
+      planningPr: { number: 7, url: "https://github.com/org/repo/pull/7" },
+    };
+    insertProject(proj);
+    const found = getProject("proj-pr");
+    expect(found?.primaryRepositoryId).toBe("repo-1");
+    expect(found?.planningBranch).toBe("harness/add-auth-a3b2c");
+    expect(found?.planningPr).toEqual({ number: 7, url: "https://github.com/org/repo/pull/7" });
+  });
+
+  it("stores planningPr with approval timestamps", () => {
+    const proj: Project = {
+      ...baseProject,
+      id: "proj-pr2",
+      primaryRepositoryId: "repo-1",
+      planningPr: {
+        number: 8,
+        url: "https://github.com/org/repo/pull/8",
+        specApprovedAt: "2026-03-22T10:00:00.000Z",
+        planApprovedAt: "2026-03-22T12:00:00.000Z",
+      },
+    };
+    insertProject(proj);
+    const found = getProject("proj-pr2");
+    expect(found?.planningPr?.specApprovedAt).toBe("2026-03-22T10:00:00.000Z");
+    expect(found?.planningPr?.planApprovedAt).toBe("2026-03-22T12:00:00.000Z");
+  });
+
+  it("listProjectsAwaitingLgtm returns only projects in awaiting states", () => {
+    insertProject({ ...baseProject, id: "p-brainstorm", status: "brainstorming" });
+    insertProject({ ...baseProject, id: "p-spec", status: "awaiting_spec_approval",
+      primaryRepositoryId: "repo-1" });
+    insertProject({ ...baseProject, id: "p-plan", status: "awaiting_plan_approval",
+      primaryRepositoryId: "repo-1" });
+    insertProject({ ...baseProject, id: "p-exec", status: "executing" });
+    const waiting = listProjectsAwaitingLgtm();
+    expect(waiting.map(p => p.id).sort()).toEqual(["p-plan", "p-spec"]);
   });
 });
 
@@ -245,5 +289,16 @@ Some content without description header
     const tasks = parsePlan("proj-1", markdown, repositories);
     expect(tasks).toHaveLength(1);
     expect(tasks[0].description).toContain("Some content");
+  });
+});
+
+describe("TaskDispatcher.buildTaskPrompt", () => {
+  it("prepends TDD preamble to the raw description", async () => {
+    const { TaskDispatcher } = await import("../orchestrator/taskDispatcher.js");
+    const dispatcher = new TaskDispatcher();
+    const prompt = dispatcher.buildTaskPrompt({ description: "Implement OAuth2 flow", id: "t1", repositoryId: "r1", status: "pending" });
+    expect(prompt).toContain("Test-Driven Development");
+    expect(prompt).toContain("Implement OAuth2 flow");
+    expect(prompt).toContain("## Your Task");
   });
 });

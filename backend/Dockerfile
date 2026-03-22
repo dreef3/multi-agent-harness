@@ -5,15 +5,20 @@ FROM node:24-slim AS builder
 COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 
-# Install build dependencies for native modules
+# Install build dependencies for native modules (including node-gyp for better-sqlite3)
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && npm install -g node-gyp
 
 COPY package.json bun.lock ./
-RUN bun install
+# Skip lifecycle scripts to avoid bun cache issues with native modules in Docker;
+# rebuild better-sqlite3 explicitly using node-gyp after packages are extracted.
+RUN bun install --ignore-scripts
+COPY scripts ./scripts
+RUN bash scripts/rebuild-sqlite3.sh
 COPY . .
 RUN bun run build
 

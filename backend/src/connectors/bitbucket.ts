@@ -93,15 +93,24 @@ export class BitbucketConnector implements VcsConnector {
 
       // Create the new branch
       const createUrl = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/branches`;
-      await this.fetchJson(createUrl, {
-        method: "POST",
-        body: JSON.stringify({
-          name: branchName,
-          startPoint: sourceBranch.latestCommit,
-          message: `Create branch ${branchName}`,
-        }),
-      });
+      try {
+        await this.fetchJson(createUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            name: branchName,
+            startPoint: sourceBranch.latestCommit,
+            message: `Create branch ${branchName}`,
+          }),
+        });
+      } catch (branchErr: unknown) {
+        const msg = branchErr instanceof Error ? branchErr.message : String(branchErr);
+        if (!msg.includes("HTTP 409") && !msg.toLowerCase().includes("already exists")) {
+          throw new ConnectorError(`Failed to create branch: ${msg}`, "bitbucket-server", branchErr);
+        }
+        // Branch already exists — that's fine for idempotent calls
+      }
     } catch (error) {
+      if (error instanceof ConnectorError) throw error;
       throw new ConnectorError(
         `Failed to create branch: ${error instanceof Error ? error.message : String(error)}`,
         "bitbucket-server",
@@ -226,6 +235,49 @@ export class BitbucketConnector implements VcsConnector {
     } catch (error) {
       throw new ConnectorError(
         `Failed to add comment: ${error instanceof Error ? error.message : String(error)}`,
+        "bitbucket-server",
+        error
+      );
+    }
+  }
+
+  async commitFile(
+    repo: Repository,
+    branch: string,
+    path: string,
+    content: string,
+    message: string,
+    createBranch = false
+  ): Promise<void> {
+    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
+    const token = this.getToken();
+
+    try {
+      if (createBranch) {
+        await this.createBranch(repo, branch, repo.defaultBranch);
+      }
+
+      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/browse/${path}`;
+
+      const formData = new FormData();
+      // Bitbucket Server Files API expects the content as a file blob
+      formData.append("content", new Blob([content], { type: "text/plain" }), path.split("/").pop() ?? "file");
+      formData.append("message", message);
+      formData.append("branch", branch);
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "Unknown error");
+        throw new Error(`HTTP ${response.status}: ${text}`);
+      }
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to commit file: ${error instanceof Error ? error.message : String(error)}`,
         "bitbucket-server",
         error
       );

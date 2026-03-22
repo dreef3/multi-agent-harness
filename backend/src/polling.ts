@@ -119,29 +119,139 @@ async function pollPullRequest(
   }
 }
 
-/**
- * Clean up poll state for PRs that are no longer open
- */
-function cleanupClosedPrs(): void {
-  // Get all PR IDs from all projects
-  const { listProjects } = require("./store/projects.js");
-  const projects = listProjects();
-  const openPrIds = new Set<string>();
+// ── LGTM detection ────────────────────────────────────────────────────────────
 
-  for (const project of projects) {
-    const prs = listPullRequestsByProject(project.id);
-    for (const pr of prs) {
-      if (pr.status === "open") {
-        openPrIds.add(pr.id);
-      }
-    }
+export function detectLgtm(body: string): boolean {
+  return /\bLGTM\b/i.test(body);
+}
+
+const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+
+async function pollPlanningPrs(docker: Dockerode): Promise<void> {
+  if (!isRunning) return;
+
+  let projects: Awaited<ReturnType<typeof import("./store/projects.js").listProjectsAwaitingLgtm>>;
+  try {
+    const { listProjectsAwaitingLgtm } = await import("./store/projects.js");
+    projects = listProjectsAwaitingLgtm();
+  } catch (error) {
+    console.error("[polling] Failed to list projects awaiting LGTM:", error);
+    return;
   }
 
-  // Remove poll state for closed PRs
-  for (const prId of pollStates.keys()) {
-    if (!openPrIds.has(prId)) {
-      pollStates.delete(prId);
-      console.log(`[polling] Cleaned up poll state for closed PR ${prId}`);
+  for (const project of projects) {
+    if (!project.planningPr || !project.primaryRepositoryId) continue;
+    const repo = getRepository(project.primaryRepositoryId);
+    if (!repo) continue;
+
+    try {
+      const connector = getConnector(repo.provider);
+
+      // Check if the planning PR was closed before approval
+      const prInfo = await connector.getPullRequest(repo, String(project.planningPr.number));
+      if (prInfo.status !== "open") {
+        console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
+        const { updateProject } = await import("./store/projects.js");
+        updateProject(project.id, { status: "failed" });
+        lgtmPollStates.delete(project.id);
+        const { getOrInitAgent } = await import("./api/websocket.js");
+        const closedAgent = await getOrInitAgent(project.id);
+        await closedAgent.prompt(
+          "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
+        );
+        continue;
+      }
+
+      const since = lgtmPollStates.get(project.id);
+      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
+
+      // Update last seen timestamp
+      if (comments.length > 0) {
+        const latest = comments[comments.length - 1].createdAt;
+        lgtmPollStates.set(project.id, latest);
+      }
+
+      const hasLgtm = comments.some(c => detectLgtm(c.body));
+      if (!hasLgtm) continue;
+
+      // Re-fetch to confirm status hasn't changed
+      const { getProject: getFreshStatus } = await import("./store/projects.js");
+      const currentProject = getFreshStatus(project.id);
+      if (!currentProject || currentProject.status !== project.status) continue;
+
+      console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
+
+      // Import here to avoid circular dependency
+      const { getOrInitAgent } = await import("./api/websocket.js");
+      const agent = await getOrInitAgent(project.id);
+
+      if (project.status === "awaiting_spec_approval") {
+        const { updateProject } = await import("./store/projects.js");
+        updateProject(project.id, {
+          planningPr: { ...project.planningPr, specApprovedAt: new Date().toISOString() },
+          status: "plan_in_progress",
+        });
+        lgtmPollStates.delete(project.id);
+        await agent.prompt(
+          '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
+          'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
+          'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
+        );
+      } else if (project.status === "awaiting_plan_approval") {
+        // plan.content and tasks were stored by write_planning_document(type: "plan") tool handler
+        const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
+        const { TaskDispatcher } = await import("./orchestrator/taskDispatcher.js");
+
+        updateProject(project.id, {
+          planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
+          status: "executing",
+        });
+        lgtmPollStates.delete(project.id);
+
+        // Create branches and commit plan file to non-primary repos
+        const freshProject = getFreshProject(project.id);
+        if (freshProject?.plan?.content && freshProject.planningBranch) {
+          const { listRepositories } = await import("./store/repositories.js");
+          const allRepos = listRepositories();
+          const date = freshProject.createdAt.slice(0, 10);
+          const { slugify, buildPlanningFilePath } = await import("./agents/planningTool.js");
+          const slug = slugify(freshProject.name);
+          const planFilePath = buildPlanningFilePath("plan", date, slug);
+
+          for (const repoId of freshProject.repositoryIds) {
+            if (repoId === freshProject.primaryRepositoryId) continue; // already committed
+            const nonPrimaryRepo = allRepos.find(r => r.id === repoId);
+            if (!nonPrimaryRepo) continue;
+            try {
+              const nonPrimaryConnector = getConnector(nonPrimaryRepo.provider);
+              // createBranch=true creates the branch from defaultBranch
+              await nonPrimaryConnector.commitFile(
+                nonPrimaryRepo,
+                freshProject.planningBranch,
+                planFilePath,
+                freshProject.plan.content,
+                `docs: add implementation plan for ${freshProject.name}`,
+                true // createBranch
+              );
+              console.log(`[polling] Plan committed to non-primary repo ${nonPrimaryRepo.name}`);
+            } catch (err) {
+              console.warn(`[polling] Failed to commit plan to non-primary repo ${repoId}:`, err);
+            }
+          }
+        }
+
+        await agent.prompt(
+          '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
+          'Tell the user that implementation is starting and the sub-agents will take it from here.'
+        );
+
+        const dispatcher = new TaskDispatcher();
+        dispatcher.dispatchTasks(docker, project.id).catch(err => {
+          console.error(`[polling] Task dispatch failed for project ${project.id}:`, err);
+        });
+      }
+    } catch (error) {
+      console.error(`[polling] Error processing LGTM for project ${project.id}:`, error);
     }
   }
 }
@@ -188,6 +298,9 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
     if (totalNewComments > 0) {
       console.log(`[polling] Found ${totalNewComments} new comments across all PRs`);
     }
+
+    // Poll planning PRs for LGTM
+    await pollPlanningPrs(docker);
   } catch (error) {
     console.error("[polling] Error during poll cycle:", error);
   }
@@ -203,7 +316,7 @@ export function startPolling(docker: Dockerode): void {
   }
 
   isRunning = true;
-  console.log(`[polling] Starting Bitbucket Server polling (interval: ${POLL_INTERVAL_MS}ms)`);
+  console.log(`[polling] Starting polling (interval: ${POLL_INTERVAL_MS}ms)`);
 
   // Run initial poll immediately
   void pollAllPullRequests(docker);

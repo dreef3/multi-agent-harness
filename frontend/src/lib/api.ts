@@ -4,10 +4,29 @@ export interface Project {
   id: string;
   name: string;
   description?: string;
-  source?: string;
+  source?: { type: "jira" | "freeform" | "github"; jiraTickets?: string[]; githubIssues?: string[]; freeformDescription?: string };
   repositoryIds?: string[];
+  primaryRepositoryId?: string;
+  planningBranch?: string;
+  planningPr?: {
+    number: number;
+    url: string;
+    specApprovedAt?: string;
+    planApprovedAt?: string;
+  };
   masterSessionPath?: string;
-  status: "draft" | "planning" | "approved" | "executing" | "completed" | "error" | "brainstorming" | "awaiting_approval" | "cancelled";
+  status:
+    | "draft"
+    | "brainstorming"
+    | "spec_in_progress"
+    | "awaiting_spec_approval"
+    | "plan_in_progress"
+    | "awaiting_plan_approval"
+    | "executing"
+    | "completed"
+    | "failed"
+    | "cancelled"
+    | "error";
   plan?: Plan;
   createdAt: string;
   updatedAt: string;
@@ -26,8 +45,6 @@ export interface Plan {
   projectId: string;
   content?: string;
   tasks: Task[];
-  approved: boolean;
-  approvedAt?: string;
 }
 
 export interface Task {
@@ -102,21 +119,23 @@ export const api = {
   projects: {
     list: () => fetchJson<Project[]>(`${API_BASE}/projects`),
     get: (id: string) => fetchJson<Project>(`${API_BASE}/projects/${id}`),
-    create: (data: { name: string; description?: string; repositoryIds?: string[]; source?: { type: "jira" | "freeform" | "github"; jiraTickets?: string[]; githubIssues?: string[]; freeformDescription?: string } }) =>
+    create: (data: {
+      name: string;
+      description?: string;
+      repositoryIds?: string[];
+      primaryRepositoryId?: string;
+      source?: { type: "jira" | "freeform" | "github"; jiraTickets?: string[]; githubIssues?: string[]; freeformDescription?: string }
+    }) =>
       fetchJson<Project>(`${API_BASE}/projects`, {
         method: "POST",
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
-      fetch(`${API_BASE}/projects/${id}`, { method: "DELETE" }),
+      fetchJson<void>(`${API_BASE}/projects/${id}`, { method: "DELETE" }),
     messages: {
       list: (projectId: string) =>
         fetchJson<Message[]>(`${API_BASE}/projects/${projectId}/messages`),
     },
-    approve: (projectId: string) =>
-      fetchJson<{ success: boolean; plan: unknown }>(`${API_BASE}/projects/${projectId}/approve`, {
-        method: "POST",
-      }),
     cancel: (projectId: string) =>
       fetchJson<{ success: boolean; status: string }>(`${API_BASE}/projects/${projectId}/cancel`, {
         method: "POST",

@@ -13,7 +13,8 @@
   "dependencies": {
     "@mariozechner/pi-coding-agent": "^0.61.1",
     "@octokit/rest": "^22.0.1",
-    "better-sqlite3": "^11.0.0",
+    "@sinclair/typebox": "^0.34.41",
+    "better-sqlite3": "^11.10.0",
     "dockerode": "^4.0.2",
     "express": "^4.18.2",
     "superpowers": "github:obra/superpowers#v5.0.4",

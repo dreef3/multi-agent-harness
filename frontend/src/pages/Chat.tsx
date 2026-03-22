@@ -1,42 +1,57 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import { api, Message } from "../lib/api";
+import { api, Message, Project } from "../lib/api";
 import { wsClient } from "../lib/ws";
 
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+  const location = useLocation();
+  const locationProject = (location.state as { project?: Project } | null)?.project;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoSentRef = useRef(false);
+  const hasStreamedRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
     wsClient.setProjectId(id);
-    loadMessages();
     wsClient.connect();
+
+    loadMessages().then((msgs) => {
+      // Auto-send freeform description as first message for new projects
+      if (!autoSentRef.current && msgs !== undefined && msgs.length === 0) {
+        const desc = locationProject?.source?.freeformDescription?.trim();
+        if (desc) {
+          autoSentRef.current = true;
+          wsClient.send({ type: "prompt", text: desc });
+          const userMessage: Message = {
+            id: Date.now().toString(),
+            projectId: id,
+            role: "user",
+            content: desc,
+            timestamp: new Date().toISOString(),
+          };
+          setMessages([userMessage]);
+        }
+      }
+    });
 
     const unsubscribe = wsClient.onMessage((data) => {
       if (data && typeof data === "object" && "type" in data) {
-        const msg = data as { type: string; text?: string; payload?: Message };
+        const msg = data as { type: string; text?: string; plan?: unknown };
         if (msg.type === "delta" && msg.text) {
+          hasStreamedRef.current = true;
           setStreamingContent((prev) => prev + msg.text);
         } else if (msg.type === "message_complete") {
-          loadMessages().then(async () => {
+          hasStreamedRef.current = false;
+          loadMessages().then(() => {
             setStreamingContent("");
-            try {
-              const project = await api.projects.get(id!);
-              if (project.status === "awaiting_approval") {
-                navigate(`/projects/${id}/plan`);
-              }
-            } catch { /* ignore */ }
           });
-        } else if (msg.type === "plan_ready") {
-          navigate(`/projects/${id}/plan`);
         }
       }
     });
@@ -44,19 +59,21 @@ export default function Chat() {
     return () => {
       unsubscribe();
     };
-  }, [id, navigate]);
+  }, [id]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function loadMessages() {
-    if (!id) return;
+  async function loadMessages(): Promise<Message[]> {
+    if (!id) return [];
     try {
       const data = await api.projects.messages.list(id);
       setMessages(data);
+      return data;
     } catch (err) {
       console.error("Failed to load messages:", err);
+      return [];
     } finally {
       setLoading(false);
     }
@@ -93,12 +110,6 @@ export default function Chat() {
     <div className="h-[calc(100vh-8rem)] flex flex-col space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Chat</h1>
-        <button
-          onClick={() => navigate(`/projects/${id}/plan`)}
-          className="text-green-400 hover:text-green-300 text-sm"
-        >
-          View Plan →
-        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-4 bg-gray-900 border border-gray-800 rounded-lg p-4">

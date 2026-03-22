@@ -5,8 +5,10 @@ export interface Project {
   name: string;
   status:
     | "brainstorming"
-    | "planning"
-    | "awaiting_approval"
+    | "spec_in_progress"
+    | "awaiting_spec_approval"
+    | "plan_in_progress"
+    | "awaiting_plan_approval"
     | "executing"
     | "completed"
     | "failed"
@@ -14,10 +16,18 @@ export interface Project {
   source: {
     type: "jira" | "freeform" | "github";
     jiraTickets?: string[];
-    githubIssues?: string[];          // e.g. ["owner/repo#123"]
+    githubIssues?: string[];
     freeformDescription?: string;
   };
   repositoryIds: string[];
+  primaryRepositoryId?: string;
+  planningBranch?: string;
+  planningPr?: {
+    number: number;
+    url: string;
+    specApprovedAt?: string;
+    planApprovedAt?: string;
+  };
   plan?: Plan;
   masterSessionPath: string;
   createdAt: string;
@@ -29,8 +39,6 @@ export interface Plan {
   projectId: string;
   content: string;
   tasks: PlanTask[];
-  approved: boolean;
-  approvedAt?: string;
 }
 
 export interface PlanTask {

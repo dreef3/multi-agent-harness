@@ -35,11 +35,30 @@ export default function Dashboard() {
 
   const statusColors: Record<string, string> = {
     draft: "bg-gray-700",
-    planning: "bg-yellow-600",
-    approved: "bg-green-600",
-    executing: "bg-blue-600",
+    brainstorming: "bg-gray-600",
+    spec_in_progress: "bg-blue-600",
+    awaiting_spec_approval: "bg-amber-600",
+    plan_in_progress: "bg-blue-600",
+    awaiting_plan_approval: "bg-amber-600",
+    executing: "bg-blue-700",
     completed: "bg-purple-600",
+    failed: "bg-red-600",
+    cancelled: "bg-gray-700",
     error: "bg-red-600",
+  };
+
+  const statusLabels: Record<string, string> = {
+    draft: "Draft",
+    brainstorming: "Brainstorming",
+    spec_in_progress: "Writing Spec",
+    awaiting_spec_approval: "Awaiting Spec Approval",
+    plan_in_progress: "Writing Plan",
+    awaiting_plan_approval: "Awaiting Plan Approval",
+    executing: "Executing",
+    completed: "Completed",
+    failed: "Failed",
+    cancelled: "Cancelled",
+    error: "Error",
   };
 
   if (loading) return <div className="text-gray-400">Loading...</div>;
@@ -76,7 +95,7 @@ export default function Dashboard() {
                       statusColors[project.status] || "bg-gray-700"
                     }`}
                   >
-                    {project.status}
+                    {statusLabels[project.status] ?? project.status}
                   </span>
                 </div>
                 <p className="text-gray-400 text-sm">{project.description}</p>
@@ -91,15 +110,17 @@ export default function Dashboard() {
                 >
                   Chat
                 </Link>
-                {project.status === "planning" && (
-                  <Link
-                    to={`/projects/${project.id}/plan`}
-                    className="text-green-400 hover:text-green-300 px-3 py-1 text-sm"
+                {(project.status === "awaiting_spec_approval" || project.status === "awaiting_plan_approval") && project.planningPr?.url && (
+                  <a
+                    href={project.planningPr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-amber-400 hover:text-amber-300 px-3 py-1 text-sm"
                   >
-                    Review Plan
-                  </Link>
+                    Review PR ↗
+                  </a>
                 )}
-                {(project.status === "approved" || project.status === "executing") && (
+                {project.status === "executing" && (
                   <Link
                     to={`/projects/${project.id}/execute`}
                     className="text-purple-400 hover:text-purple-300 px-3 py-1 text-sm"

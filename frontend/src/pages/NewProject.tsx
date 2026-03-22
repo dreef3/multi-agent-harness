@@ -55,8 +55,18 @@ export default function NewProject() {
   
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>([]);
+  const [primaryRepoId, setPrimaryRepoId] = useState<string | null>(null);
   const [repoLoading, setRepoLoading] = useState(true);
   const [showRepoDropdown, setShowRepoDropdown] = useState(false);
+
+  // Auto-select primary repo when only one is selected
+  useEffect(() => {
+    if (selectedRepoIds.length === 1) {
+      setPrimaryRepoId(selectedRepoIds[0]);
+    } else if (!selectedRepoIds.includes(primaryRepoId ?? "")) {
+      setPrimaryRepoId(null);
+    }
+  }, [selectedRepoIds]);
 
   // GitHub Issues are only valid when all selected repos are GitHub-hosted
   const selectedRepos = repositories.filter(r => selectedRepoIds.includes(r.id));
@@ -104,9 +114,17 @@ export default function NewProject() {
         const ghContext = selectedGhIssues
           .map(ref => ghIssues.find(i => i.ref === ref))
           .filter(Boolean)
-          .map(issue => `[${issue!.ref}] ${issue!.title}`)
-          .join("\n");
-        finalDescription = `${finalDescription}\n\nGitHub Issues:\n${ghContext}`;
+          .map(issue => {
+            const parts: string[] = [`[${issue!.ref}] ${issue!.title}`];
+            if (issue!.body?.trim()) parts.push(issue!.body.trim());
+            if (issue!.labels.length > 0) parts.push(`Labels: ${issue!.labels.join(", ")}`);
+            if (issue!.assignees.length > 0) parts.push(`Assignees: ${issue!.assignees.join(", ")}`);
+            return parts.join("\n");
+          })
+          .join("\n\n---\n\n");
+        finalDescription = finalDescription.trim()
+          ? `${finalDescription.trim()}\n\n${ghContext}`
+          : ghContext;
       }
 
       const source =
@@ -119,9 +137,10 @@ export default function NewProject() {
       const project = await api.projects.create({
         name: name.trim(),
         repositoryIds: selectedRepoIds,
+        primaryRepositoryId: primaryRepoId ?? selectedRepoIds[0],
         source,
       });
-      navigate(`/projects/${project.id}/chat`);
+      navigate(`/projects/${project.id}/chat`, { state: { project } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
     } finally {
@@ -420,17 +439,10 @@ export default function NewProject() {
               )}
 
               {selectedGhIssues.length > 0 && (
-                <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                <div className="pt-2 border-t border-gray-700">
                   <span className="text-sm text-gray-400">
-                    {selectedGhIssues.length} issue(s) selected
+                    {selectedGhIssues.length} issue(s) selected — will be included automatically
                   </span>
-                  <button
-                    type="button"
-                    onClick={addSelectedGhIssuesToDescription}
-                    className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-medium"
-                  >
-                    Add to Description
-                  </button>
                 </div>
               )}
             </div>
@@ -515,6 +527,26 @@ export default function NewProject() {
                   </span>
                 );
               })}
+            </div>
+          )}
+          {selectedRepoIds.length >= 2 && (
+            <div className="mt-3">
+              <label className="block text-sm font-medium text-gray-300 mb-1">
+                Primary Repository
+                <span className="text-gray-500 font-normal ml-1">(planning branch will be created here)</span>
+              </label>
+              <select
+                value={primaryRepoId ?? ""}
+                onChange={(e) => setPrimaryRepoId(e.target.value || null)}
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value="">Select primary repository...</option>
+                {selectedRepoIds.map((id) => {
+                  const repo = repositories.find((r) => r.id === id);
+                  if (!repo) return null;
+                  return <option key={id} value={id}>{repo.name}</option>;
+                })}
+              </select>
             </div>
           )}
         </div>

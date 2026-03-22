@@ -56,7 +56,8 @@ test.describe('Review Comment Fix-Run Flow', () => {
 
     // ── 3. Inject a plan (skip master agent) ─────────────────────────────────
     const taskId = `e2e-task-${Date.now()}`;
-    await request.patch(`${API_BASE}/projects/${projectId}`, {
+    // ── 4. Inject a plan and approve it (sets planningPr.planApprovedAt, triggers dispatch) ──
+    const approveRes = await request.post(`${API_BASE}/projects/${projectId}/approve`, {
       data: {
         plan: {
           id: `e2e-plan-${Date.now()}`,
@@ -68,14 +69,9 @@ test.describe('Review Comment Fix-Run Flow', () => {
             description: 'Create a file called `review-flow-marker.md` with the content "# Review Flow Marker" and commit it to the current branch.',
             status: 'pending',
           }],
-          approved: false,
         },
-        status: 'awaiting_approval',
       },
     });
-
-    // ── 4. Approve the plan ───────────────────────────────────────────────────
-    const approveRes = await request.post(`${API_BASE}/projects/${projectId}/approve`);
     expect(approveRes.ok()).toBe(true);
 
     // ── 5. Poll for sub-agent session completing ──────────────────────────────

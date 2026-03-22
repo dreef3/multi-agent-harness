@@ -20,6 +20,52 @@ export interface TaskResult {
 export class TaskDispatcher {
   private activeTasks = new Map<string, Promise<TaskResult>>();
 
+  private static readonly TASK_PREAMBLE = `You are a software engineering sub-agent. Follow this workflow exactly.
+
+## Step 1 — Understand the Task
+Read the task description below carefully. If a plan file exists in the repository
+at docs/superpowers/plans/, read it to understand the full project context before
+starting.
+
+## Step 2 — Test-Driven Development
+Follow strict TDD. For every behaviour you implement:
+1. Write a failing test first. Run it and confirm it fails for the right reason.
+2. Write the minimum code to make it pass. Run it and confirm it passes.
+3. Refactor. Keep tests green.
+Never write production code without a failing test first.
+
+## Step 3 — Implement
+Work through the task description step by step. Commit logical units of work with
+clear messages. Do not make changes beyond the scope of the task.
+
+## Step 4 — Systematic Debugging
+If you encounter a bug or unexpected behaviour:
+1. Reproduce it reliably first.
+2. Form a hypothesis about the root cause.
+3. Test the hypothesis before attempting a fix.
+4. Fix only after confirming the root cause.
+Never guess-and-check. Root cause first, always.
+
+## Step 5 — Verify Before Finishing
+Before considering the task done:
+1. Run the full test suite. Show the command and its output.
+2. Confirm every acceptance criterion in the task description is met.
+3. Do not claim completion without fresh evidence.
+If verification fails, go back and fix — do not push broken code.
+
+## Step 6 — Commit and Push
+Stage and commit all changes. The harness will open the pull request automatically.
+
+---
+
+## Your Task
+
+`;
+
+  public buildTaskPrompt(task: PlanTask): string {
+    return TaskDispatcher.TASK_PREAMBLE + task.description;
+  }
+
   /**
    * Dispatch all tasks from an approved plan for a project.
    * Launches all tasks in parallel.
@@ -30,11 +76,11 @@ export class TaskDispatcher {
       throw new Error(`Project not found: ${projectId}`);
     }
 
-    if (!project.plan || !project.plan.approved) {
-      throw new Error(`Project ${projectId} does not have an approved plan`);
+    if (!project.planningPr?.planApprovedAt) {
+      throw new Error(`Project ${projectId} does not have an approved plan (planningPr.planApprovedAt not set)`);
     }
 
-    if (project.plan.tasks.length === 0) {
+    if (!project.plan || project.plan.tasks.length === 0) {
       return [];
     }
 
@@ -70,7 +116,10 @@ export class TaskDispatcher {
     }
 
     const sessionId = randomUUID();
-    const branchName = `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
+    const isPrimaryRepo = repository.id === project.primaryRepositoryId;
+    const branchName = isPrimaryRepo && project.planningBranch
+      ? project.planningBranch
+      : `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
     console.log(`[taskDispatcher] Starting task ${task.id} for project ${project.id}, repo ${repository.id}, branch ${branchName}`);
 
     // Create agent session record
@@ -99,7 +148,8 @@ export class TaskDispatcher {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
         branchName,
-        taskDescription: task.description,
+        taskDescription: this.buildTaskPrompt(task),
+        taskId: task.id,
       });
 
       // Update session with container ID
@@ -333,6 +383,7 @@ export class TaskDispatcher {
         repoCloneUrl: repository.cloneUrl,
         branchName: pr.branch,
         taskDescription,
+        taskId: `fix-${sessionId.slice(0, 8)}`,
       });
 
       updateAgentSession(sessionId, { containerId, status: "running" });
