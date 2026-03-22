@@ -6,6 +6,7 @@ import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
+import { getRecoveryService } from "../orchestrator/recoveryService.js";
 
 export function createProjectsRouter(): Router {
   const router = Router();
@@ -148,6 +149,62 @@ export function createProjectsRouter(): Router {
 
     updateProject(req.params.id, { status: "cancelled" });
     res.json({ success: true, status: "cancelled" });
+  });
+
+  // GET /api/projects/:id/tasks — return task list for planning agent get_task_status tool
+  router.get("/:id/tasks", (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    res.json({ tasks: project.plan?.tasks ?? [] });
+  });
+
+  // POST /api/projects/:id/tasks — upsert tasks and dispatch (for planning agent dispatch_tasks tool)
+  router.post("/:id/tasks", async (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+
+    const { tasks } = req.body as { tasks?: Array<{ id?: string; repositoryId: string; description: string }> };
+    if (!Array.isArray(tasks)) { res.status(400).json({ error: "tasks must be an array" }); return; }
+
+    const existingTasks = project.plan?.tasks ?? [];
+
+    const updatedTasks = [...existingTasks];
+    for (const incoming of tasks) {
+      const existingIdx = incoming.id ? updatedTasks.findIndex(t => t.id === incoming.id) : -1;
+      if (existingIdx >= 0) {
+        // Upsert: reset to pending, clear error
+        updatedTasks[existingIdx] = {
+          ...updatedTasks[existingIdx],
+          description: incoming.description,
+          repositoryId: incoming.repositoryId,
+          status: "pending",
+          retryCount: 0,
+          errorMessage: undefined,
+        };
+      } else {
+        // New task
+        updatedTasks.push({
+          id: incoming.id ?? randomUUID(),
+          repositoryId: incoming.repositoryId,
+          description: incoming.description,
+          status: "pending",
+        });
+      }
+    }
+
+    const plan = project.plan
+      ? { ...project.plan, tasks: updatedTasks }
+      : { id: randomUUID(), projectId: project.id, content: "", tasks: updatedTasks };
+
+    updateProject(project.id, { plan, status: "executing" });
+
+    try {
+      await getRecoveryService().dispatchTasksForProject(project.id);
+    } catch (err) {
+      console.error(`[projects] dispatchTasksForProject error:`, err);
+    }
+
+    res.json({ dispatched: tasks.length });
   });
 
   return router;
