@@ -130,6 +130,40 @@ describe("MasterAgent", () => {
     agent.dispose();
   });
 
+  it("emits tool_call on tool_execution_start", async () => {
+    const agent = new MasterAgent("proj-1", sessionPath);
+    await agent.init();
+    const calls: { toolName: string; args: unknown }[] = [];
+    agent.on("tool_call", (toolName: string, args: unknown) => calls.push({ toolName, args }));
+
+    const handler = mocks.mockSession._handler!;
+    handler({ type: "tool_execution_start", toolCallId: "tc1", toolName: "write_planning_document", args: { type: "spec" } });
+    handler({ type: "tool_execution_start", toolCallId: "tc2", toolName: "Bash", args: { command: "ls" } });
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual({ toolName: "write_planning_document", args: { type: "spec" } });
+    expect(calls[1]).toEqual({ toolName: "Bash", args: { command: "ls" } });
+    agent.dispose();
+  });
+
+  it("emits message_complete per turn then prompt resolves", async () => {
+    const agent = new MasterAgent("proj-1", sessionPath);
+    await agent.init();
+    const completions: number[] = [];
+    agent.on("message_complete", () => completions.push(Date.now()));
+
+    const handler = mocks.mockSession._handler!;
+    // Simulate two text turns separated by a tool call
+    handler({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "turn 1" } });
+    handler({ type: "message_update", assistantMessageEvent: { type: "message_stop" } });
+    handler({ type: "tool_execution_start", toolCallId: "tc1", toolName: "Bash", args: {} });
+    handler({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "turn 2" } });
+    handler({ type: "message_update", assistantMessageEvent: { type: "message_stop" } });
+
+    expect(completions).toHaveLength(2);
+    agent.dispose();
+  });
+
   it("disposes session on dispose", async () => {
     const agent = new MasterAgent("proj-1", sessionPath);
     await agent.init();

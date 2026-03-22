@@ -37,6 +37,7 @@ export interface Message {
   projectId: string;
   role: "user" | "assistant";
   content: string;
+  seqId?: number;
   timestamp: string;
 }
 

@@ -17,6 +17,20 @@ export interface TaskResult {
   error?: string;
 }
 
+/**
+ * Build "Closes #N" lines from an array of GitHub issue refs.
+ * Accepts "owner/repo#123", "#123", or plain "123" formats.
+ */
+export function buildClosingRefs(githubIssues: string[]): string {
+  return githubIssues
+    .map(issue => {
+      const m = issue.match(/#(\d+)$/);
+      return m ? `Closes #${m[1]}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
 export class TaskDispatcher {
   private activeTasks = new Map<string, Promise<TaskResult>>();
 
@@ -295,9 +309,11 @@ Stage and commit all changes. The harness will open the pull request automatical
   ): Promise<PullRequest> {
     const connector = getConnector(repository.provider);
 
+    const closingRefs = buildClosingRefs(project.source?.githubIssues ?? []);
+
     const prResult = await connector.createPullRequest(repository, {
       title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
-      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}`,
+      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
       headBranch: branchName,
       baseBranch: repository.defaultBranch,
     });

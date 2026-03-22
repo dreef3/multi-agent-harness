@@ -102,7 +102,8 @@ Triggered when you receive:
 
 Invoke the \`superpowers:writing-plans\` skill. Follow its full process:
 
-1. Re-read the approved spec carefully.
+1. Re-read the approved spec carefully (it is in the repository at
+   \`docs/superpowers/specs/\`).
 2. Define the file structure and task boundaries.
 3. Write a detailed plan with bite-sized tasks (2–5 min each), each containing:
    - Files to create/modify/test
@@ -117,15 +118,14 @@ Invoke the \`superpowers:writing-plans\` skill. Follow its full process:
 5. Dispatch the \`plan-document-reviewer\` subagent (from the writing-plans skill's
    \`plan-document-reviewer-prompt.md\`). Fix issues and re-dispatch until approved
    (max 3 iterations).
-6. Post the path of the written plan file in chat. Ask the user to add a LGTM comment
-   on the PR when they are satisfied with the plan. Do NOT call write_planning_document yet.
-7. Wait for: \`[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\`
-   Do NOT proceed until you receive this exact system message — do not act on chat approval.
-8. Once you receive the [SYSTEM] message, call:
-   \`write_planning_document(type: "plan", content: <full plan markdown>)\`
-9. After the tool returns, post the PR URL in chat:
-   "The implementation plan is ready for review at {url}. Add a LGTM comment when
+6. Call \`write_planning_document(type: "plan", content: <full plan markdown>)\`.
+   This commits the plan file to the PR branch so the user can review it.
+7. After the tool returns, post the PR URL in chat:
+   "The plan is ready for review at {url}. Add a LGTM comment to the PR when
    you are ready to start implementation."
+   Then stop — do NOT proceed further until you receive a system message.
+8. Wait for: \`[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\`
+   Do NOT proceed until you receive this exact system message.
 
 **Important:** The \`writing-plans\` skill normally ends by asking the user to choose
 between subagent-driven or inline execution. **Skip that step entirely.** In this
@@ -170,7 +170,7 @@ ${sourceSection}`;
 }
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
-interface WsServerMessage { type: "delta" | "message_complete" | "replay" | "error"; [key: string]: unknown; }
+interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "replay" | "error"; [key: string]: unknown; }
 
 function send(ws: WebSocket, msg: WsServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -210,27 +210,53 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
       }
     }
 
-    let fullResponse = "";
-    let deltaCount = 0;
-    const onDelta = (text: string) => { fullResponse += text; deltaCount++; };
+    // Per-turn message accumulation: save a separate message on each message_stop,
+    // so multi-turn conversations (text → tool → text) show as separate bubbles.
+    let currentBuffer = "";
+    let totalDeltaCount = 0;
+
+    const onDelta = (text: string) => { currentBuffer += text; totalDeltaCount++; };
+    const onTurnComplete = () => {
+      if (currentBuffer) {
+        console.log(`[ws] saving assistant turn, length=${currentBuffer.length}`);
+        appendMessage(projectId, "assistant", currentBuffer);
+        broadcastToProject(projectId, { type: "message_complete" });
+        currentBuffer = "";
+      }
+    };
+    const onToolCall = (toolName: string, args: unknown) => {
+      // Forward tool call info to all connected clients (transient, not persisted)
+      const safeArgs = toolName === "write_planning_document"
+        ? { type: (args as { type?: string })?.type }
+        : {};
+      broadcastToProject(projectId, { type: "tool_call", toolName, args: safeArgs });
+    };
+
     agent.on("delta", onDelta);
+    agent.on("message_complete", onTurnComplete);
+    agent.on("tool_call", onToolCall);
     console.log(`[ws] calling agent.prompt()...`);
     try {
       await agent.prompt(promptText);
-      console.log(`[ws] agent.prompt() resolved. deltaCount=${deltaCount}, fullResponse length=${fullResponse.length}`);
-      if (fullResponse) {
-        appendMessage(projectId, "assistant", fullResponse);
-        console.log(`[ws] assistant message saved`);
-      } else {
-        console.warn(`[ws] agent returned empty response (deltaCount=${deltaCount})`);
+      console.log(`[ws] agent.prompt() resolved. totalDeltaCount=${totalDeltaCount}`);
+      // Flush any remaining buffer (shouldn't normally happen)
+      if (currentBuffer) {
+        appendMessage(projectId, "assistant", currentBuffer);
+        broadcastToProject(projectId, { type: "message_complete" });
       }
-      send(ws, { type: "message_complete" });
-      console.log(`[ws] message_complete sent`);
+      if (totalDeltaCount === 0) {
+        console.warn(`[ws] agent returned empty response`);
+      }
+      // Signal that the full conversation turn is done (broadcast to all connections)
+      broadcastToProject(projectId, { type: "conversation_complete" });
+      console.log(`[ws] conversation_complete broadcast`);
     } catch (err) {
       console.error(`[ws] agent.prompt() error:`, err);
       send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
     } finally {
       agent.off("delta", onDelta);
+      agent.off("message_complete", onTurnComplete);
+      agent.off("tool_call", onToolCall);
     }
     return;
   }
@@ -239,6 +265,16 @@ async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: str
     await agent.steer(msg.text);
     return;
   }
+}
+
+// Track all active WebSocket connections per project so lifecycle events
+// (message_complete, conversation_complete, tool_call) reach reconnected clients.
+const projectConnections = new Map<string, Set<WebSocket>>();
+
+function broadcastToProject(projectId: string, msg: WsServerMessage) {
+  const connections = projectConnections.get(projectId);
+  if (!connections) return;
+  for (const ws of connections) send(ws, msg);
 }
 
 export function setupWebSocket(server: Server, dataDir: string): void {
@@ -251,6 +287,10 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     console.log(`[ws] new connection for project=${projectId}`);
     const project = getProject(projectId);
     if (!project) { console.error(`[ws] project not found: ${projectId}`); ws.close(4004, "Project not found"); return; }
+
+    // Register connection for project-wide broadcasts
+    if (!projectConnections.has(projectId)) projectConnections.set(projectId, new Set());
+    projectConnections.get(projectId)!.add(ws);
 
     const pendingMessages: Buffer[] = [];
     let agent: MasterAgent | undefined = agentSessions.get(projectId);
@@ -277,6 +317,7 @@ export function setupWebSocket(server: Server, dataDir: string): void {
     agent.on("error", onErrorFwd);
 
     ws.on("close", () => {
+      projectConnections.get(projectId)?.delete(ws);
       agent!.off("delta", onDeltaFwd);
       agent!.off("error", onErrorFwd);
     });
