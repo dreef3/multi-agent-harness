@@ -3,10 +3,15 @@
 # Required when bun's cached version has no prebuilt binary for the current Node.js ABI.
 set -e
 
+# Try bun's nested cache path first, then fall back to the flat node_modules path
 SQLITE_DIR=$(ls -d node_modules/.bun/better-sqlite3@*/node_modules/better-sqlite3 2>/dev/null | head -1)
 
+if [ -z "$SQLITE_DIR" ] && [ -d "node_modules/better-sqlite3" ]; then
+  SQLITE_DIR="node_modules/better-sqlite3"
+fi
+
 if [ -z "$SQLITE_DIR" ]; then
-  echo "better-sqlite3 not found in bun cache — skipping rebuild" >&2
+  echo "better-sqlite3 not found — skipping rebuild" >&2
   exit 0
 fi
 
