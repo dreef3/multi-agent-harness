@@ -1,42 +1,65 @@
 import { useEffect, useRef, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
-import { api, Message } from "../lib/api";
+import { api, Message, Project } from "../lib/api";
 import { wsClient } from "../lib/ws";
 
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const locationProject = (location.state as { project?: Project } | null)?.project;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const autoSentRef = useRef(false);
+  const hasStreamedRef = useRef(false);
 
   useEffect(() => {
     if (!id) return;
     wsClient.setProjectId(id);
-    loadMessages();
     wsClient.connect();
+
+    loadMessages().then((msgs) => {
+      // Auto-send freeform description as first message for new projects
+      if (!autoSentRef.current && msgs !== undefined && msgs.length === 0) {
+        const desc = locationProject?.source?.freeformDescription?.trim();
+        if (desc) {
+          autoSentRef.current = true;
+          wsClient.send({ type: "prompt", text: desc });
+          const userMessage: Message = {
+            id: Date.now().toString(),
+            projectId: id,
+            role: "user",
+            content: desc,
+            timestamp: new Date().toISOString(),
+          };
+          setMessages([userMessage]);
+        }
+      }
+    });
 
     const unsubscribe = wsClient.onMessage((data) => {
       if (data && typeof data === "object" && "type" in data) {
-        const msg = data as { type: string; text?: string; payload?: Message };
+        const msg = data as { type: string; text?: string; plan?: unknown };
         if (msg.type === "delta" && msg.text) {
+          hasStreamedRef.current = true;
           setStreamingContent((prev) => prev + msg.text);
         } else if (msg.type === "message_complete") {
-          loadMessages().then(async () => {
+          hasStreamedRef.current = false;
+          loadMessages().then(() => {
             setStreamingContent("");
-            try {
-              const project = await api.projects.get(id!);
-              if (project.status === "awaiting_approval") {
-                navigate(`/projects/${id}/plan`);
-              }
-            } catch { /* ignore */ }
           });
         } else if (msg.type === "plan_ready") {
-          navigate(`/projects/${id}/plan`);
+          // Only navigate if we received deltas in this session (fresh plan).
+          // Ignore plan_ready sent on WS reconnect for a pre-existing plan.
+          if (hasStreamedRef.current) {
+            hasStreamedRef.current = false;
+            navigate(`/projects/${id}/plan`, { state: { plan: msg.plan } });
+          }
         }
       }
     });
@@ -50,13 +73,15 @@ export default function Chat() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  async function loadMessages() {
-    if (!id) return;
+  async function loadMessages(): Promise<Message[]> {
+    if (!id) return [];
     try {
       const data = await api.projects.messages.list(id);
       setMessages(data);
+      return data;
     } catch (err) {
       console.error("Failed to load messages:", err);
+      return [];
     } finally {
       setLoading(false);
     }

@@ -36,6 +36,14 @@ export function listProjects(): Project[] {
   return (getDb().prepare("SELECT * FROM projects ORDER BY created_at DESC").all() as ProjectRow[]).map(fromRow);
 }
 
+export function deleteProject(id: string): void {
+  const db = getDb();
+  db.prepare("DELETE FROM messages WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM agent_sessions WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM pull_requests WHERE project_id = ?").run(id);
+  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+}
+
 export function updateProject(id: string, updates: Partial<Omit<Project, "id">>): void {
   const existing = getProject(id);
   if (!existing) throw new Error(`Project not found: ${id}`);

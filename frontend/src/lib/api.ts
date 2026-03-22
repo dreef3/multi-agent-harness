@@ -4,7 +4,7 @@ export interface Project {
   id: string;
   name: string;
   description?: string;
-  source?: string;
+  source?: { type: "jira" | "freeform" | "github"; jiraTickets?: string[]; githubIssues?: string[]; freeformDescription?: string };
   repositoryIds?: string[];
   masterSessionPath?: string;
   status: "draft" | "planning" | "approved" | "executing" | "completed" | "error" | "brainstorming" | "awaiting_approval" | "cancelled";
@@ -108,7 +108,7 @@ export const api = {
         body: JSON.stringify(data),
       }),
     delete: (id: string) =>
-      fetch(`${API_BASE}/projects/${id}`, { method: "DELETE" }),
+      fetchJson<void>(`${API_BASE}/projects/${id}`, { method: "DELETE" }),
     messages: {
       list: (projectId: string) =>
         fetchJson<Message[]>(`${API_BASE}/projects/${projectId}/messages`),

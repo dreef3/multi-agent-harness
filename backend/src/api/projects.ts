@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
-import { insertProject, getProject, listProjects, updateProject } from "../store/projects.js";
+import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
@@ -145,6 +145,17 @@ export function createProjectsRouter(docker: Dockerode): Router {
     });
 
     res.json({ success: true, plan: approvedPlan });
+  });
+
+  // Delete project
+  router.delete("/:id", (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    deleteProject(req.params.id);
+    res.json({ success: true });
   });
 
   // Cancel project

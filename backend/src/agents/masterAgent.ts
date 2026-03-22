@@ -17,12 +17,13 @@ export class MasterAgent extends EventEmitter {
   }
 
   async init(): Promise<void> {
+    console.log(`[MasterAgent:${this.projectId}] init() start`);
     const sessionDir = path.dirname(this.sessionFilePath);
     const settingsManager = SettingsManager.inMemory();
-    
+
     // Find superpowers skills directory
     const superpowersSkillsPaths = this.findSuperpowersSkills();
-    
+
     const resourceLoader = new DefaultResourceLoader({
       settingsManager,
       noExtensions: true,
@@ -31,17 +32,20 @@ export class MasterAgent extends EventEmitter {
       noThemes: true,
       additionalSkillPaths: superpowersSkillsPaths,
     });
-    
+
     // Reload to discover skills
+    console.log(`[MasterAgent:${this.projectId}] loading resources...`);
     await resourceLoader.reload();
-    
+
     const authStorage = AuthStorage.create();
     const modelRegistry = new ModelRegistry(authStorage);
     const provider = config.agentProvider;
     const providerModels = config.models[provider as keyof typeof config.models];
     const modelId = providerModels?.masterAgent?.model;
     const model = modelId ? modelRegistry.find(provider, modelId) : undefined;
-    
+    console.log(`[MasterAgent:${this.projectId}] provider=${provider} modelId=${modelId} modelFound=${!!model}`);
+
+    console.log(`[MasterAgent:${this.projectId}] creating agent session...`);
     const { session } = await createAgentSession({
       sessionManager: SessionManager.create(sessionDir, sessionDir),
       settingsManager,
@@ -49,17 +53,23 @@ export class MasterAgent extends EventEmitter {
       modelRegistry,
       ...(model ? { model } : {}),
     });
-    
+    console.log(`[MasterAgent:${this.projectId}] session created`);
+
     session.subscribe((event: unknown) => {
       const e = event as PiEvent;
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "text_delta" && e.assistantMessageEvent.delta) {
         this.emit("delta", e.assistantMessageEvent.delta);
       }
       if (e.type === "message_update" && e.assistantMessageEvent?.type === "message_stop") {
+        console.log(`[MasterAgent:${this.projectId}] message_stop received`);
         this.emit("message_complete");
+      }
+      if (e.type === "error") {
+        console.error(`[MasterAgent:${this.projectId}] session error event:`, e);
       }
     });
     this.session = session;
+    console.log(`[MasterAgent:${this.projectId}] init() complete`);
   }
 
   private findSuperpowersSkills(): string[] {
@@ -88,7 +98,14 @@ export class MasterAgent extends EventEmitter {
 
   async prompt(text: string): Promise<void> {
     if (!this.session) throw new Error("MasterAgent not initialized");
-    await this.session.prompt(text);
+    console.log(`[MasterAgent:${this.projectId}] prompt() called, text length=${text.length}`);
+    try {
+      await this.session.prompt(text);
+      console.log(`[MasterAgent:${this.projectId}] prompt() resolved`);
+    } catch (err) {
+      console.error(`[MasterAgent:${this.projectId}] prompt() threw:`, err);
+      throw err;
+    }
   }
 
   async steer(text: string): Promise<void> {

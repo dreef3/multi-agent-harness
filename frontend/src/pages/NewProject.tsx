@@ -104,9 +104,17 @@ export default function NewProject() {
         const ghContext = selectedGhIssues
           .map(ref => ghIssues.find(i => i.ref === ref))
           .filter(Boolean)
-          .map(issue => `[${issue!.ref}] ${issue!.title}`)
-          .join("\n");
-        finalDescription = `${finalDescription}\n\nGitHub Issues:\n${ghContext}`;
+          .map(issue => {
+            const parts: string[] = [`[${issue!.ref}] ${issue!.title}`];
+            if (issue!.body?.trim()) parts.push(issue!.body.trim());
+            if (issue!.labels.length > 0) parts.push(`Labels: ${issue!.labels.join(", ")}`);
+            if (issue!.assignees.length > 0) parts.push(`Assignees: ${issue!.assignees.join(", ")}`);
+            return parts.join("\n");
+          })
+          .join("\n\n---\n\n");
+        finalDescription = finalDescription.trim()
+          ? `${finalDescription.trim()}\n\n${ghContext}`
+          : ghContext;
       }
 
       const source =
@@ -121,7 +129,7 @@ export default function NewProject() {
         repositoryIds: selectedRepoIds,
         source,
       });
-      navigate(`/projects/${project.id}/chat`);
+      navigate(`/projects/${project.id}/chat`, { state: { project } });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
     } finally {
@@ -420,17 +428,10 @@ export default function NewProject() {
               )}
 
               {selectedGhIssues.length > 0 && (
-                <div className="flex items-center justify-between pt-2 border-t border-gray-700">
+                <div className="pt-2 border-t border-gray-700">
                   <span className="text-sm text-gray-400">
-                    {selectedGhIssues.length} issue(s) selected
+                    {selectedGhIssues.length} issue(s) selected — will be included automatically
                   </span>
-                  <button
-                    type="button"
-                    onClick={addSelectedGhIssuesToDescription}
-                    className="bg-green-600 hover:bg-green-500 px-4 py-2 rounded text-sm font-medium"
-                  >
-                    Add to Description
-                  </button>
                 </div>
               )}
             </div>

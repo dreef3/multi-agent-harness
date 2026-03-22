@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import { api, Plan } from "../lib/api";
 
 export default function PlanApproval() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [plan, setPlan] = useState<Plan | null>(null);
-  const [loading, setLoading] = useState(true);
+  const location = useLocation();
+  const statePlan = (location.state as { plan?: Plan } | null)?.plan ?? null;
+  const [plan, setPlan] = useState<Plan | null>(statePlan);
+  const [loading, setLoading] = useState(statePlan === null);
   const [actionLoading, setActionLoading] = useState(false);
   const [feedback, setFeedback] = useState("");
 
   useEffect(() => {
-    if (!id) return;
+    if (!id || statePlan !== null) return;
     loadPlan();
   }, [id]);
 
