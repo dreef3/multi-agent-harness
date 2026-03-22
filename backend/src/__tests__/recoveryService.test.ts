@@ -1,0 +1,290 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import os from "os";
+import path from "path";
+import fs from "fs";
+import { initDb } from "../store/db.js";
+import { insertProject, getProject } from "../store/projects.js";
+import { insertAgentSession, getAgentSession } from "../store/agents.js";
+import type { Project, AgentSession } from "../models/types.js";
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function makeProject(id: string, status: Project["status"] = "executing"): Project {
+  const now = new Date().toISOString();
+  return {
+    id,
+    name: "Test",
+    status,
+    source: { type: "freeform", freeformDescription: "" },
+    repositoryIds: ["repo-1"],
+    primaryRepositoryId: "repo-1",
+    masterSessionPath: "",
+    createdAt: now,
+    updatedAt: now,
+    plan: {
+      id: `plan-${id}`,
+      projectId: id,
+      content: "",
+      tasks: [
+        { id: "task-1", repositoryId: "repo-1", description: "Do A", status: "pending" },
+      ],
+    },
+  };
+}
+
+function makeSession(id: string, projectId: string, status: AgentSession["status"], taskId = "task-1", minsAgo = 40): AgentSession {
+  const updatedAt = new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
+  return {
+    id,
+    projectId,
+    type: "sub",
+    repositoryId: "repo-1",
+    taskId,
+    containerId: "container-abc",
+    status,
+    createdAt: updatedAt,
+    updatedAt,
+  };
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+describe("RecoveryService", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-recovery-test-"));
+    initDb(tmpDir);
+    vi.resetAllMocks();
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  describe("dispatchWithRetry", () => {
+    it("succeeds on first attempt — marks task completed and clears activeTaskIds", async () => {
+      insertProject(makeProject("proj-1"));
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockDocker = {} as never;
+      const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: true });
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService(mockDocker);
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = mockRunTask;
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      const project = getProject("proj-1")!;
+      await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
+
+      expect(mockRunTask).toHaveBeenCalledTimes(1);
+      const updated = getProject("proj-1")!;
+      expect(updated.plan!.tasks[0].status).toBe("completed");
+      // @ts-expect-error accessing private for test
+      expect(svc.activeTaskIds.has("task-1")).toBe(false);
+    });
+
+    it("retries once on failure — succeeds on second attempt", async () => {
+      insertProject(makeProject("proj-2"));
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockDocker = {} as never;
+      const mockRunTask = vi.fn()
+        .mockResolvedValueOnce({ taskId: "task-1", success: false, error: "crash" })
+        .mockResolvedValueOnce({ taskId: "task-1", success: true });
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService(mockDocker);
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = mockRunTask;
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      const project = getProject("proj-2")!;
+      await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
+
+      expect(mockRunTask).toHaveBeenCalledTimes(2);
+      expect(getProject("proj-2")!.plan!.tasks[0].status).toBe("completed");
+      expect(mockNotify).not.toHaveBeenCalled(); // succeeded on retry — no failure notification
+    });
+
+    it("permanently fails after all retries — notifies master and clears activeTaskIds", async () => {
+      insertProject(makeProject("proj-3"));
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockDocker = {} as never;
+      const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: false, error: "crash" });
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService(mockDocker);
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = mockRunTask;
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      const project = getProject("proj-3")!;
+      await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
+
+      // subAgentMaxRetries = 1 → 2 total attempts
+      expect(mockRunTask).toHaveBeenCalledTimes(2);
+      expect(getProject("proj-3")!.plan!.tasks[0].status).toBe("failed");
+      expect(mockNotify).toHaveBeenCalled();
+      // @ts-expect-error accessing private for test
+      expect(svc.activeTaskIds.has("task-1")).toBe(false);
+    });
+
+    it("skips if task already in activeTaskIds", async () => {
+      insertProject(makeProject("proj-4"));
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: true });
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = mockRunTask;
+      // @ts-expect-error accessing private for test
+      svc.activeTaskIds.add("task-1");
+
+      const project = getProject("proj-4")!;
+      await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
+
+      expect(mockRunTask).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("checkAllTerminal", () => {
+    it("updates project to completed when all tasks succeeded", async () => {
+      const proj = makeProject("proj-5");
+      proj.plan!.tasks[0].status = "completed";
+      insertProject(proj);
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+      // @ts-expect-error accessing private for test
+      await svc.checkAllTerminal("proj-5");
+      expect(getProject("proj-5")!.status).toBe("completed");
+      expect(mockNotify).toHaveBeenCalledWith("proj-5", expect.stringContaining("complete"));
+    });
+
+    it("does not fire if some tasks are still executing", async () => {
+      const proj = makeProject("proj-6");
+      proj.plan!.tasks = [
+        { id: "task-1", repositoryId: "repo-1", description: "", status: "completed" },
+        { id: "task-2", repositoryId: "repo-1", description: "", status: "executing" },
+      ];
+      insertProject(proj);
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+      // @ts-expect-error accessing private for test
+      await svc.checkAllTerminal("proj-6");
+      expect(getProject("proj-6")!.status).toBe("executing"); // unchanged
+      expect(mockNotify).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("dispatchFailedTasks", () => {
+    it("re-queues failed tasks, skips in-flight ones, updates project to executing", async () => {
+      const proj = makeProject("proj-7");
+      proj.plan!.tasks[0].status = "failed";
+      proj.plan!.tasks[0].retryCount = 2;
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      await svc.dispatchFailedTasks("proj-7");
+
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+      // retryCount reset to 0
+      expect(getProject("proj-7")!.plan!.tasks[0].retryCount).toBe(0);
+      expect(getProject("proj-7")!.plan!.tasks[0].status).toBe("pending");
+      expect(getProject("proj-7")!.status).toBe("executing");
+    });
+
+    it("skips tasks already in activeTaskIds", async () => {
+      const proj = makeProject("proj-8");
+      proj.plan!.tasks[0].status = "failed";
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.activeTaskIds.add("task-1");
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      await svc.dispatchFailedTasks("proj-8");
+
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("recoverOnBoot", () => {
+    it("registers taskIds synchronously before async container checks", async () => {
+      insertProject(makeProject("proj-9"));
+      insertAgentSession(makeSession("sess-1", "proj-9", "running"));
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockGetContainerStatus = vi.fn().mockResolvedValue("exited");
+      const mockDispatch = vi.fn().mockResolvedValue(undefined);
+
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = mockGetContainerStatus;
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: true });
+
+      let observedActiveIds: Set<string> | null = null;
+      mockGetContainerStatus.mockImplementationOnce(async () => {
+        // @ts-expect-error accessing private for test
+        observedActiveIds = new Set(svc.activeTaskIds);
+        return "exited";
+      });
+
+      vi.spyOn(svc, "dispatchWithRetry").mockImplementation(async () => {
+        mockDispatch();
+      });
+
+      await svc.recoverOnBoot();
+
+      expect(observedActiveIds).not.toBeNull();
+      expect(observedActiveIds!.has("task-1")).toBe(true); // populated before first await
+    });
+  });
+
+  describe("recoverExecutingProjects", () => {
+    it("skips tasks in activeTaskIds (concurrency guard)", async () => {
+      insertProject(makeProject("proj-10"));
+      insertAgentSession(makeSession("sess-2", "proj-10", "running", "task-1", 40));
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.activeTaskIds.add("task-1");
+      const mockGetContainerStatus = vi.fn().mockResolvedValue("exited");
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = mockGetContainerStatus;
+
+      await svc.recoverExecutingProjects();
+
+      expect(mockGetContainerStatus).not.toHaveBeenCalled(); // guard fired before container check
+    });
+
+    it("does not flag sessions updated within staleSessionThresholdMs", async () => {
+      insertProject(makeProject("proj-11"));
+      // 5 minutes ago — well within 35-min threshold
+      insertAgentSession(makeSession("sess-3", "proj-11", "running", "task-1", 5));
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const mockGetContainerStatus = vi.fn().mockResolvedValue("exited");
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = mockGetContainerStatus;
+
+      await svc.recoverExecutingProjects();
+
+      expect(mockGetContainerStatus).not.toHaveBeenCalled();
+    });
+  });
+});
