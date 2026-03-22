@@ -4,7 +4,8 @@ import path from "path";
 import fs from "fs";
 import { initDb } from "../store/db.js";
 import { insertProject, getProject } from "../store/projects.js";
-import { insertAgentSession, getAgentSession } from "../store/agents.js";
+import { insertAgentSession, getAgentSession, updateAgentSession } from "../store/agents.js";
+import { config } from "../config.js";
 import type { Project, AgentSession } from "../models/types.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -423,6 +424,71 @@ describe("RecoveryService", () => {
       await svc.recoverExecutingProjects();
 
       expect(orphanSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("errorMessage population", () => {
+    it("sets errorMessage on task when permanently failed via dispatchWithRetry", async () => {
+      insertProject(makeProject("proj-err"));
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockDocker = {} as never;
+      const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: false, error: "container exited 1" });
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService(mockDocker);
+      // @ts-expect-error accessing private for test
+      svc.dispatcher.runTask = mockRunTask;
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      // Temporarily set maxRetries to 0 so 1 attempt causes permanent failure
+      const originalMaxRetries = config.subAgentMaxRetries;
+      config.subAgentMaxRetries = 0;
+      try {
+        const freshProject = getProject("proj-err")!;
+        await svc.dispatchWithRetry(freshProject, freshProject.plan!.tasks[0]);
+      } finally {
+        config.subAgentMaxRetries = originalMaxRetries;
+      }
+
+      const updated = getProject("proj-err")!;
+      const updatedTask = updated.plan!.tasks[0];
+      expect(updatedTask.status).toBe("failed");
+      expect(updatedTask.errorMessage).toContain("container exited 1");
+    });
+
+    it("sets errorMessage on task when recoverSession exhausts retries", async () => {
+      const project = makeProject("proj-recover");
+      insertProject(project);
+      const session = makeSession("sess-recover", "proj-recover", "running");
+      insertAgentSession(session);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const mockDocker = {
+        getContainer: vi.fn().mockReturnValue({
+          inspect: vi.fn().mockResolvedValue({ State: { Status: "exited" } }),
+        }),
+      } as never;
+      const mockNotify = vi.fn().mockResolvedValue(undefined);
+      const svc = new RecoveryService(mockDocker);
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = vi.fn().mockResolvedValue("exited");
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = mockNotify;
+
+      // Update session retryCount to be at max so recovery exhausts retries
+      updateAgentSession(session.id, { retryCount: config.subAgentMaxRetries });
+
+      // Manually update task retryCount to match so the exhaustion branch is triggered
+      const { updateTaskInPlan } = await import("../store/projects.js");
+      updateTaskInPlan("proj-recover", "task-1", { retryCount: config.subAgentMaxRetries });
+
+      // @ts-expect-error accessing private for test
+      await svc.recoverSession(session);
+
+      const updated = getProject("proj-recover")!;
+      const updatedTask = updated.plan!.tasks.find(t => t.id === "task-1")!;
+      expect(updatedTask.status).toBe("failed");
+      expect(updatedTask.errorMessage).toContain("Permanently failed");
     });
   });
 });

@@ -134,6 +134,7 @@ export class RecoveryService {
     this.activeTaskIds.add(task.id);
 
     let localRetryCount = task.retryCount ?? 0;
+    let lastError: string | undefined;
 
     try {
       while (localRetryCount <= config.subAgentMaxRetries) {
@@ -159,6 +160,7 @@ export class RecoveryService {
           return;
         }
 
+        lastError = result.error;
         localRetryCount++;
         updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
         console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
@@ -166,6 +168,11 @@ export class RecoveryService {
 
       // All attempts exhausted
       console.error(`[recoveryService] task ${task.id} permanently failed after ${localRetryCount} attempt(s)`);
+      updateTaskInPlan(project.id, task.id, {
+        status: "failed",
+        retryCount: localRetryCount,
+        errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
+      });
       await this.notifyMasterPartialFailure(project.id, task, localRetryCount);
       await this.checkAllTerminal(project.id);
     } finally {
@@ -256,6 +263,11 @@ export class RecoveryService {
       void this.dispatchWithRetry(project, freshTask); // fire-and-forget
     } else {
       console.error(`[recoveryService] Task ${session.taskId} exhausted retries during recovery`);
+      updateTaskInPlan(session.projectId, session.taskId, {
+        status: "failed",
+        retryCount: currentRetryCount,
+        errorMessage: `Permanently failed after recovery (${currentRetryCount} attempt(s)). Container was stale.`,
+      });
       this.activeTaskIds.delete(session.taskId);
       await this.notifyMasterPartialFailure(session.projectId, task, currentRetryCount);
       await this.checkAllTerminal(session.projectId);
