@@ -93,15 +93,24 @@ export class BitbucketConnector implements VcsConnector {
 
       // Create the new branch
       const createUrl = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/branches`;
-      await this.fetchJson(createUrl, {
-        method: "POST",
-        body: JSON.stringify({
-          name: branchName,
-          startPoint: sourceBranch.latestCommit,
-          message: `Create branch ${branchName}`,
-        }),
-      });
+      try {
+        await this.fetchJson(createUrl, {
+          method: "POST",
+          body: JSON.stringify({
+            name: branchName,
+            startPoint: sourceBranch.latestCommit,
+            message: `Create branch ${branchName}`,
+          }),
+        });
+      } catch (branchErr: unknown) {
+        const msg = branchErr instanceof Error ? branchErr.message : String(branchErr);
+        if (!msg.includes("HTTP 409") && !msg.toLowerCase().includes("already exists")) {
+          throw new ConnectorError(`Failed to create branch: ${msg}`, "bitbucket-server", branchErr);
+        }
+        // Branch already exists — that's fine for idempotent calls
+      }
     } catch (error) {
+      if (error instanceof ConnectorError) throw error;
       throw new ConnectorError(
         `Failed to create branch: ${error instanceof Error ? error.message : String(error)}`,
         "bitbucket-server",

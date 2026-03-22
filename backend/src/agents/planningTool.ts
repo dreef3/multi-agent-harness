@@ -40,7 +40,7 @@ export function buildPlanningBranch(project: Project): string {
     project.source.type === "jira"   ? jiraPrefix(project) :
     "";
   // Suffix: first 5 chars of UUID, strip non-alphanumeric
-  const suffix = project.id.replace(/[^a-z0-9]/g, "").slice(0, 5);
+  const suffix = project.id.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 5);
   const slug = slugify(project.name).slice(0, 30).replace(/-+$/, "");
   return `harness/${prefix}${slug}-${suffix}`;
 }
@@ -117,9 +117,13 @@ async function handleWritePlanningDocument(
       // Commit master session log snapshot alongside the spec
       const sessionLogSrc = path.join(dataDir, "sessions", projectId, "master.jsonl");
       if (fs.existsSync(sessionLogSrc)) {
-        const log = fs.readFileSync(sessionLogSrc, "utf-8");
-        await connector.commitFile(repo, branch, ".harness/logs/master/session.jsonl", log,
-          "chore: add master agent log snapshot");
+        try {
+          const log = await fs.promises.readFile(sessionLogSrc, "utf-8");
+          await connector.commitFile(repo, branch, ".harness/logs/master/session.jsonl", log,
+            "chore: add master agent log snapshot");
+        } catch (logErr) {
+          console.warn(`[planningTool] Failed to commit session log (non-fatal):`, logErr);
+        }
       }
 
       // Create or reuse PR
@@ -140,6 +144,9 @@ async function handleWritePlanningDocument(
         });
         prUrl = prResult.url;
         prNumber = parseInt(prResult.id, 10);
+        if (isNaN(prNumber)) {
+          return { error: `PR id is not a valid number: ${prResult.id}` };
+        }
       } catch (prErr) {
         // PR might already exist — try to find it via listing (not implemented)
         // For now, surface the error to the agent
@@ -168,9 +175,13 @@ async function handleWritePlanningDocument(
       // Update master session log snapshot
       const sessionLogSrc = path.join(dataDir, "sessions", projectId, "master.jsonl");
       if (fs.existsSync(sessionLogSrc)) {
-        const log = fs.readFileSync(sessionLogSrc, "utf-8");
-        await connector.commitFile(repo, project.planningBranch, ".harness/logs/master/session.jsonl", log,
-          "chore: update master agent log snapshot");
+        try {
+          const log = await fs.promises.readFile(sessionLogSrc, "utf-8");
+          await connector.commitFile(repo, project.planningBranch, ".harness/logs/master/session.jsonl", log,
+            "chore: update master agent log snapshot");
+        } catch (logErr) {
+          console.warn(`[planningTool] Failed to commit session log (non-fatal):`, logErr);
+        }
       }
 
       // Store plan content and parse tasks so dispatchTasks can find them at execution time.

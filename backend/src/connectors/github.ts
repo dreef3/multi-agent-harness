@@ -35,13 +35,22 @@ export class GitHubConnector implements VcsConnector {
         ref: `heads/${fromRef}`,
       });
 
-      await octokit.git.createRef({
-        owner,
-        repo: repoName,
-        ref: `refs/heads/${branchName}`,
-        sha: refData.object.sha,
-      });
+      try {
+        await octokit.git.createRef({
+          owner,
+          repo: repoName,
+          ref: `refs/heads/${branchName}`,
+          sha: refData.object.sha,
+        });
+      } catch (refErr: unknown) {
+        const msg = refErr instanceof Error ? refErr.message : String(refErr);
+        if (!msg.includes("Reference already exists")) {
+          throw new ConnectorError(`Failed to create branch: ${msg}`, "github", refErr);
+        }
+        // Branch already exists — that's fine for idempotent calls
+      }
     } catch (error) {
+      if (error instanceof ConnectorError) throw error;
       throw new ConnectorError(
         `Failed to create branch: ${error instanceof Error ? error.message : String(error)}`,
         "github",
