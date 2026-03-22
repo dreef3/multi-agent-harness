@@ -229,10 +229,10 @@ export default function Chat() {
         />
         <button
           type="submit"
-          disabled={thinkingMode !== "none" || !input.trim()}
+          disabled={sending || !input.trim()}
           className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-medium"
         >
-          {thinkingMode !== "none" ? "..." : "Send"}
+          Send
         </button>
       </form>
     </div>

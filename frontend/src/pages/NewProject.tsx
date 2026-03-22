@@ -493,6 +493,7 @@ export default function NewProject() {
                             ? prev.filter((id) => id !== repo.id)
                             : [...prev, repo.id]
                         );
+                        setShowRepoDropdown(false);
                       }}
                       className={`w-full px-4 py-2 text-left hover:bg-gray-700 ${
                         selectedRepoIds.includes(repo.id) ? "bg-blue-900/50" : ""
