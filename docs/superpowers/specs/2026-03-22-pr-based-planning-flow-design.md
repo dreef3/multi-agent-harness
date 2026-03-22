@@ -52,7 +52,10 @@ The existing `awaiting_approval` status is removed.
 
 Each project designates a **primary repository** (user-selected at project creation; auto-selected when only one repo is attached). Primary repository is **immutable** after creation. A project must have at least one repository — creation is rejected if `repositoryIds` is empty.
 
-- **Branch:** `harness/{projectId}` — projectId is a UUID, guaranteeing no cross-project collisions even if multiple projects target the same repo
+- **Branch:** `harness/{prefix}{slug}-{suffix}` — human-readable, uniqueness guaranteed by a 5-character alphanumeric suffix derived from the projectId (first 5 chars of the UUID, lowercased, non-alphanumeric stripped)
+  - `{prefix}`: issue/ticket reference if available — `issue-{n}-` for GitHub issues (e.g. `issue-42-`), `{TICKET}-` for Jira (e.g. `PROJ-123-`), empty for freeform
+  - `{slug}`: project name slug (same sanitization rules as file paths below), truncated to 30 characters
+  - Examples: `harness/issue-42-add-user-auth-a3b2c`, `harness/PROJ-123-migrate-db-f9e1a`, `harness/refactor-payments-7c4d2`
 - **PR:** Opened once at spec phase, never closed by the system
 - **PR title:** `[Harness] {project name}`
 - **PR body:** Link back to the harness UI project page
@@ -75,7 +78,7 @@ Both committed to `harness/{projectId}` branch. The plan is a second commit to t
 
 For multi-repo projects, non-primary repo branches are created at **execution time** (when plan LGTM is received). Each gets:
 
-- **Branch:** `harness/{projectId}`  — same branch name pattern, in a different repo
+- **Branch:** same name as primary repo branch (`harness/{prefix}{slug}-{suffix}`), created in each additional repo
 - `docs/superpowers/plans/{date}-{slug}-plan.md` committed with the **full plan** (not filtered per repo)
 - Sub-agents receive their specific task via `TASK_DESCRIPTION` env var (authoritative). The plan file is present on-branch for additional context.
 
@@ -229,7 +232,7 @@ During `awaiting_*_approval` states the session is idle. Incoming user WebSocket
 
 ```typescript
 primaryRepositoryId: string;   // immutable after creation; new NOT NULL column
-planningBranch: string;        // "harness/{projectId}", set when spec tool is called; nullable column
+planningBranch: string;        // e.g. "harness/issue-42-add-user-auth-a3b2c", set when spec tool is called; nullable column
 planningPr: {                  // stored as JSON column `planning_pr_json`
   number: number;
   url: string;
