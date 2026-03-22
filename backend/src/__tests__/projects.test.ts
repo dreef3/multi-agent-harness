@@ -291,3 +291,14 @@ Some content without description header
     expect(tasks[0].description).toContain("Some content");
   });
 });
+
+describe("TaskDispatcher.buildTaskPrompt", () => {
+  it("prepends TDD preamble to the raw description", async () => {
+    const { TaskDispatcher } = await import("../orchestrator/taskDispatcher.js");
+    const dispatcher = new TaskDispatcher();
+    const prompt = dispatcher.buildTaskPrompt({ description: "Implement OAuth2 flow", id: "t1", repositoryId: "r1", status: "pending" });
+    expect(prompt).toContain("Test-Driven Development");
+    expect(prompt).toContain("Implement OAuth2 flow");
+    expect(prompt).toContain("## Your Task");
+  });
+});
