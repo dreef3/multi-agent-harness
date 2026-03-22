@@ -295,9 +295,18 @@ Stage and commit all changes. The harness will open the pull request automatical
   ): Promise<PullRequest> {
     const connector = getConnector(repository.provider);
 
+    // Build "Closes #N" references from project's GitHub issues
+    const closingRefs = (project.source?.githubIssues ?? [])
+      .map(issue => {
+        const m = issue.match(/#(\d+)$/);
+        return m ? `Closes #${m[1]}` : null;
+      })
+      .filter(Boolean)
+      .join("\n");
+
     const prResult = await connector.createPullRequest(repository, {
       title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
-      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}`,
+      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
       headBranch: branchName,
       baseBranch: repository.defaultBranch,
     });

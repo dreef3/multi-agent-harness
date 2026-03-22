@@ -68,6 +68,9 @@ export class MasterAgent extends EventEmitter {
         console.log(`[MasterAgent:${this.projectId}] message_stop received`);
         this.emit("message_complete");
       }
+      if (e.type === "tool_execution_start") {
+        this.emit("tool_call", (e as { toolName?: string; args?: unknown }).toolName ?? "unknown", (e as { args?: unknown }).args);
+      }
       if (e.type === "error") {
         console.error(`[MasterAgent:${this.projectId}] session error event:`, e);
       }
