@@ -40,7 +40,7 @@ export function listAgentSessions(projectId: string): AgentSession[] {
 
 export function listStaleAgentSessions(): AgentSession[] {
   const rows = getDb()
-    .prepare("SELECT * FROM agent_sessions WHERE status IN ('starting', 'running')")
+    .prepare("SELECT * FROM agent_sessions WHERE status IN ('starting', 'running') AND type = 'sub'")
     .all() as AgentSessionRow[];
   return rows.map(fromRow);
 }

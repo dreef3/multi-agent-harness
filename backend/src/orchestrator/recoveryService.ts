@@ -36,7 +36,7 @@ export class RecoveryService {
    * Registers all stale task IDs synchronously (before any await) then recovers each.
    */
   async recoverOnBoot(): Promise<void> {
-    const allSessions = this.queryStaleSessionsFromDb();
+    const allSessions = listStaleAgentSessions();
     // Register all stale task IDs SYNCHRONOUSLY before any async work so that
     // the first poll cycle (fired immediately by startPolling) sees the guard populated.
     for (const s of allSessions) {
@@ -256,9 +256,5 @@ export class RecoveryService {
 
   private async getContainerStatus(containerId: string): Promise<string> {
     return getContainerStatus(this.docker, containerId);
-  }
-
-  private queryStaleSessionsFromDb() {
-    return listStaleAgentSessions();
   }
 }

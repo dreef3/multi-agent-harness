@@ -288,5 +288,20 @@ describe("RecoveryService", () => {
 
       expect(mockGetContainerStatus).not.toHaveBeenCalled();
     });
+
+    it("skips recovery when container is still running", async () => {
+      insertProject(makeProject("proj-12"));
+      insertAgentSession(makeSession("sess-4", "proj-12", "running", "task-1", 40));
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.getContainerStatus = vi.fn().mockResolvedValue("running");
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      await svc.recoverExecutingProjects();
+
+      expect(dispatchSpy).not.toHaveBeenCalled(); // container running → no recovery
+    });
   });
 });
