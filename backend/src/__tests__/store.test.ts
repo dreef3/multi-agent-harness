@@ -192,4 +192,8 @@ describe("updateTaskInPlan", () => {
     const project = getProject("proj-1")!;
     expect(project.plan!.tasks[0].status).toBe("pending");
   });
+
+  it("does nothing when project does not exist", () => {
+    expect(() => updateTaskInPlan("nonexistent-project", "task-1", { status: "completed" })).not.toThrow();
+  });
 });
