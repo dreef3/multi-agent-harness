@@ -80,7 +80,7 @@ Stage and commit all changes. The harness will open the pull request automatical
       throw new Error(`Project ${projectId} does not have an approved plan (planningPr.planApprovedAt not set)`);
     }
 
-    if (project.plan.tasks.length === 0) {
+    if (!project.plan || project.plan.tasks.length === 0) {
       return [];
     }
 

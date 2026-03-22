@@ -80,7 +80,7 @@ export function createWritePlanningDocumentTool(
       return {
         content: [{ type: "text", text: JSON.stringify(result) }],
         details: {},
-      } satisfies AgentToolResult;
+      } satisfies AgentToolResult<unknown>;
     },
   };
 }
