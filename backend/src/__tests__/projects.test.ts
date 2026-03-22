@@ -302,3 +302,31 @@ describe("TaskDispatcher.buildTaskPrompt", () => {
     expect(prompt).toContain("## Your Task");
   });
 });
+
+describe("buildClosingRefs", () => {
+  it("returns empty string for empty array", async () => {
+    const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
+    expect(buildClosingRefs([])).toBe("");
+  });
+
+  it("extracts issue number from owner/repo#N format", async () => {
+    const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
+    expect(buildClosingRefs(["dreef3/harness#42"])).toBe("Closes #42");
+  });
+
+  it("extracts issue number from #N format", async () => {
+    const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
+    expect(buildClosingRefs(["#7"])).toBe("Closes #7");
+  });
+
+  it("skips entries without a # number", async () => {
+    const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
+    expect(buildClosingRefs(["not-an-issue"])).toBe("");
+  });
+
+  it("joins multiple issues with newlines", async () => {
+    const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
+    const result = buildClosingRefs(["org/repo#1", "org/repo#2", "#3"]);
+    expect(result).toBe("Closes #1\nCloses #2\nCloses #3");
+  });
+});
