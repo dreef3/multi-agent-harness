@@ -149,8 +149,6 @@ export default function Chat() {
     }
   }
 
-  if (isLoadingMessages) return <div className="text-gray-400">Loading...</div>;
-
   const isThinking = thinkingMode === "processing";
   const isTyping = thinkingMode === "typing";
 
@@ -161,7 +159,11 @@ export default function Chat() {
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-3 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        {messages.length === 0 && !streamingContent && !isThinking ? (
+        {isLoadingMessages ? (
+          <div data-testid="loading-indicator" className="text-gray-400 text-center py-8">
+            Loading...
+          </div>
+        ) : messages.length === 0 && !streamingContent && !isThinking ? (
           <div className="text-gray-500 text-center py-8">
             No messages yet. Start the conversation!
           </div>

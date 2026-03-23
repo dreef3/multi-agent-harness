@@ -57,12 +57,30 @@ describe('Chat Component State Management', () => {
         </MemoryRouter>
       );
       
-      // Initially shows loading state
-      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      // Initially shows loading state within the messages area
+      expect(screen.getByTestId('loading-indicator')).toBeInTheDocument();
       
       // Wait for loading to complete
       await waitFor(() => {
-        expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('loading-indicator')).not.toBeInTheDocument();
+      }, { timeout: 2000 });
+    });
+
+    it('should show empty state only when NOT loading and no messages', async () => {
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes>
+            <Route path="/project/:id" element={<Chat />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      // While loading, should NOT show empty state
+      expect(screen.queryByText('No messages yet. Start the conversation!')).not.toBeInTheDocument();
+
+      // Wait for loading to complete
+      await waitFor(() => {
+        expect(screen.getByText('No messages yet. Start the conversation!')).toBeInTheDocument();
       }, { timeout: 2000 });
     });
   });
