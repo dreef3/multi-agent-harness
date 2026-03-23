@@ -110,6 +110,17 @@ export interface SettingsInfo {
   providers: ProviderStatus[];
 }
 
+export interface GitHubRepoInfo {
+  name: string;
+  fullName: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  owner: string;
+  repo: string;
+  private: boolean;
+  description?: string;
+}
+
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     headers: {
@@ -154,6 +165,7 @@ export const api = {
   },
   repositories: {
     list: () => fetchJson<Repository[]>(`${API_BASE}/repositories`),
+    listGitHub: () => fetchJson<GitHubRepoInfo[]>(`${API_BASE}/repositories/github`),
     get: (id: string) => fetchJson<Repository>(`${API_BASE}/repositories/${id}`),
     create: (data: Omit<Repository, "id" | "createdAt" | "updatedAt">) =>
       fetchJson<Repository>(`${API_BASE}/repositories`, {
