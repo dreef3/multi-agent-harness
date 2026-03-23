@@ -159,6 +159,41 @@ const getPullRequestsTool = {
   },
 };
 
+const replyToSubagentTool = {
+  name: "reply_to_subagent",
+  label: "Reply to Sub-agent",
+  description:
+    'Reply to a sub-agent that is waiting for clarification. ' +
+    'Copy the msgId EXACTLY from the system message that delivered the question ' +
+    '(it appears as "[msgId: abc-123-...]"). ' +
+    'Try to answer autonomously first; only ask the human user if you truly lack the information.',
+  parameters: Type.Object({
+    msgId: Type.String({ description: "The UUID from [msgId: ...] in the injected message — copy it exactly" }),
+    sessionId: Type.String({ description: "The sub-agent session ID from the injected message" }),
+    reply: Type.String({ description: "Your answer to the sub-agent's question" }),
+  }),
+  execute: async (_toolCallId, params) => {
+    const res = await fetch(
+      `${BACKEND_URL}/api/agents/${params.sessionId}/message/${params.msgId}/reply`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reply: params.reply }),
+      }
+    );
+    if (!res.ok) {
+      return {
+        content: [{ type: "text", text: `Error delivering reply: ${res.status} ${res.statusText}` }],
+        details: {},
+      };
+    }
+    return {
+      content: [{ type: "text", text: "Reply delivered. Sub-agent will continue." }],
+      details: {},
+    };
+  },
+};
+
 // ── Catch unhandled errors globally ───────────────────────────────────────────
 process.on("uncaughtException", (err) => {
   console.error("[planning-agent] uncaughtException:", err?.message ?? err);
@@ -226,7 +261,7 @@ try {
     authStorage,
     cwd: "/workspace",
     ...(model ? { model } : {}),
-    customTools: [writePlanningDocumentTool, dispatchTasksTool, getTaskStatusTool, getPullRequestsTool],
+    customTools: [writePlanningDocumentTool, dispatchTasksTool, getTaskStatusTool, getPullRequestsTool, replyToSubagentTool],
   });
   session = result.session;
 } catch (err) {
