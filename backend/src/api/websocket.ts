@@ -8,7 +8,7 @@ import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
-interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "replay" | "error"; [key: string]: unknown; }
+interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error"; [key: string]: unknown; }
 
 function send(ws: WebSocket, msg: WsServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -145,7 +145,7 @@ ${sourceSection}`;
 }
 
 export function broadcastStuckAgent(projectId: string, sessionId: string): void {
-  broadcastToProject(projectId, { type: "agent_stuck", sessionId });
+  broadcastToProject(projectId, { type: "stuck_agent", sessionId });
 }
 
 export function broadcastAgentActivity(
@@ -153,7 +153,7 @@ export function broadcastAgentActivity(
   sessionId: string,
   event: { type: string; payload: Record<string, unknown>; timestamp: string }
 ): void {
-  broadcastToProject(projectId, { type: "agent_activity", sessionId, event });
+  broadcastToProject(projectId, { type: "agent_activity", sessionId, agentType: "sub", event });
 }
 
 export function preInitAgent(projectId: string): void {
@@ -300,7 +300,28 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
             broadcastToProject(projectId, { type: "message_complete" });
             break;
           case "tool_call":
-            broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
+            broadcastToProject(projectId, {
+              type: "tool_call",
+              toolName: event.toolName,
+              args: event.args ?? {},
+              agentType: "master",
+            });
+            break;
+          case "tool_result":
+            broadcastToProject(projectId, {
+              type: "tool_result",
+              toolName: event.toolName,
+              result: event.result,
+              isError: event.isError,
+              agentType: "master",
+            });
+            break;
+          case "thinking":
+            broadcastToProject(projectId, {
+              type: "thinking",
+              text: event.text,
+              agentType: "master",
+            });
             break;
           case "conversation_complete":
             broadcastToProject(projectId, { type: "conversation_complete" });
