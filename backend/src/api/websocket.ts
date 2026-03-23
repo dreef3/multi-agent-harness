@@ -144,6 +144,18 @@ ${repoList}
 ${sourceSection}`;
 }
 
+export function broadcastStuckAgent(projectId: string, sessionId: string): void {
+  broadcastToProject(projectId, { type: "agent_stuck", sessionId });
+}
+
+export function broadcastAgentActivity(
+  projectId: string,
+  sessionId: string,
+  event: { type: string; payload: Record<string, unknown>; timestamp: string }
+): void {
+  broadcastToProject(projectId, { type: "agent_activity", sessionId, event });
+}
+
 export function preInitAgent(projectId: string): void {
   // Pre-init is a no-op now — planning agent starts on first WS connection
   console.log(`[ws] preInitAgent(${projectId}): deferred to first WS connection`);
