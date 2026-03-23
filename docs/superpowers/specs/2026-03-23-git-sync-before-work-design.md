@@ -81,11 +81,11 @@ On rebase conflict the startup script calls `POST /api/agents/${AGENT_SESSION_ID
 
 ```json
 {
-  "question": "[msgId: <uuid>] [Sub-agent: <AGENT_SESSION_ID>] asks: Rebase conflict on files: <list>. Reply 'skip' to proceed with unrebased branch or 'abort' to cancel this task."
+  "question": "Rebase conflict on files: <list>. Reply 'skip' to proceed with unrebased branch or 'abort' to cancel this task."
 }
 ```
 
-The planning agent receives this as a system turn and replies via `reply_to_subagent`. The startup script reads the reply:
+The backend at `agents.ts` adds the `[msgId: <uuid>] [Sub-agent: …]` prefix automatically before injecting to the planning agent — the sub-agent must NOT include a msgId in the question text. The planning agent receives this as a system turn and replies via `reply_to_subagent`. The startup script reads the reply:
 
 - Reply containing `"skip"` → continue with current branch state (abort the rebase cleanly first with `git rebase --abort`)
 - Anything else (including `"abort"`) → `process.exit(1)`

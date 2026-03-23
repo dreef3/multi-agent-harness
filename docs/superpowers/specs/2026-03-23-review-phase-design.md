@@ -40,7 +40,7 @@ This makes the dashboard hard to read — projects pile up in "completed" with n
 | `backend/src/orchestrator/taskDispatcher.ts` | Set `"review"` instead of `"completed"` in `dispatchTasks()` |
 | `backend/src/orchestrator/recoveryService.ts` | Set `"review"` instead of `"completed"` in `checkAllTerminal()` |
 | `backend/src/api/projects.ts` | Add `POST /:id/mark-done`; update cancel guard |
-| `backend/src/api/websocket.ts` | Add `"project_status_changed"` to `WsServerMessage` union; export `broadcastProjectStatusChanged()` |
+| `backend/src/api/websocket.ts` | Add `"project_status_changed"` to the `type` literal union in `WsServerMessage`; export `broadcastProjectStatusChanged()` |
 | `frontend/src/lib/api.ts` | Update `Project.status` union; add `api.projects.markDone()` |
 | `frontend/src/pages/Dashboard.tsx` | Amber/green badges; "Pull Requests" link for review projects |
 | `frontend/src/components/ProjectLayout.tsx` | New file — shared tab nav |
@@ -91,13 +91,15 @@ Guards:
 - 404 if project not found
 - 400 if project is not in `"review"` (error message includes current status)
 
-On success: sets `status = "done"`, broadcasts `project_status_changed` via WebSocket (so the dashboard updates without a page refresh), returns `{ success: true, status: "done" }`.
+On success: sets `status = "done"`, broadcasts `project_status_changed` via WebSocket to the project's connected clients, returns `{ success: true, status: "done" }`.
 
-The broadcast message shape (added to `WsServerMessage` union in `websocket.ts`):
+The broadcast message shape — `"project_status_changed"` is added to the `type` literal in `WsServerMessage`, and the message carries `projectId` and `status`:
 ```ts
 { type: "project_status_changed"; projectId: string; status: string }
 ```
-`projects.ts` must import `broadcastProjectStatusChanged` from `websocket.ts`.
+`WsServerMessage` already has `[key: string]: unknown` so extra fields are allowed — only the `type` literal union needs extending. `projects.ts` must import `broadcastProjectStatusChanged` from `websocket.ts`.
+
+Note: `broadcastToProject` is project-scoped (only reaches clients connected to that project's WS channel). The Dashboard does not connect to a per-project channel, so it does not receive this broadcast. The Dashboard will reflect updated status on next navigation/load. No global WS channel is needed.
 
 The cancel endpoint currently rejects `project.status === "completed" || project.status === "cancelled"`. Since `"completed"` is being removed, this guard must be updated to: reject `"review"`, `"done"`, and `"cancelled"`.
 
@@ -108,7 +110,7 @@ The cancel endpoint currently rejects `project.status === "completed" || project
 
 No inline PR count on the card — a link to the PRs tab is sufficient (option A from design discussion).
 
-Dashboard must also subscribe to WebSocket `project_status_changed` messages so the badge updates without a page refresh. When a `project_status_changed` event is received, update the matching project's status in local state.
+Dashboard does not subscribe to WebSocket events — badge state reflects whatever the REST API returns on page load. Updated state appears on next navigation to the Dashboard.
 
 ### ProjectLayout — shared tab nav
 
