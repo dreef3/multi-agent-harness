@@ -31,6 +31,24 @@ This makes the dashboard hard to read — projects pile up in "completed" with n
 
 ---
 
+## Files Changed
+
+| File | Change |
+|---|---|
+| `backend/src/models/types.ts` | Remove `"completed"`, add `"review"` and `"done"` to `Project.status` union |
+| `backend/src/store/db.ts` | Add migration: `UPDATE projects SET status = 'done' WHERE status = 'completed'` |
+| `backend/src/orchestrator/taskDispatcher.ts` | Set `"review"` instead of `"completed"` in `dispatchTasks()` |
+| `backend/src/orchestrator/recoveryService.ts` | Set `"review"` instead of `"completed"` in `checkAllTerminal()` |
+| `backend/src/api/projects.ts` | Add `POST /:id/mark-done`; update cancel guard |
+| `backend/src/api/websocket.ts` | Export `broadcastProjectStatusChanged()` |
+| `frontend/src/lib/api.ts` | Update `Project.status` union; add `api.projects.markDone()` |
+| `frontend/src/pages/Dashboard.tsx` | Amber/green badges; "Pull Requests" link for review projects |
+| `frontend/src/components/ProjectLayout.tsx` | New file — shared tab nav |
+| `frontend/src/App.tsx` | Restructure project routes to nested layout |
+| `frontend/src/pages/PrOverview.tsx` | Review banner + Mark as Done button |
+
+---
+
 ## Architecture
 
 ### Status enum
@@ -41,8 +59,10 @@ This makes the dashboard hard to read — projects pile up in "completed" with n
 brainstorming → spec_in_progress → awaiting_spec_approval
   → plan_in_progress → awaiting_plan_approval
   → executing → review → done
-                       ↘ failed
+         ↘ failed
 ```
+
+`"failed"` is only reachable from `"executing"` (all retries exhausted). A project in `"review"` has already succeeded — it cannot transition to `"failed"`.
 
 `"completed"` is **removed**. A startup DB migration renames any existing `"completed"` rows to `"done"`:
 
@@ -52,7 +72,12 @@ UPDATE projects SET status = 'done' WHERE status = 'completed'
 
 ### executing → review transition
 
-`TaskDispatcher.dispatchTasks()` currently sets `"completed"` when all tasks succeed. Changes to `"review"`. No other change to the dispatch logic.
+There are **two write sites** that currently set `"completed"` on project success — both must be updated to `"review"`:
+
+1. **`TaskDispatcher.dispatchTasks()`** (`backend/src/orchestrator/taskDispatcher.ts`) — the original dispatch path, sets `"completed"` at the post-`Promise.all` status update.
+2. **`RecoveryService.checkAllTerminal()`** (`backend/src/orchestrator/recoveryService.ts`) — the production path introduced by the self-healing system; called after each task completes via `dispatchWithRetry`. This is the live path for all tasks dispatched through the recovery service.
+
+Both must be updated. Missing either one means projects that go through the retry path will never reach `"review"`.
 
 ### review → done transition
 
@@ -66,9 +91,9 @@ Guards:
 - 404 if project not found
 - 400 if project is not in `"review"` (error message includes current status)
 
-On success: sets `status = "done"`, returns `{ success: true, status: "done" }`.
+On success: sets `status = "done"`, broadcasts `project_status_changed` via WebSocket (so the dashboard updates without a page refresh), returns `{ success: true, status: "done" }`.
 
-The cancel endpoint is updated to reject `"review"` and `"done"` projects (same as it rejects `"cancelled"` today).
+The cancel endpoint currently rejects `project.status === "completed" || project.status === "cancelled"`. Since `"completed"` is being removed, this guard must be updated to: reject `"review"`, `"done"`, and `"cancelled"`.
 
 ### Dashboard changes (`frontend/src/pages/Dashboard.tsx`)
 
@@ -85,7 +110,18 @@ A new `frontend/src/components/ProjectLayout.tsx` wraps all project detail route
 [ Chat ]  [ Plan ]  [ Execute ]  [ Pull Requests ]
 ```
 
-`App.tsx` uses a nested React Router layout so all four tabs share the same `/:id` param. This is a UX improvement that makes the PRs tab discoverable from anywhere in the project, not just from the dashboard.
+`App.tsx` restructures the four flat project routes into a nested React Router layout:
+
+```tsx
+<Route path="/projects/:id" element={<ProjectLayout />}>
+  <Route path="chat"    element={<Chat />} />
+  <Route path="plan"    element={<PlanApproval />} />
+  <Route path="execute" element={<Execution />} />
+  <Route path="prs"     element={<PrOverview />} />
+</Route>
+```
+
+The existing four flat routes (`/projects/:id/chat` etc.) are replaced by this nested structure. Child components continue to use `useParams<{ id: string }>()` unchanged — the `/:id` param is inherited from the parent route.
 
 ### PrOverview changes (`frontend/src/pages/PrOverview.tsx`)
 
