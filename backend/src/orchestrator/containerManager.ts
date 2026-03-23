@@ -61,6 +61,8 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     `AGENT_PROVIDER=${agentProvider}`,
     `AGENT_MODEL=${agentModel}`,
     `TASK_ID=${opts.taskId ?? ""}`,
+    `HARNESS_API_URL=${config.harnessApiUrl}`,
+    `AGENT_SESSION_ID=${opts.sessionId}`,
   ];
 
   const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
