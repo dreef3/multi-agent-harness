@@ -187,6 +187,9 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
     } catch (err) {
       console.error(`[ws] failed to start planning agent for ${projectId}:`, err);
       send(ws, { type: "error", message: "Failed to start planning agent" });
+      projectConnections.get(projectId)?.delete(ws);
+      ws.close(1011, "Failed to start planning agent");
+      return;
     }
 
     manager.incrementConnections(projectId);
@@ -261,13 +264,24 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
       }
 
       if (msg.type === "steer" && msg.text) {
-        await manager.sendPrompt(projectId, msg.text);
+        try {
+          await manager.sendPrompt(projectId, msg.text);
+        } catch (err) {
+          console.error(`[ws] steer sendPrompt error:`, err);
+          send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
+        }
         return;
       }
     });
 
     ws.on("close", () => {
-      projectConnections.get(projectId)?.delete(ws);
+      const conns = projectConnections.get(projectId);
+      if (conns) {
+        conns.delete(ws);
+        // When the last client disconnects, clear the broadcaster registration so it
+        // is re-registered fresh if a new container starts for this project later.
+        if (conns.size === 0) projectBroadcasters.delete(projectId);
+      }
       unsubscribeDelta();
       manager.decrementConnections(projectId);
     });
