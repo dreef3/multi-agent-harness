@@ -42,10 +42,26 @@ export default function Execution() {
   const feedRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const addEvent = useCallback((agentId: string, evt: ActivityEvent) => {
+    setEvents((prev) => {
+      const m = new Map(prev);
+      m.set(agentId, [...(m.get(agentId) ?? []), evt]);
+      return m;
+    });
+    // Resume status after activity resumes for stuck agents
+    setAgents((prev) =>
+      prev.map((a) => (a.id === agentId && a.status === "stuck") ? { ...a, status: "running" } : a)
+    );
+  }, []);
+
   // Load existing sub-agent sessions
   useEffect(() => {
     if (!id) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+
     api.projects.agents(id).then((sessions: AgentSession[]) => {
+      if (signal.aborted) return;
       const subInfos: AgentInfo[] = sessions
         .filter((s) => s.type === "sub")
         .map((s) => ({
@@ -60,9 +76,16 @@ export default function Execution() {
         });
         // Replay events for each existing sub-agent session
         subInfos.forEach((info) => {
-          fetch(`/api/agents/${info.id}/events`)
-            .then((r) => r.json())
-            .then((evts: Array<{ type: string; payload: Record<string, unknown>; timestamp: string }>) => {
+          fetch(`/api/agents/${info.id}/events`, { signal })
+            .then((r) => {
+              if (!r.ok) {
+                console.warn(`[Execution] Failed to fetch events for ${info.id}: HTTP ${r.status}`);
+                return null;
+              }
+              return r.json() as Promise<Array<{ type: string; payload: Record<string, unknown>; timestamp: string }>>;
+            })
+            .then((evts) => {
+              if (!evts || signal.aborted) return;
               const mapped: ActivityEvent[] = evts.map((e, i) => ({
                 id: `${info.id}-replay-${i}`,
                 agentId: info.id,
@@ -77,10 +100,18 @@ export default function Execution() {
               }));
               setEvents((prev) => { const m = new Map(prev); m.set(info.id, mapped); return m; });
             })
-            .catch(() => {});
+            .catch((err: unknown) => {
+              if (err instanceof DOMException && err.name === "AbortError") return;
+              console.error(`[Execution] Error fetching events for ${info.id}:`, err);
+            });
         });
       }
-    }).catch(() => {});
+    }).catch((err: unknown) => {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+      console.error("[Execution] Error fetching agent sessions:", err);
+    });
+
+    return () => controller.abort();
   }, [id]);
 
   // WebSocket handler
@@ -116,7 +147,8 @@ export default function Execution() {
       // Sub-agent activity events
       if (msg.type === "agent_activity" && msg.agentType === "sub") {
         const sessionId = msg.sessionId as string;
-        const inner = msg.event as { type: string; payload: Record<string, unknown>; timestamp: string };
+        const inner = msg.event as { type: string; payload: Record<string, unknown>; timestamp: string } | undefined;
+        if (!inner || typeof inner !== "object") return;
         const evt: ActivityEvent = {
           id: `${sessionId}-${Date.now()}-${Math.random()}`,
           agentId: sessionId,
@@ -147,25 +179,20 @@ export default function Execution() {
       }
 
       // Session completion broadcasts
+      // conversation_complete fires when the overall project conversation finishes.
+      // Mark master as completed, and also mark any sub-agents still in running/stuck
+      // state as completed (no separate per-sub-agent terminal WS event exists).
       if (msg.type === "conversation_complete") {
-        setAgents((prev) => prev.map((a) => a.id === "master" ? { ...a, status: "completed" } : a));
+        setAgents((prev) => prev.map((a) =>
+          (a.id === "master" || a.status === "running" || a.status === "stuck")
+            ? { ...a, status: "completed" }
+            : a
+        ));
       }
     });
 
     return () => unsub();
-  }, [id]);
-
-  function addEvent(agentId: string, evt: ActivityEvent) {
-    setEvents((prev) => {
-      const m = new Map(prev);
-      m.set(agentId, [...(m.get(agentId) ?? []), evt]);
-      return m;
-    });
-    // Resume status after activity resumes for stuck agents
-    setAgents((prev) =>
-      prev.map((a) => (a.id === agentId && a.status === "stuck") ? { ...a, status: "running" } : a)
-    );
-  }
+  }, [id, addEvent]);
 
   // Auto-scroll
   useEffect(() => {
