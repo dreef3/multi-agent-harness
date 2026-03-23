@@ -224,7 +224,6 @@ const systemPrompt = systemPromptTemplate.replace("{{PROJECT_ID}}", PROJECT_ID);
 const resourceLoader = new DefaultResourceLoader({
   settingsManager,
   noExtensions: true,
-  noSkills: true,
   noPromptTemplates: true,
   noThemes: true,
   systemPrompt,
