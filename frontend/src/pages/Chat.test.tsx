@@ -42,7 +42,7 @@ describe('Chat Component State Management', () => {
   });
 
   describe('isLoadingMessages state', () => {
-    it('should initialize with isLoadingMessages set to true', async () => {
+    it('should show empty state while loading initially', async () => {
       render(
         <MemoryRouter initialEntries={['/project/test-project-id']}>
           <Routes>
@@ -51,16 +51,16 @@ describe('Chat Component State Management', () => {
         </MemoryRouter>
       );
       
-      // Initially shows loading state within the messages area
-      expect(screen.getByTestId('loading-indicator')).toBeInTheDocument();
+      // Initially shows empty state while loading (not a blocking loading screen)
+      expect(screen.getByText('No messages yet. Start the conversation!')).toBeInTheDocument();
       
       // Wait for loading to complete
       await waitFor(() => {
-        expect(screen.queryByTestId('loading-indicator')).not.toBeInTheDocument();
+        expect(screen.queryByText('Loading...')).not.toBeInTheDocument();
       }, { timeout: 2000 });
     });
 
-    it('should show empty state only when NOT loading and no messages', async () => {
+    it('should show empty state while loading and after when no messages', async () => {
       render(
         <MemoryRouter initialEntries={['/project/test-project-id']}>
           <Routes>
@@ -69,8 +69,8 @@ describe('Chat Component State Management', () => {
         </MemoryRouter>
       );
 
-      // While loading, should NOT show empty state
-      expect(screen.queryByText('No messages yet. Start the conversation!')).not.toBeInTheDocument();
+      // While loading, should show empty state (not blocking loading screen)
+      expect(screen.getByText('No messages yet. Start the conversation!')).toBeInTheDocument();
 
       // Wait for loading to complete
       await waitFor(() => {
