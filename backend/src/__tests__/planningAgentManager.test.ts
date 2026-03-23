@@ -113,7 +113,7 @@ describe("PlanningAgentManager - communication", () => {
     );
   });
 
-  it("includes streamingBehavior:followUp when streaming", async () => {
+  it("omits streamingBehavior when not streaming", async () => {
     const { mgr, mockAttachStream } = await makeRunningManager();
     // At minimum verify the field is absent when not streaming
     await mgr.sendPrompt("proj-1", "first");
