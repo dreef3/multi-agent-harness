@@ -15,6 +15,7 @@
     "e2e": "bun run --cwd e2e-tests test"
   },
   "dependencies": {
+    "csstype": "^3.2.3",
     "ws": "^8.19.0"
   },
   "devDependencies": {
