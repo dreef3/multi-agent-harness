@@ -237,8 +237,10 @@ try {
     const note = aiSucceeded
       ? "AI agent completed but made no file changes."
       : "AI agent unavailable; placeholder created.";
+    const fallbackLogDir = `.harness/logs/sub-agents/${TASK_ID}`;
+    mkdirSync(fallbackLogDir, { recursive: true });
     writeFileSync(
-      "task-output.md",
+      `${fallbackLogDir}/task-output.md`,
       `# Task Output\n\nTask: ${TASK_DESCRIPTION}\n\nNote: ${note}\nCompleted at: ${new Date().toISOString()}\n`
     );
     git("add", "-A");
