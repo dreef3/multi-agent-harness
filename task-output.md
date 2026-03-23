@@ -40,46 +40,30 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-## Task: Update WebSocket replay Handler
+## Task: Update Render Logic for Loading Indicator
 
 **Repository:** multi-agent-harness
 **Files to modify:** `frontend/src/pages/Chat.tsx`
 
 ### Objective
-Update the replay handler to merge messages instead of replacing.
+Update the render logic to show loading indicator conditionally without blocking content.
 
 ### Changes Required
-Update the `replay` handler in the `onMessage` callback:
 
-**Change from:**
-```typescript
-} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-  // Replay missed messages after reconnect
-  setMessages(msg.messages as Message[]);
-  const maxSeq = (msg.messages as Message[]).reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
-  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
-}
-```
+1. **Remove the early return on loading:**
+   Delete the line: `if (isLoadingMessages) return <div className="text-gray-400">Loading...</div>;`
 
-**To:**
-```typescript
-} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-  // Merge replay messages with existing, deduplicate by seqId
-  const replayedMessages = msg.messages as Message[];
-  setMessages((prev) => {
-    const existingSeqIds = new Set(prev.map((m) => m.seqId));
-    const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
+2. **Add conditional loading indicator inside the message list:**
+   After the `{/* Streaming text */}` section, add:
+   ```typescript
+   {isLoadingMessages && messages.length > 0 && (
+     <div className="text-gray-400">Loading...</div>
+   )}
+   ```
 
-    if (newFromReplay.length === 0) return prev;
-
-    const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
-    return merged;
-  });
-
-  const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
-  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
-}
-```
+3. **Add optional chaining to scrollIntoView:**
+   Change: `messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });`
+   To: `messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });`
 
 ### Verification
 ```bash
@@ -87,4 +71,4 @@ cd frontend && npx tsc --noEmit
 ```
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T21:31:56.914Z
+Completed at: 2026-03-23T21:32:53.304Z
