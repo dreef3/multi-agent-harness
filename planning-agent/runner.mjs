@@ -15,31 +15,9 @@ import {
 import { Type } from "@sinclair/typebox";
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
-import { PassThrough } from "node:stream";
 import { join } from "node:path";
-
-// Buffer stdin via a PassThrough proxy so data arriving during the ~25s init window
-// (git clone + model init) is not lost. attachJsonlLineReader (inside runRpcMode) uses
-// stream.on("data", ...) which only auto-resumes if readableFlowing !== false.
-//
-// Bun does NOT automatically enter flowing mode when a "data" listener is added
-// (unlike Node.js which calls resume() internally via addListener). We must call
-// resume() explicitly before registering the listener, otherwise fd 0 is never polled
-// and data sits in the kernel pipe buffer unread until the process exits.
-const stdinProxy = new PassThrough();
-const realStdin = process.stdin; // capture before overriding
-realStdin.resume(); // explicitly start flowing mode — critical for Bun
-realStdin.on("data", (chunk) => {
-  console.error(`[planning-agent] stdin: forwarding ${chunk.length} bytes to proxy`);
-  stdinProxy.write(chunk);
-});
-realStdin.on("end", () => stdinProxy.end());
-Object.defineProperty(process, "stdin", {
-  get: () => stdinProxy,
-  configurable: true,
-  enumerable: true,
-});
-console.error("[planning-agent] stdin proxy installed");
+import { createServer } from "node:net";
+import { PassThrough } from "node:stream";
 
 const PROJECT_ID = process.env.PROJECT_ID ?? "unknown";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:3000";
@@ -217,22 +195,46 @@ try {
   process.exit(1);
 }
 
-console.error(`[planning-agent] session ready for project ${PROJECT_ID}, running RPC mode`);
+console.error(`[planning-agent] session ready for project ${PROJECT_ID}`);
 
-// Diagnostic: write a test event to raw stdout to verify the backend stdout channel works.
-// (runRpcMode will redirect process.stdout.write to stderr, so this must happen first.)
-process.stdout.write(JSON.stringify({ type: "agent_diagnostic", projectId: PROJECT_ID }) + "\n");
-console.error("[planning-agent] wrote agent_diagnostic to stdout");
+// ── TCP RPC bridge ─────────────────────────────────────────────────────────────
+// Docker attach stdin writes don't reliably reach the container through haproxy-based
+// socket proxies. Instead we expose a TCP server on port 3333 so the backend can
+// connect directly over the Docker network, bypassing the proxy entirely.
+const TCP_RPC_PORT = 3333;
 
-// Diagnostic: check stdin state and peek at buffered data
-const stdinReadable = !process.stdin.destroyed && process.stdin.readable;
-console.error(`[planning-agent] stdin readable=${stdinReadable} paused=${process.stdin.isPaused()}`);
-const buffered = process.stdin.read();
-if (buffered) {
-  console.error(`[planning-agent] stdin has ${buffered.length} bytes buffered: ${JSON.stringify(buffered.toString().slice(0, 80))}`);
-  process.stdin.unshift(buffered); // push back for runRpcMode to read
-} else {
-  console.error(`[planning-agent] stdin buffer empty before runRpcMode`);
-}
+// PassThrough that acts as the RPC stdin; runRpcMode will read from process.stdin,
+// so we redirect process.stdin to this stream.
+const stdinProxy = new PassThrough();
+Object.defineProperty(process, "stdin", { get: () => stdinProxy, configurable: true });
+
+// Track connected sockets; we forward RPC output to all of them.
+const rpcSockets = new Set();
+
+// runRpcMode captures process.stdout.write at startup as rawStdoutWrite, then
+// redirects process.stdout.write to stderr. By replacing it here first, rawStdoutWrite
+// will point to our socket broadcaster, so all JSON RPC output goes to connected clients.
+process.stdout.write = function (chunk, encoding, callback) {
+  const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, typeof encoding === "string" ? encoding : "utf8");
+  for (const socket of rpcSockets) {
+    if (!socket.destroyed) socket.write(data);
+  }
+  if (typeof encoding === "function") encoding(null);
+  else if (typeof callback === "function") callback(null);
+  return true;
+};
+
+const tcpServer = createServer((socket) => {
+  console.error(`[planning-agent] RPC client connected`);
+  rpcSockets.add(socket);
+  socket.on("data", (chunk) => stdinProxy.write(chunk));
+  socket.on("close", () => { rpcSockets.delete(socket); console.error("[planning-agent] RPC client disconnected"); });
+  socket.on("error", (err) => { rpcSockets.delete(socket); console.error("[planning-agent] RPC socket error:", err.message); });
+});
+
+await new Promise((resolve) => tcpServer.listen(TCP_RPC_PORT, "0.0.0.0", () => {
+  console.error(`[planning-agent] TCP RPC server listening on port ${TCP_RPC_PORT}`);
+  resolve();
+}));
 
 await runRpcMode(session);

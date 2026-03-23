@@ -1,4 +1,4 @@
-FROM oven/bun:1
+FROM node:22-slim
 
 RUN apt-get update && apt-get install -y \
     git \
@@ -8,15 +8,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 COPY package.json .
-RUN bun install
+RUN npm install
 
-RUN mkdir -p /workspace /pi-agent && chown bun:bun /workspace /pi-agent
+RUN mkdir -p /workspace /pi-agent && chown node:node /workspace /pi-agent
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
 
-COPY --chown=bun:bun runner.mjs .
-COPY --chown=bun:bun system-prompt.md .
+COPY --chown=node:node runner.mjs .
+COPY --chown=node:node system-prompt.md .
 
-USER bun
+USER node
 
-ENTRYPOINT ["bun", "/app/runner.mjs"]
+ENTRYPOINT ["node", "/app/runner.mjs"]

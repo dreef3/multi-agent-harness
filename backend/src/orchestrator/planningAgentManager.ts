@@ -1,5 +1,6 @@
 import type Dockerode from "dockerode";
 import { PassThrough } from "stream";
+import { Socket } from "net";
 import { config } from "../config.js";
 
 export type PlanningAgentEvent =
@@ -10,8 +11,8 @@ export type PlanningAgentEvent =
 
 interface ProjectState {
   containerId: string;
-  stream: NodeJS.ReadWriteStream;
-  stdout: PassThrough;
+  containerName: string;
+  tcpSocket: Socket;
   lineBuffer: string;
   isStreaming: boolean;
   promptPending: boolean;
@@ -58,11 +59,20 @@ export class PlanningAgentManager {
       console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
     }
 
-    const { stream, stdout } = await this.attachContainer(containerId);
+    // Attach for stderr logging (fire-and-forget)
+    this.attachContainerStderr(containerId);
+
+    // Connect to the container's TCP RPC server (port 3333).
+    // The container needs time to clone repos and initialise the session before it starts
+    // listening, so we retry for up to 120 seconds.
+    console.log(`[PlanningAgentManager] connecting to TCP RPC server for ${projectId}...`);
+    const tcpSocket = await this.connectTcp(containerName, 3333, 120_000);
+    console.log(`[PlanningAgentManager] TCP RPC connected for ${projectId}`);
+
     const state: ProjectState = {
       containerId,
-      stream,
-      stdout,
+      containerName,
+      tcpSocket,
       lineBuffer: "",
       isStreaming: false,
       promptPending: false,
@@ -70,13 +80,14 @@ export class PlanningAgentManager {
       outputHandlers: new Set(),
     };
     this.projects.set(projectId, state);
-    this.listenStdout(projectId, state);
+    this.listenTcp(projectId, state);
   }
 
   async stopContainer(projectId: string): Promise<void> {
     const state = this.projects.get(projectId);
     if (!state) return;
     this.projects.delete(projectId);
+    state.tcpSocket.destroy();
     try {
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
       console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
@@ -126,11 +137,6 @@ export class PlanningAgentManager {
         `PI_CODING_AGENT_DIR=/pi-agent`,
         ...providerEnvVars,
       ],
-      OpenStdin: true,
-      StdinOnce: false,
-      AttachStdin: true,
-      AttachStdout: true,
-      AttachStderr: true,
       HostConfig: {
         Binds: [`${config.piAgentVolume}:/pi-agent`],
         NetworkMode: config.subAgentNetwork,
@@ -140,28 +146,53 @@ export class PlanningAgentManager {
     return container.id;
   }
 
-  private attachContainer(containerId: string): Promise<{ stream: NodeJS.ReadWriteStream; stdout: PassThrough }> {
-    return new Promise((resolve, reject) => {
-      this.docker.getContainer(containerId).attach(
-        { stream: true, stdin: true, stdout: true, stderr: true },
-        (err: Error | null, stream?: NodeJS.ReadWriteStream) => {
-          if (err) { reject(err); return; }
-          if (!stream) { reject(new Error("attach: no stream returned")); return; }
-          const stdout = new PassThrough();
-          const stderr = new PassThrough();
-          stderr.on("data", (chunk: Buffer) =>
-            console.error(`[planning-agent stderr]`, chunk.toString())
-          );
-          (this.docker as unknown as { modem: { demuxStream: (s: unknown, o: unknown, e: unknown) => void } })
-            .modem.demuxStream(stream, stdout, stderr);
-          resolve({ stream, stdout });
-        }
-      );
-    });
+  /** Attach to container just to stream stderr to logs. Fire-and-forget. */
+  private attachContainerStderr(containerId: string): void {
+    this.docker.getContainer(containerId).attach(
+      { stream: true, stdin: false, stdout: false, stderr: true },
+      (err: Error | null, stream?: NodeJS.ReadWriteStream) => {
+        if (err || !stream) return;
+        const stderr = new PassThrough();
+        stderr.on("data", (chunk: Buffer) =>
+          console.error(`[planning-agent stderr]`, chunk.toString())
+        );
+        (this.docker as unknown as { modem: { demuxStream: (s: unknown, o: unknown, e: unknown) => void } })
+          .modem.demuxStream(stream, new PassThrough(), stderr);
+      }
+    );
   }
 
-  private listenStdout(projectId: string, state: ProjectState): void {
-    state.stdout.on("data", (chunk: Buffer) => {
+  /** Connect to the planning agent's TCP RPC server with exponential backoff retry. */
+  private async connectTcp(host: string, port: number, maxWaitMs: number): Promise<Socket> {
+    const start = Date.now();
+    let attempt = 0;
+    while (true) {
+      try {
+        const socket = await new Promise<Socket>((resolve, reject) => {
+          const s = new Socket();
+          const timer = setTimeout(() => { s.destroy(); reject(new Error("connect timeout")); }, 5000);
+          s.connect(port, host, () => { clearTimeout(timer); resolve(s); });
+          s.on("error", (err) => { clearTimeout(timer); s.destroy(); reject(err); });
+        });
+        return socket;
+      } catch (err) {
+        attempt++;
+        const elapsed = Date.now() - start;
+        if (elapsed >= maxWaitMs) {
+          throw new Error(`[PlanningAgentManager] TCP connect to ${host}:${port} timed out after ${maxWaitMs}ms`);
+        }
+        // Exponential backoff: 500ms, 1s, 2s, 4s, cap at 5s
+        const delay = Math.min(500 * Math.pow(2, attempt - 1), 5000);
+        if (attempt % 10 === 0) {
+          console.log(`[PlanningAgentManager] still waiting for TCP RPC (${host}:${port}, ${Math.round(elapsed / 1000)}s elapsed)...`);
+        }
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
+  }
+
+  private listenTcp(projectId: string, state: ProjectState): void {
+    state.tcpSocket.on("data", (chunk: Buffer) => {
       state.lineBuffer += chunk.toString();
       const lines = state.lineBuffer.split("\n");
       state.lineBuffer = lines.pop() ?? "";
@@ -170,6 +201,14 @@ export class PlanningAgentManager {
         if (!trimmed) continue;
         this.handleRpcLine(projectId, state, trimmed);
       }
+    });
+
+    state.tcpSocket.on("close", () => {
+      console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
+    });
+
+    state.tcpSocket.on("error", (err) => {
+      console.error(`[PlanningAgentManager] TCP RPC socket error for ${projectId}:`, err.message);
     });
   }
 
@@ -254,7 +293,7 @@ export class PlanningAgentManager {
       message,
       ...(state.isStreaming ? { streamingBehavior: "followUp" } : {}),
     }) + "\n";
-    state.stream.write(cmd);
+    state.tcpSocket.write(cmd);
   }
 
   onOutput(projectId: string, handler: (event: PlanningAgentEvent) => void): () => void {
