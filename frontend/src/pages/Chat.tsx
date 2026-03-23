@@ -12,7 +12,7 @@ export default function Chat() {
   const locationProject = (location.state as { project?: Project } | null)?.project;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [sending, setSending] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("none");
   const [streamingContent, setStreamingContent] = useState("");
@@ -109,7 +109,7 @@ export default function Chat() {
       console.error("Failed to load messages:", err);
       return [];
     } finally {
-      setLoading(false);
+      setIsLoadingMessages(false);
     }
   }
 
@@ -138,8 +138,6 @@ export default function Chat() {
     }
   }
 
-  if (loading) return <div className="text-gray-400">Loading...</div>;
-
   const isThinking = thinkingMode === "processing";
   const isTyping = thinkingMode === "typing";
 
@@ -150,7 +148,7 @@ export default function Chat() {
       </div>
 
       <div className="flex-1 overflow-y-auto space-y-3 bg-gray-900 border border-gray-800 rounded-lg p-4">
-        {messages.length === 0 && !streamingContent && !isThinking ? (
+        {messages.length === 0 && !streamingContent && !isThinking && !isLoadingMessages ? (
           <div className="text-gray-500 text-center py-8">
             No messages yet. Start the conversation!
           </div>
