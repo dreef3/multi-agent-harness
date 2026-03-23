@@ -107,6 +107,13 @@ export class PlanningAgentManager {
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 
+    // Ensure AGENT_MODEL is always set from config (env passthrough only works if the backend
+    // itself has AGENT_MODEL set; fall back to the configured master-agent model for the provider)
+    const configuredModel = config.models?.[config.agentProvider as keyof typeof config.models]?.masterAgent?.model;
+    if (configuredModel && !providerEnvVars.some(v => v.startsWith("AGENT_MODEL="))) {
+      providerEnvVars.push(`AGENT_MODEL=${configuredModel}`);
+    }
+
     const image = config.planningAgentImage;
 
     const container = await this.docker.createContainer({
