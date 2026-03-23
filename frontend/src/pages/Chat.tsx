@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { api, Message, Project } from "../lib/api";
 import { wsClient } from "../lib/ws";
 
@@ -186,7 +187,7 @@ export default function Chat() {
                     {msg.role === "user" ? "You" : "Assistant"}
                   </div>
                   <div className="prose prose-invert prose-sm max-w-none">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   </div>
                 </div>
               </div>
@@ -198,7 +199,7 @@ export default function Chat() {
                 <div data-testid="assistant-streaming" className="max-w-[80%] rounded-lg px-4 py-2 bg-gray-800 text-gray-100">
                   <div className="text-xs text-gray-400 mb-1">Assistant</div>
                   <div className="prose prose-invert prose-sm max-w-none">
-                    <ReactMarkdown>{streamingContent}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
                   </div>
                 </div>
               </div>
