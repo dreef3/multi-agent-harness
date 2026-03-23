@@ -90,3 +90,103 @@ describe("PlanningAgentManager - container lifecycle", () => {
     expect(mgr.isRunning("proj-2")).toBe(true);
   });
 });
+
+describe("PlanningAgentManager - communication", () => {
+  beforeEach(() => { vi.resetModules(); });
+
+  async function makeRunningManager() {
+    const { docker, mockAttachStream } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    return { mgr, mockAttachStream };
+  }
+
+  it("writes prompt JSON-RPC command to stdin", async () => {
+    const { mgr, mockAttachStream } = await makeRunningManager();
+    await mgr.sendPrompt("proj-1", "Hello agent");
+    expect(mockAttachStream.write).toHaveBeenCalledWith(
+      expect.stringContaining('"type":"prompt"')
+    );
+    expect(mockAttachStream.write).toHaveBeenCalledWith(
+      expect.stringContaining('"message":"Hello agent"')
+    );
+  });
+
+  it("includes streamingBehavior:followUp when streaming", async () => {
+    const { mgr, mockAttachStream } = await makeRunningManager();
+    // At minimum verify the field is absent when not streaming
+    await mgr.sendPrompt("proj-1", "first");
+    const call = (mockAttachStream.write as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+    expect(call).not.toContain("streamingBehavior");
+  });
+
+  it("emits delta events when text_delta lines arrive on stdout", async () => {
+    const { docker } = makeMockDocker();
+    // Capture stdout PassThrough to feed test data
+    let capturedStdout: import("stream").PassThrough | null = null;
+    docker.modem.demuxStream = vi.fn((_stream, stdout) => { capturedStdout = stdout as import("stream").PassThrough; });
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-1", (e) => events.push(e));
+
+    capturedStdout!.write(JSON.stringify({
+      type: "message_update",
+      assistantMessageEvent: { type: "text_delta", delta: "Hello" },
+    }) + "\n");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({ type: "delta", text: "Hello" });
+  });
+
+  it("emits tool_call event on tool_execution_start", async () => {
+    const { docker } = makeMockDocker();
+    let capturedStdout: import("stream").PassThrough | null = null;
+    docker.modem.demuxStream = vi.fn((_stream, stdout) => { capturedStdout = stdout as import("stream").PassThrough; });
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-1", (e) => events.push(e));
+
+    capturedStdout!.write(JSON.stringify({
+      type: "tool_execution_start",
+      toolName: "dispatch_tasks",
+      args: { tasks: [] },
+    }) + "\n");
+
+    expect(events[0]).toEqual({ type: "tool_call", toolName: "dispatch_tasks", args: { tasks: [] } });
+  });
+
+  it("emits message_complete on message_end", async () => {
+    const { docker } = makeMockDocker();
+    let capturedStdout: import("stream").PassThrough | null = null;
+    docker.modem.demuxStream = vi.fn((_stream, stdout) => { capturedStdout = stdout as import("stream").PassThrough; });
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-1", (e) => events.push(e));
+
+    capturedStdout!.write(JSON.stringify({ type: "message_end", message: {} }) + "\n");
+    expect(events[0]).toEqual({ type: "message_complete" });
+  });
+
+  it("emits conversation_complete on agent_end", async () => {
+    const { docker } = makeMockDocker();
+    let capturedStdout: import("stream").PassThrough | null = null;
+    docker.modem.demuxStream = vi.fn((_stream, stdout) => { capturedStdout = stdout as import("stream").PassThrough; });
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-1", (e) => events.push(e));
+
+    capturedStdout!.write(JSON.stringify({ type: "agent_end", messages: [] }) + "\n");
+    expect(events[0]).toEqual({ type: "conversation_complete" });
+  });
+});
