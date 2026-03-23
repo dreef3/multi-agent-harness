@@ -12,7 +12,7 @@ export default function Chat() {
   const locationProject = (location.state as { project?: Project } | null)?.project;
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(true);
   const [sending, setSending] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("none");
   const [streamingContent, setStreamingContent] = useState("");
@@ -69,9 +69,19 @@ export default function Chat() {
         setThinkingMode("none");
         loadMessages();
       } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-        // Replay missed messages after reconnect
-        setMessages(msg.messages as Message[]);
-        const maxSeq = (msg.messages as Message[]).reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+        // Merge replay messages with existing, deduplicate by seqId
+        const replayedMessages = msg.messages as Message[];
+        setMessages((prev) => {
+          const existingSeqIds = new Set(prev.map((m) => m.seqId));
+          const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
+
+          if (newFromReplay.length === 0) return prev;
+
+          const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+          return merged;
+        });
+
+        const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
         if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
       }
     });
@@ -83,22 +93,34 @@ export default function Chat() {
   }, [id]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
   async function loadMessages(): Promise<Message[]> {
     if (!id) return [];
     try {
       const data = await api.projects.messages.list(id);
-      setMessages(data);
+      // Merge with existing messages, deduplicate by seqId
+      // This prevents flickering/clearing of messages when reloading
+      setMessages((prev) => {
+        const existingSeqIds = new Set(prev.map((m) => m.seqId));
+        const newMsgs = data.filter((m) => !existingSeqIds.has(m.seqId));
+
+        if (newMsgs.length === 0) return prev; // No new messages
+
+        const merged = [...prev, ...newMsgs].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+        return merged;
+      });
+
       const maxSeq = data.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
       if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+
       return data;
     } catch (err) {
       console.error("Failed to load messages:", err);
       return [];
     } finally {
-      setLoading(false);
+      setIsLoadingMessages(false);
     }
   }
 
@@ -127,8 +149,6 @@ export default function Chat() {
     }
   }
 
-  if (loading) return <div className="text-gray-400">Loading...</div>;
-
   const isThinking = thinkingMode === "processing";
   const isTyping = thinkingMode === "typing";
 
@@ -145,6 +165,9 @@ export default function Chat() {
           </div>
         ) : (
           <>
+            {isLoadingMessages && messages.length > 0 && (
+              <div className="text-gray-400">Loading...</div>
+            )}
             {messages.map((msg) => (
               <div
                 key={msg.id}

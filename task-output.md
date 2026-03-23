@@ -40,7 +40,35 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-Replace the RepositoryForm component with a GitHub repository picker. When the user has a GITHUB_TOKEN configured, show a dropdown list of accessible GitHub repositories. When the user selects a repository, auto-fill the name, cloneUrl, owner, repo, and defaultBranch fields. Keep the manual form as a fallback.
+## Task: Update Render Logic for Loading Indicator
+
+**Repository:** multi-agent-harness
+**Files to modify:** `frontend/src/pages/Chat.tsx`
+
+### Objective
+Update the render logic to show loading indicator conditionally without blocking content.
+
+### Changes Required
+
+1. **Remove the early return on loading:**
+   Delete the line: `if (isLoadingMessages) return <div className="text-gray-400">Loading...</div>;`
+
+2. **Add conditional loading indicator inside the message list:**
+   After the `{/* Streaming text */}` section, add:
+   ```typescript
+   {isLoadingMessages && messages.length > 0 && (
+     <div className="text-gray-400">Loading...</div>
+   )}
+   ```
+
+3. **Add optional chaining to scrollIntoView:**
+   Change: `messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });`
+   To: `messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });`
+
+### Verification
+```bash
+cd frontend && npx tsc --noEmit
+```
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T08:11:21.545Z
+Completed at: 2026-03-23T21:32:53.304Z
