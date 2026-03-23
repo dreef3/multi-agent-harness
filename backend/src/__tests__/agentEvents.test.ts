@@ -1,12 +1,24 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import os from "node:os";
+import path from "node:path";
+import fs from "node:fs";
+import { initDb } from "../store/db.js";
 import { appendEvent, getEvents, clearEvents } from "../store/agentEvents.js";
 
-describe("agentEvents store", () => {
-  beforeEach(() => {
-    clearEvents("session-1");
-    clearEvents("session-2");
-  });
+let tmpDir: string;
 
+beforeEach(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-events-test-"));
+  initDb(tmpDir);
+  clearEvents("session-1");
+  clearEvents("session-2");
+});
+
+afterEach(() => {
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+describe("agentEvents store", () => {
   it("returns empty array for unknown session", () => {
     expect(getEvents("session-1")).toEqual([]);
   });
