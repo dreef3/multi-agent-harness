@@ -40,24 +40,26 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 5: Update Conditional Loading Indicator
+### Task 1: Update State Management in Chat.tsx
 
 **Repository:** multi-agent-harness
 **File:** `frontend/src/pages/Chat.tsx`
 
 **Steps:**
-- [ ] Add loading indicator that shows when loading but messages exist
-- [ ] This provides feedback during refresh operations
+- [ ] Rename `loading` state variable to `isLoadingMessages` for clarity
+- [ ] Ensure `messages` state is never cleared during loads
+- [ ] Verify initial state is correct: `isLoadingMessages: true`, `messages: []`
 
 **Code Change:**
-Add this inside the messages area (before mapping messages):
 ```typescript
-{isLoadingMessages && messages.length === 0 && (
-  <div className="text-gray-400">Loading...</div>
-)}
+// BEFORE:
+const [loading, setLoading] = useState(true);
+
+// AFTER:
+const [isLoadingMessages, setIsLoadingMessages] = useState(true);
 ```
 
 ---
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T20:43:23.538Z
+Completed at: 2026-03-23T20:48:06.525Z
