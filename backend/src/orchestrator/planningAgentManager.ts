@@ -180,8 +180,9 @@ export class PlanningAgentManager {
 
     const type = obj.type as string;
 
-    // Log error responses and any unexpected event types for diagnostics
+    // Log all responses (success or failure) for diagnostics
     if (type === "response") {
+      console.log(`[PlanningAgentManager] response from agent for ${projectId}: cmd=${obj.command} success=${obj.success}`);
       if (!(obj.success as boolean)) {
         console.error(`[PlanningAgentManager] prompt error from agent for ${projectId}: ${JSON.stringify(obj)}`);
       }

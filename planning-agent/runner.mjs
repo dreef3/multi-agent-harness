@@ -17,6 +17,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+// Pause stdin immediately so buffered prompt data is not discarded before runRpcMode
+// attaches its data listener. Bun starts stdin in flowing mode by default; if data
+// arrives during the ~20s init window with no listener, it would be silently dropped.
+process.stdin.pause();
+
 const PROJECT_ID = process.env.PROJECT_ID ?? "unknown";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:3000";
 const GIT_CLONE_URLS = process.env.GIT_CLONE_URLS ?? "[]";
@@ -200,8 +205,15 @@ console.error(`[planning-agent] session ready for project ${PROJECT_ID}, running
 process.stdout.write(JSON.stringify({ type: "agent_diagnostic", projectId: PROJECT_ID }) + "\n");
 console.error("[planning-agent] wrote agent_diagnostic to stdout");
 
-// Diagnostic: check if stdin is already readable (pre-buffered data from backend)
+// Diagnostic: check stdin state and peek at buffered data
 const stdinReadable = !process.stdin.destroyed && process.stdin.readable;
 console.error(`[planning-agent] stdin readable=${stdinReadable} paused=${process.stdin.isPaused()}`);
+const buffered = process.stdin.read();
+if (buffered) {
+  console.error(`[planning-agent] stdin has ${buffered.length} bytes buffered: ${JSON.stringify(buffered.toString().slice(0, 80))}`);
+  process.stdin.unshift(buffered); // push back for runRpcMode to read
+} else {
+  console.error(`[planning-agent] stdin buffer empty before runRpcMode`);
+}
 
 await runRpcMode(session);
