@@ -4,6 +4,7 @@
  */
 import {
   createAgentSession,
+  createCodingTools,
   SessionManager,
   SettingsManager,
   DefaultResourceLoader,
@@ -12,8 +13,10 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
+import { writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { createGuardHook, createWebFetchTool } from "./tools.mjs";
 
 const REPO_CLONE_URL = process.env.REPO_CLONE_URL ?? "";
 const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
@@ -33,31 +36,60 @@ const TASK_ID = process.env.TASK_ID ?? "unknown";
 // before the AI agent starts so the agent cannot use it for direct GitHub API calls.
 const GIT_PUSH_URL = process.env.GIT_PUSH_URL || REPO_CLONE_URL;
 
+/** Configure git credential store and gh auth using the token in GIT_PUSH_URL. */
+function setupCredentials() {
+  let token, hostname;
+  try {
+    const parsed = new URL(GIT_PUSH_URL);
+    token = parsed.password;
+    hostname = parsed.hostname;
+  } catch (err) {
+    throw new Error(`[sub-agent] Cannot parse GIT_PUSH_URL: ${err.message}`);
+  }
+  if (!token) throw new Error("[sub-agent] GIT_PUSH_URL contains no password/token");
+
+  // Git credential store
+  execFileSync("git", ["config", "--global", "credential.helper", "store"], { stdio: "inherit" });
+  const credLine = `https://x-access-token:${token}@${hostname}\n`;
+  try {
+    appendFileSync(join(homedir(), ".git-credentials"), credLine);
+  } catch (err) {
+    throw new Error(`[sub-agent] Failed to write ~/.git-credentials: ${err.message}`);
+  }
+
+  // gh auth (non-fatal)
+  try {
+    execFileSync("gh", ["auth", "login", "--with-token"], {
+      input: Buffer.from(token + "\n"),
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+  } catch (err) {
+    console.warn("[sub-agent] gh auth login failed (gh may not be available):", err.message);
+  }
+}
+
 /** Run git with explicit args array (safe against special chars in args). */
 function git(...args) {
   console.log("[sub-agent] $ git", args.map(a => (GIT_PUSH_URL && a === GIT_PUSH_URL ? "***" : a)).join(" "));
   return execFileSync("git", args, { stdio: "inherit" });
 }
 
-// ── Git setup ────────────────────────────────────────────────────────────────
+// ── Credential setup — must happen before clone ───────────────────────────────
+setupCredentials();
+delete process.env.GIT_PUSH_URL;
+delete process.env.GITHUB_TOKEN;
+
+// ── Git setup ─────────────────────────────────────────────────────────────────
 const GIT_AUTHOR_NAME = process.env.GIT_COMMIT_AUTHOR_NAME ?? "Harness Bot";
 const GIT_AUTHOR_EMAIL = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply";
 git("config", "--global", "user.email", GIT_AUTHOR_EMAIL);
 git("config", "--global", "user.name", GIT_AUTHOR_NAME);
 
-// ── Clone & checkout ─────────────────────────────────────────────────────────
+// ── Clone & checkout ──────────────────────────────────────────────────────────
 console.log("[sub-agent] Cloning repository, branch:", BRANCH_NAME);
-git("clone", GIT_PUSH_URL, "/workspace/repo");
+git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles auth
 process.chdir("/workspace/repo");
 git("checkout", BRANCH_NAME);
-
-// Reset origin to non-authenticated URL so the AI agent cannot push directly via bash.
-// The push_branch tool (below) uses the stored GIT_PUSH_URL via a JS closure.
-git("remote", "set-url", "origin", REPO_CLONE_URL);
-
-// Remove auth credentials from env before starting the AI agent
-delete process.env.GIT_PUSH_URL;
-delete process.env.GITHUB_TOKEN;
 
 // ── Run AI agent ─────────────────────────────────────────────────────────────
 console.log("[sub-agent] Running task:", TASK_DESCRIPTION);
@@ -143,30 +175,14 @@ try {
     },
   };
 
-  // push_branch tool — uses the authenticated GIT_PUSH_URL from the JS closure.
-  // The agent MUST use this tool to push; direct `git push` will fail (origin has no auth).
-  const pushBranchTool = {
-    name: "push_branch",
-    label: "Push Branch",
-    description: `Push committed changes to the remote branch (${BRANCH_NAME}). Call this after committing your changes. Do NOT use git push directly — it will fail. Use this tool instead.`,
-    parameters: Type.Object({}),
-    execute: async () => {
-      try {
-        execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "pipe" });
-        return { content: [{ type: "text", text: `Changes pushed to ${BRANCH_NAME}` }], details: {} };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Push failed: ${err.message}` }], details: {} };
-      }
-    },
-  };
-
   const { session } = await createAgentSession({
     sessionManager: SessionManager.create(sessionDir, sessionDir),
     settingsManager,
     resourceLoader,
     modelRegistry,
     ...(model ? { model } : {}),
-    customTools: [askPlanningAgentTool, pushBranchTool],
+    tools: createCodingTools("/workspace/repo", { bash: { spawnHook: createGuardHook() } }),
+    customTools: [createWebFetchTool(), askPlanningAgentTool],
   });
 
   // Subscribe to session events for real-time forwarding before starting
@@ -230,7 +246,7 @@ try {
   const finalDiff = execSync("git diff --cached --stat").toString().trim();
   if (finalDiff) {
     git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
-    execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
+    execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
     console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
   } else {
     console.log("[sub-agent] No changes to commit");
@@ -253,7 +269,7 @@ try {
     const logDiff = execSync("git diff --cached --stat").toString().trim();
     if (logDiff) {
       git("commit", "-m", `chore: add agent log for task ${TASK_ID}`);
-      execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
+      execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
       console.log("[sub-agent] Session log committed for task:", TASK_ID);
     }
   } else {
