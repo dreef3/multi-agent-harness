@@ -110,6 +110,25 @@ test.describe('Repository Configuration Flow', () => {
         }
       }
     }
+
+    // Clean up any GitHub branches created during the test to prevent accumulation
+    // beyond the per_page=100 limit which would break the branch-detection check.
+    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
+    const branchRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: ghHeaders }
+    );
+    if (branchRes.ok) {
+      const branches = await branchRes.json() as { name: string }[];
+      for (const branch of branches) {
+        if (!initialBranchNames.includes(branch.name)) {
+          await fetch(
+            `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch.name}`,
+            { method: 'DELETE', headers: ghHeaders }
+          );
+        }
+      }
+    }
   });
 
   test('create project with repository and verify sub-agent pushes a branch', async ({ page, request }) => {

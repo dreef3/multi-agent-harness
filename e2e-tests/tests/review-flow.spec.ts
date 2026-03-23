@@ -69,7 +69,21 @@ async function postLgtmComment(prNumber: number): Promise<void> {
 }
 
 test.describe('Review Comment Fix-Run Flow', () => {
+  let initialBranchNames: string[] = [];
+
   test.beforeEach(async ({ request }) => {
+    // Record current branches so we can clean up new ones in afterEach
+    const branchRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
+    );
+    if (branchRes.ok) {
+      const branches = await branchRes.json() as { name: string }[];
+      if (Array.isArray(branches)) {
+        initialBranchNames = branches.map(b => b.name);
+      }
+    }
+
     await request.post(`${API_BASE}/repositories`, {
       data: {
         name: 'E2E Test Repo',
@@ -88,6 +102,24 @@ test.describe('Review Comment Fix-Run Flow', () => {
       for (const repo of (data as { id: string; name: string }[])) {
         if (repo.name === 'E2E Test Repo') {
           await request.delete(`${API_BASE}/repositories/${repo.id}`);
+        }
+      }
+    }
+
+    // Clean up any GitHub branches created during the test to prevent accumulation.
+    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
+    const branchRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: ghHeaders }
+    );
+    if (branchRes.ok) {
+      const branches = await branchRes.json() as { name: string }[];
+      for (const branch of branches) {
+        if (!initialBranchNames.includes(branch.name)) {
+          await fetch(
+            `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch.name}`,
+            { method: 'DELETE', headers: ghHeaders }
+          );
         }
       }
     }
