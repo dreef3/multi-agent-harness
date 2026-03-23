@@ -150,12 +150,20 @@ export function createAgentsRouter(): Router {
       timestamp: ts,
     });
 
+    // Hoist the resolve + timeout handle so the catch block can cancel the timer.
+    // Note: the 5-min long-poll is intentionally longer than the 4-min heartbeat stuck
+    // threshold — sub-agent runners send heartbeats every 2 min via setInterval
+    // independently, so they keep pinging even while blocked here.
+    let replyResolve!: (reply: string) => void;
+    let timeoutHandle!: ReturnType<typeof setTimeout>;
+
     const replyPromise = new Promise<string>((resolve) => {
-      const timeout = setTimeout(() => {
+      replyResolve = resolve;
+      timeoutHandle = setTimeout(() => {
         pendingMessages.delete(msgId);
         resolve("[TIMEOUT] No reply within 5 minutes.");
       }, TIMEOUT_MS);
-      pendingMessages.set(msgId, { resolve, timeout });
+      pendingMessages.set(msgId, { resolve: replyResolve, timeout: timeoutHandle });
     });
 
     try {
@@ -164,6 +172,7 @@ export function createAgentsRouter(): Router {
         `[msgId: ${msgId}] [Sub-agent: ${taskDesc}] asks: ${question}`
       );
     } catch {
+      clearTimeout(timeoutHandle);
       pendingMessages.delete(msgId);
       res.status(503).json({ error: "Planning agent not available" });
       return;
@@ -189,6 +198,8 @@ export function createAgentsRouter(): Router {
 
   // --- New: planning agent delivers reply ---
   router.post("/:id/message/:msgId/reply", (req: Request, res: Response) => {
+    const session = getAgentSession(req.params.id);
+    if (!session) { res.status(404).json({ error: "Session not found" }); return; }
     const { msgId } = req.params;
     const { reply } = req.body as { reply?: string };
     if (!reply) { res.status(400).json({ error: "Missing reply" }); return; }
@@ -206,8 +217,12 @@ export function createAgentsRouter(): Router {
   router.post("/:id/events", (req: Request, res: Response) => {
     const session = getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-    const event = req.body as { type: string; payload: Record<string, unknown>; timestamp: string };
-    appendEvent(req.params.id, event);
+    const event = req.body as { type?: string; payload?: Record<string, unknown>; timestamp?: string };
+    if (!event.type || typeof event.type !== "string") {
+      res.status(400).json({ error: "Missing or invalid type" });
+      return;
+    }
+    appendEvent(req.params.id, event as { type: string; payload: Record<string, unknown>; timestamp: string });
     broadcastAgentActivity(session.projectId, req.params.id, event);
     res.json({ ok: true });
   });

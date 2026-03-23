@@ -31,6 +31,7 @@ import { getAgentSession, updateAgentSession } from "../store/agents.js";
 import { getEvents, appendEvent } from "../store/agentEvents.js";
 import { resetHeartbeat, clearHeartbeat } from "../orchestrator/heartbeatMonitor.js";
 import { getProject } from "../store/projects.js";
+import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
 
 function buildApp() {
   const app = express();
@@ -83,6 +84,53 @@ describe("GET /api/agents/:id/events", () => {
     const res = await request(app).get("/api/agents/sess-3/events");
     expect(res.status).toBe(200);
     expect(res.body).toHaveLength(1);
+  });
+});
+
+describe("POST /api/agents/:id/message + reply", () => {
+  it("delivers reply when planning agent responds", async () => {
+    const mockInject = vi.fn();
+    (getPlanningAgentManager as ReturnType<typeof vi.fn>).mockReturnValue({ injectMessage: mockInject });
+
+    (getAgentSession as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "sess-msg", projectId: "proj-1", taskId: null, status: "running",
+    });
+    (getProject as ReturnType<typeof vi.fn>).mockReturnValue(null);
+
+    const app = buildApp();
+
+    // Start the long-poll: call .then() with a no-op to trigger the HTTP request
+    // without awaiting resolution (which would block until the long-poll completes).
+    let messageResolve!: (r: import("supertest").Response) => void;
+    const messagePromise = new Promise<import("supertest").Response>((resolve) => {
+      messageResolve = resolve;
+    });
+    request(app)
+      .post("/api/agents/sess-msg/message")
+      .send({ question: "What should I do?" })
+      .then((res) => messageResolve(res));
+
+    // Poll until injectMessage is called (the async route handler may take a few ticks)
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+      if (mockInject.mock.calls.length > 0) break;
+    }
+
+    // Extract the msgId from the injected message
+    const injectedText = mockInject.mock.calls[0][1] as string;
+    const msgIdMatch = injectedText.match(/\[msgId: ([^\]]+)\]/);
+    expect(msgIdMatch).toBeTruthy();
+    const msgId = msgIdMatch![1];
+
+    // Deliver the reply
+    await request(app)
+      .post(`/api/agents/sess-msg/message/${msgId}/reply`)
+      .send({ reply: "Do the thing." });
+
+    // Now the original message request should resolve
+    const res = await messagePromise;
+    expect(res.status).toBe(200);
+    expect(res.body.reply).toBe("Do the thing.");
   });
 });
 
