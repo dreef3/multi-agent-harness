@@ -180,6 +180,7 @@ Stage and commit all changes. The harness will open the pull request automatical
         repoCloneUrl: repository.cloneUrl,
         gitPushUrl,
         branchName,
+        baseBranch: repository.defaultBranch,
         taskDescription: this.buildTaskPrompt(task),
         taskId: task.id,
       });
@@ -443,6 +444,7 @@ Stage and commit all changes. The harness will open the pull request automatical
         repoCloneUrl: repository.cloneUrl,
         gitPushUrl: fixGitPushUrl,
         branchName: pr.branch,
+        baseBranch: repository.defaultBranch,
         taskDescription,
         taskId: `fix-${sessionId.slice(0, 8)}`,
       });
