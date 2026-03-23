@@ -20,16 +20,20 @@ import { join } from "node:path";
 
 // Buffer stdin via a PassThrough proxy so data arriving during the ~25s init window
 // (git clone + model init) is not lost. attachJsonlLineReader (inside runRpcMode) uses
-// stream.on("data", ...) which only auto-resumes if readableFlowing !== false.  Calling
-// process.stdin.pause() sets readableFlowing=false, preventing auto-resume — so we use
-// a proxy instead: real stdin is consumed immediately (flowing) into a PassThrough buffer,
-// and process.stdin is overridden to point at the proxy so runRpcMode reads from it.
+// stream.on("data", ...) which only auto-resumes if readableFlowing !== false.
+//
+// Bun does NOT automatically enter flowing mode when a "data" listener is added
+// (unlike Node.js which calls resume() internally via addListener). We must call
+// resume() explicitly before registering the listener, otherwise fd 0 is never polled
+// and data sits in the kernel pipe buffer unread until the process exits.
 const stdinProxy = new PassThrough();
-process.stdin.on("data", (chunk) => {
+const realStdin = process.stdin; // capture before overriding
+realStdin.resume(); // explicitly start flowing mode — critical for Bun
+realStdin.on("data", (chunk) => {
   console.error(`[planning-agent] stdin: forwarding ${chunk.length} bytes to proxy`);
   stdinProxy.write(chunk);
 });
-process.stdin.on("end", () => stdinProxy.end());
+realStdin.on("end", () => stdinProxy.end());
 Object.defineProperty(process, "stdin", {
   get: () => stdinProxy,
   configurable: true,
