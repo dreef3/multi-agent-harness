@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Multi-Agent Harness E2E', () => {
   test('create project and run free form request', async ({ page, request }) => {
+    test.setTimeout(5 * 60 * 1000); // 5 minutes — covers Docker startup + git clone + model API call
     // Seed a test repository first (required for project creation)
     const repoResponse = await request.post('http://localhost:3000/api/repositories', {
       data: {
@@ -55,7 +56,7 @@ test.describe('Multi-Agent Harness E2E', () => {
     // Wait for streaming content to appear (arrives on first delta, much faster than full response).
     // Accepts either the live streaming bubble or a persisted message bubble.
     const agentContent = page.locator('[data-testid="assistant-streaming"], [data-testid="assistant-message"]');
-    await expect(agentContent.first()).toBeVisible({ timeout: 60000 });
+    await expect(agentContent.first()).toBeVisible({ timeout: 4 * 60 * 1000 });
 
     // Verify the response contains some content
     const responseText = await agentContent.first().textContent();

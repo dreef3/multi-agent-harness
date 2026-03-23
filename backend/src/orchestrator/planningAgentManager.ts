@@ -14,6 +14,7 @@ interface ProjectState {
   stdout: PassThrough;
   lineBuffer: string;
   isStreaming: boolean;
+  promptPending: boolean;
   wsConnectionCount: number;
   outputHandlers: Set<(event: PlanningAgentEvent) => void>;
 }
@@ -64,6 +65,7 @@ export class PlanningAgentManager {
       stdout,
       lineBuffer: "",
       isStreaming: false,
+      promptPending: false,
       wsConnectionCount: 0,
       outputHandlers: new Set(),
     };
@@ -197,6 +199,7 @@ export class PlanningAgentManager {
 
     if (type === "agent_end") {
       state.isStreaming = false;
+      state.promptPending = false;
       this.emit(state, { type: "conversation_complete" });
       // Note: do NOT call checkStop here. The container lifecycle is driven by WS
       // connection count — it stops when the last client disconnects (decrementConnections).
@@ -213,7 +216,7 @@ export class PlanningAgentManager {
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
-    if (state.wsConnectionCount === 0 && !state.isStreaming) {
+    if (state.wsConnectionCount === 0 && !state.isStreaming && !state.promptPending) {
       console.log(`[PlanningAgentManager] no connections + idle — stopping container for ${projectId}`);
       void this.stopContainer(projectId);
     }
@@ -225,6 +228,7 @@ export class PlanningAgentManager {
       console.warn(`[PlanningAgentManager] sendPrompt: no container for project ${projectId}`);
       return;
     }
+    state.promptPending = true;
     const cmd = JSON.stringify({
       type: "prompt",
       message,
