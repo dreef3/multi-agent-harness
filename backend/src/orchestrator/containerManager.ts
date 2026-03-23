@@ -74,8 +74,11 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   console.log(`[containerManager]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
   console.log(`[containerManager]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
 
+  const containerName = `task-${(opts.taskId ?? opts.sessionId).slice(0, 16)}`;
+
   const container = await docker.createContainer({
     Image: config.subAgentImage,
+    name: containerName,
     Env: [`REPO_CLONE_URL=${opts.repoCloneUrl}`, `BRANCH_NAME=${opts.branchName}`, ...taskEnv, ...providerEnv],
     WorkingDir: "/workspace",
     HostConfig: {

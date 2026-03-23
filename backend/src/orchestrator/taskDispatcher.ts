@@ -433,9 +433,15 @@ Stage and commit all changes. The harness will open the pull request automatical
       // Create container for fix-run (using existing branch)
       const taskDescription = `Address the following code review comments on the pull request branch "${pr.branch}":\n\n${commentsText}\n\nMake any necessary code changes and ensure the changes are committed.`;
 
+      const ghToken = process.env.GITHUB_TOKEN;
+      const fixGitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
+        ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+        : repository.cloneUrl;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
+        gitPushUrl: fixGitPushUrl,
         branchName: pr.branch,
         taskDescription,
         taskId: `fix-${sessionId.slice(0, 8)}`,

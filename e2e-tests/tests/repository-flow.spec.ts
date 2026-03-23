@@ -113,7 +113,7 @@ test.describe('Repository Configuration Flow', () => {
   });
 
   test('create project with repository and verify sub-agent pushes a branch', async ({ page, request }) => {
-    test.setTimeout(10 * 60 * 1000); // 10 minutes — covers full agent execution cycle
+    test.setTimeout(15 * 60 * 1000); // 15 minutes — covers full agent execution cycle (sub-agent can take ~10 min)
 
     // Navigate to new project form
     await page.goto('/');
