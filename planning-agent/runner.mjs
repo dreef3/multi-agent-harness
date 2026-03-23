@@ -123,7 +123,7 @@ const writePlanningDocumentTool = {
     'Write a planning document to the project\'s planning branch in the primary repository. ' +
     'Call with type "spec" first to write the design spec and open the PR. ' +
     'Call with type "plan" after spec is approved (LGTM received) to write the implementation plan. ' +
-    'Returns the PR URL. Use this tool to create planning PRs. To create other PRs, use `gh pr create` directly.',
+    'Returns the PR URL. Use this tool to create PRs — direct `gh pr create` calls are blocked.',
   parameters: Type.Object({
     type: Type.Union([Type.Literal("spec"), Type.Literal("plan")], { description: '"spec" or "plan"' }),
     content: Type.String({ description: "Full Markdown content of the document" }),
