@@ -115,4 +115,7 @@ function migrate(database: Database.Database): void {
   database.exec(`
     UPDATE projects SET status = 'failed' WHERE status = 'awaiting_approval'
   `);
+
+  // Rename "completed" → "done" for review-phase lifecycle
+  database.exec(`UPDATE projects SET status = 'done' WHERE status = 'completed'`);
 }

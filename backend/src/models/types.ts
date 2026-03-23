@@ -10,7 +10,8 @@ export interface Project {
     | "plan_in_progress"
     | "awaiting_plan_approval"
     | "executing"
-    | "completed"
+    | "review"
+    | "done"
     | "failed"
     | "cancelled";
   source: {

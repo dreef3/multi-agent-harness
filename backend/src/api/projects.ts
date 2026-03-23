@@ -143,7 +143,7 @@ export function createProjectsRouter(dataDir: string): Router {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    if (project.status === "completed" || project.status === "cancelled") {
+    if (project.status === "review" || project.status === "done" || project.status === "cancelled") {
       res.status(400).json({ error: `Cannot cancel project with status: ${project.status}` });
       return;
     }

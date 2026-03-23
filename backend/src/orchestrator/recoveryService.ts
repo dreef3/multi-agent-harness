@@ -195,7 +195,7 @@ export class RecoveryService {
     if (!allDone) return;
 
     const anyFailed = project.plan.tasks.some(t => t.status === "failed");
-    const newStatus = anyFailed ? "failed" : "completed";
+    const newStatus = anyFailed ? "failed" : "review";
     updateProject(projectId, { status: newStatus });
 
     const succeeded = project.plan.tasks.filter(t => t.status === "completed").map(t => t.description.slice(0, 40));

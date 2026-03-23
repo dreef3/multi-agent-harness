@@ -118,7 +118,7 @@ Stage and commit all changes. The harness will open the pull request automatical
     // Update project status if all tasks completed
     const allCompleted = results.every(r => r.success);
     if (allCompleted) {
-      updateProject(projectId, { status: "completed" });
+      updateProject(projectId, { status: "review" });
     } else if (results.some(r => !r.success)) {
       updateProject(projectId, { status: "failed" });
     }

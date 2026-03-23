@@ -163,7 +163,7 @@ describe("RecoveryService", () => {
       svc.notifyMaster = mockNotify;
       // @ts-expect-error accessing private for test
       await svc.checkAllTerminal("proj-5");
-      expect(getProject("proj-5")!.status).toBe("completed");
+      expect(getProject("proj-5")!.status).toBe("review");
       expect(mockNotify).toHaveBeenCalledWith("proj-5", expect.stringContaining("complete"));
     });
 
@@ -340,7 +340,7 @@ describe("RecoveryService", () => {
       await svc.recoverOrphanedProject(proj);
 
       // checkAllTerminal should transition project to completed and notify
-      expect(getProject("proj-orphan-2")!.status).toBe("completed");
+      expect(getProject("proj-orphan-2")!.status).toBe("review");
       expect(mockNotify).toHaveBeenCalledWith("proj-orphan-2", expect.stringContaining("complete"));
     });
 
