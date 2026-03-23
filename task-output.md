@@ -40,57 +40,51 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-## Task: Update Replay Handler and Verify Loading State
+## Task: Update WebSocket replay Handler
 
 **Repository:** multi-agent-harness
 **Files to modify:** `frontend/src/pages/Chat.tsx`
 
 ### Objective
-Fix "chat flashes content" bug by updating the replay handler and verifying all loading state references.
+Update the replay handler to merge messages instead of replacing.
 
 ### Changes Required
+Update the `replay` handler in the `onMessage` callback:
 
-1. **Update the replay handler** (in the `onMessage` callback):
-   Change the `replay` handler from:
-   ```typescript
-   } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-     // Replay missed messages after reconnect
-     setMessages(msg.messages as Message[]);
-     const maxSeq = (msg.messages as Message[]).reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
-     if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
-   }
-   ```
-   To:
-   ```typescript
-   } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-     // Merge replay messages with existing, deduplicate by seqId
-     const replayedMessages = msg.messages as Message[];
-     setMessages((prev) => {
-       const existingSeqIds = new Set(prev.map((m) => m.seqId));
-       const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
+**Change from:**
+```typescript
+} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
+  // Replay missed messages after reconnect
+  setMessages(msg.messages as Message[]);
+  const maxSeq = (msg.messages as Message[]).reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+}
+```
 
-       if (newFromReplay.length === 0) return prev;
+**To:**
+```typescript
+} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
+  // Merge replay messages with existing, deduplicate by seqId
+  const replayedMessages = msg.messages as Message[];
+  setMessages((prev) => {
+    const existingSeqIds = new Set(prev.map((m) => m.seqId));
+    const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
 
-       const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
-       return merged;
-     });
+    if (newFromReplay.length === 0) return prev;
 
-     const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
-     if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
-   }
-   ```
+    const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+    return merged;
+  });
 
-2. **Add optional chaining to scrollIntoView** (line ~86):
-   Change `messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });`
-   To `messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });`
-
-3. **Verify all references to `loading` variable** are renamed to `isLoadingMessages`
+  const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+}
+```
 
 ### Verification
 ```bash
 cd frontend && npx tsc --noEmit
 ```
-Expected: no errors
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T21:29:06.683Z
+Completed at: 2026-03-23T21:31:56.914Z
