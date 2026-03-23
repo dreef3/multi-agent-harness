@@ -59,6 +59,18 @@ git("remote", "set-url", "origin", REPO_CLONE_URL);
 delete process.env.GIT_PUSH_URL;
 delete process.env.GITHUB_TOKEN;
 
+/** Fire-and-forget: POST an activity event to the harness. */
+async function forwardEvent(type, payload) {
+  if (!HARNESS_API_URL || !AGENT_SESSION_ID) return;
+  try {
+    await fetch(`${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, payload, timestamp: new Date().toISOString() }),
+    });
+  } catch { /* fire-and-forget */ }
+}
+
 // ── Run AI agent ─────────────────────────────────────────────────────────────
 console.log("[sub-agent] Running task:", TASK_DESCRIPTION);
 const sessionDir = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
@@ -83,18 +95,6 @@ try {
     model = modelRegistry.find(AGENT_PROVIDER, AGENT_MODEL);
   } catch {
     console.warn("[sub-agent] Could not find model", AGENT_PROVIDER, AGENT_MODEL, "- using default");
-  }
-
-  /** Fire-and-forget: POST an activity event to the harness. */
-  async function forwardEvent(type, payload) {
-    if (!HARNESS_API_URL || !AGENT_SESSION_ID) return;
-    try {
-      await fetch(`${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/events`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type, payload, timestamp: new Date().toISOString() }),
-      });
-    } catch { /* fire-and-forget */ }
   }
 
   const askPlanningAgentTool = {
