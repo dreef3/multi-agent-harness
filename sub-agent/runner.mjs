@@ -28,6 +28,7 @@ const AGENT_SESSION_ID = process.env.AGENT_SESSION_ID ?? "";
 const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "pi";
 const AGENT_MODEL = process.env.AGENT_MODEL ?? "minimax-m2.7";
 const TASK_ID = process.env.TASK_ID ?? "unknown";
+const BASE_BRANCH = process.env.BASE_BRANCH ?? "main";
 
 // GIT_PUSH_URL is the authenticated push URL — consumed here and cleared from env
 // before the AI agent starts so the agent cannot use it for direct GitHub API calls.
@@ -50,6 +51,24 @@ console.log("[sub-agent] Cloning repository, branch:", BRANCH_NAME);
 git("clone", GIT_PUSH_URL, "/workspace/repo");
 process.chdir("/workspace/repo");
 git("checkout", BRANCH_NAME);
+
+// ── Sync base branch before work ─────────────────────────────────────────────
+// Fetch via authenticated URL (before origin is stripped of credentials).
+console.log(`[sub-agent] Syncing base branch: ${BASE_BRANCH}`);
+try {
+  git("fetch", GIT_PUSH_URL, BASE_BRANCH);
+  git("merge", "--no-edit", "FETCH_HEAD");
+  console.log("[sub-agent] Base branch merged successfully");
+} catch (syncErr) {
+  const conflictMsg = syncErr.message ?? String(syncErr);
+  console.error("[sub-agent] Merge conflict during base-branch sync:", conflictMsg);
+  await forwardEvent("sync_conflict", {
+    baseBranch: BASE_BRANCH,
+    branch: BRANCH_NAME,
+    error: conflictMsg,
+  });
+  process.exit(1);
+}
 
 // Reset origin to non-authenticated URL so the AI agent cannot push directly via bash.
 // The push_branch tool (below) uses the stored GIT_PUSH_URL via a JS closure.
