@@ -40,7 +40,39 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-Replace the RepositoryForm component with a GitHub repository picker. When the user has a GITHUB_TOKEN configured, show a dropdown list of accessible GitHub repositories. When the user selects a repository, auto-fill the name, cloneUrl, owner, repo, and defaultBranch fields. Keep the manual form as a fallback.
+## Task: Add remark-gfm dependency to package.json
+
+**Repository:** multi-agent-harness
+**Files to modify:** `frontend/package.json`
+
+### Objective
+Add `remark-gfm` v4 to the frontend package.json dependencies to enable GitHub Flavored Markdown (GFM) support for tables, task lists, and strikethrough.
+
+### Changes Required
+
+1. Read `frontend/package.json` to understand current structure
+2. Add `"remark-gfm": "^4.0.0"` to the `dependencies` section (not devDependencies)
+3. Ensure valid JSON formatting
+
+### Expected dependency
+```json
+"dependencies": {
+  "react": "^18.2.0",
+  "react-dom": "^18.2.0",
+  "react-markdown": "^9.0.1",
+  "react-router-dom": "^6.21.0",
+  "remark-gfm": "^4.0.0"
+}
+```
+
+### Verification
+After modification, run `cd frontend && bun install` to install the dependency.
+
+### Commit
+```bash
+git add frontend/package.json frontend/bun.lock
+git commit -m "feat: add remark-gfm dependency for GFM table support"
+```
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T08:11:21.545Z
+Completed at: 2026-03-23T22:56:41.593Z
