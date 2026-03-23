@@ -76,6 +76,22 @@ describe("createWebFetchTool (SSRF block)", async () => {
     const r = await fetch_("http://10.0.0.1/foo");
     assert.match(r.content[0].text, /Blocked/);
   });
+  test("blocks 172.16.x range", async () => {
+    const r = await fetch_("http://172.16.0.1/foo");
+    assert.match(r.content[0].text, /Blocked/);
+  });
+  test("blocks 192.168.x range", async () => {
+    const r = await fetch_("http://192.168.1.1/foo");
+    assert.match(r.content[0].text, /Blocked/);
+  });
+  test("blocks IPv6 loopback [::1]", async () => {
+    const r = await fetch_("http://[::1]/foo");
+    assert.match(r.content[0].text, /Blocked/);
+  });
+  test("blocks 0.0.0.0", async () => {
+    const r = await fetch_("http://0.0.0.0/foo");
+    assert.match(r.content[0].text, /Blocked/);
+  });
   test("blocks 169.254.169.254 (metadata)", async () => {
     const r = await fetch_("http://169.254.169.254/latest/meta-data");
     assert.match(r.content[0].text, /Blocked/);

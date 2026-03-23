@@ -84,7 +84,7 @@ const PRIVATE_IP_RE = [
 ];
 
 function isPrivateHost(hostname) {
-  if (hostname === "localhost") return true;
+  if (hostname === "localhost" || hostname === "[::1]" || hostname === "0.0.0.0") return true;
   return PRIVATE_IP_RE.some(re => re.test(hostname));
 }
 
