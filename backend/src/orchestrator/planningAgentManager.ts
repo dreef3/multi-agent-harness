@@ -101,7 +101,7 @@ export class PlanningAgentManager {
     repos: Array<{ name: string; url: string }>
   ): Promise<string> {
     const providerEnvVars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "OPENCODE_API_KEY",
-      "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY"]
+      "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY", "AGENT_PROVIDER", "AGENT_MODEL"]
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 

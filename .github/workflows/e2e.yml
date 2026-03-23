@@ -67,6 +67,15 @@ jobs:
           cache-from: type=gha,scope=sub-agent
           cache-to: type=gha,scope=sub-agent,mode=max
 
+      - name: Build planning-agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./planning-agent
+          tags: multi-agent-harness/planning-agent:latest
+          load: true
+          cache-from: type=gha,scope=planning-agent
+          cache-to: type=gha,scope=planning-agent,mode=max
+
       - name: Start services
         run: |
           docker compose up -d --no-build
