@@ -20,7 +20,12 @@ const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
 const TASK_DESCRIPTION =
   process.env.TASK_DESCRIPTION ??
   "Create a file called task-complete.md with the content '# Task Complete'";
-const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "opencode-go";
+// New env vars injected by containerManager
+const HARNESS_API_URL = process.env.HARNESS_API_URL ?? "";
+const AGENT_SESSION_ID = process.env.AGENT_SESSION_ID ?? "";
+
+// "pi" is the correct provider for pi-coding-agent SDK (maps to Claude models in config.ts)
+const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "pi";
 const AGENT_MODEL = process.env.AGENT_MODEL ?? "minimax-m2.7";
 const TASK_ID = process.env.TASK_ID ?? "unknown";
 
@@ -80,6 +85,64 @@ try {
     console.warn("[sub-agent] Could not find model", AGENT_PROVIDER, AGENT_MODEL, "- using default");
   }
 
+  /** Fire-and-forget: POST an activity event to the harness. */
+  async function forwardEvent(type, payload) {
+    if (!HARNESS_API_URL || !AGENT_SESSION_ID) return;
+    try {
+      await fetch(`${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/events`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type, payload, timestamp: new Date().toISOString() }),
+      });
+    } catch { /* fire-and-forget */ }
+  }
+
+  const askPlanningAgentTool = {
+    name: "ask_planning_agent",
+    label: "Ask Planning Agent",
+    description:
+      "Ask the planning agent a clarifying question when you are blocked. " +
+      "This call BLOCKS until a reply arrives (up to 5 minutes). " +
+      "Use only when you cannot proceed without clarification.",
+    parameters: Type.Object({
+      question: Type.String({ description: "Your question for the planning agent" }),
+    }),
+    execute: async (_toolCallId, params) => {
+      if (!HARNESS_API_URL || !AGENT_SESSION_ID) {
+        return {
+          content: [{ type: "text", text: "HARNESS_API_URL or AGENT_SESSION_ID not configured — cannot contact planning agent." }],
+          details: {},
+        };
+      }
+      try {
+        const res = await fetch(
+          `${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/message`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question: params.question }),
+          }
+        );
+        if (!res.ok) {
+          return {
+            content: [{ type: "text", text: `Error contacting planning agent: HTTP ${res.status}` }],
+            details: {},
+          };
+        }
+        const data = await res.json();
+        return {
+          content: [{ type: "text", text: data.reply ?? "No reply received." }],
+          details: {},
+        };
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Failed to reach planning agent: ${err.message}` }],
+          details: {},
+        };
+      }
+    },
+  };
+
   // push_branch tool — uses the authenticated GIT_PUSH_URL from the JS closure.
   // The agent MUST use this tool to push; direct `git push` will fail (origin has no auth).
   const pushBranchTool = {
@@ -103,14 +166,45 @@ try {
     resourceLoader,
     modelRegistry,
     ...(model ? { model } : {}),
-    customTools: [pushBranchTool],
+    customTools: [askPlanningAgentTool, pushBranchTool],
   });
+
+  // Subscribe to session events for real-time forwarding before starting
+  const unsubEvents = session.subscribe((event) => {
+    if (event.type === "tool_execution_start") {
+      void forwardEvent("tool_call", { toolName: event.toolName, args: event.args });
+    } else if (event.type === "tool_execution_end") {
+      void forwardEvent("tool_result", {
+        toolName: event.toolName,
+        result: event.result,
+        isError: event.isError,
+      });
+    } else if (event.type === "message_update") {
+      const ae = event.assistantMessageEvent;
+      if (ae && ae.type === "text_delta" && ae.delta) {
+        void forwardEvent("text", { text: ae.delta });
+      }
+    }
+  });
+
+  // Heartbeat every 2 minutes while agent runs
+  let heartbeatInterval = null;
+  if (HARNESS_API_URL && AGENT_SESSION_ID) {
+    heartbeatInterval = setInterval(() => {
+      fetch(`${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }).catch(() => {});
+    }, 2 * 60 * 1000);
+  }
 
   try {
     await session.prompt(TASK_DESCRIPTION);
     aiSucceeded = true;
     console.log("[sub-agent] AI agent completed task");
   } finally {
+    unsubEvents();
+    if (heartbeatInterval) clearInterval(heartbeatInterval);
     session.dispose();
   }
 } catch (err) {

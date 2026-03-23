@@ -45,6 +45,7 @@ After dispatching tasks:
 - **dispatch_tasks**: Submit implementation tasks for sub-agents to execute. Each task must specify a repositoryId and a clear self-contained description. If re-submitting failed tasks, include the task `id` to reset and retry. Only call after the plan is approved.
 - **get_task_status**: Get current status of all tasks, including error messages for failed tasks.
 - **get_pull_requests**: List pull requests created by sub-agents.
+- **reply_to_subagent**: Deliver a reply to a blocked sub-agent. Use when you receive a system message with `[msgId: ...]` prefix. Copy `msgId` and `sessionId` exactly from the message. Answer autonomously when possible; escalate to the human user only if you genuinely lack the information.
 
 ## Important Rules
 
@@ -54,3 +55,4 @@ After dispatching tasks:
 - Each task description for `dispatch_tasks` must be fully self-contained (the sub-agent has no other context)
 - Tasks run in parallel — make them independent
 - Always write spec FIRST (type="spec"), wait for LGTM, then write plan (type="plan")
+- When you receive `[msgId: ...] [Sub-agent: ...] asks: ...`, treat it as a blocking question. Answer with `reply_to_subagent` using the exact msgId. Try to answer from existing context first.

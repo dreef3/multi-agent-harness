@@ -6,8 +6,6 @@ import { wsClient } from "../lib/ws";
 
 type ThinkingMode = "none" | "typing" | "processing";
 
-type ToolEvent = { id: string; toolName: string; args?: Record<string, unknown> };
-
 export default function Chat() {
   const { id } = useParams<{ id: string }>();
   const location = useLocation();
@@ -18,7 +16,6 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const [thinkingMode, setThinkingMode] = useState<ThinkingMode>("none");
   const [streamingContent, setStreamingContent] = useState("");
-  const [toolEvents, setToolEvents] = useState<ToolEvent[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const autoSentRef = useRef(false);
   const lastSeqIdRef = useRef(0);
@@ -56,7 +53,7 @@ export default function Chat() {
 
     const unsubMessage = wsClient.onMessage((data) => {
       if (!data || typeof data !== "object" || !("type" in data)) return;
-      const msg = data as { type: string; text?: string; messages?: Message[]; toolName?: string; args?: Record<string, unknown> };
+      const msg = data as { type: string; text?: string; messages?: Message[] };
 
       if (msg.type === "delta" && msg.text) {
         setThinkingMode("typing");
@@ -71,11 +68,6 @@ export default function Chat() {
         setStreamingContent("");
         setThinkingMode("none");
         loadMessages();
-      } else if (msg.type === "tool_call" && msg.toolName) {
-        setToolEvents((prev) => [
-          ...prev,
-          { id: `${Date.now()}-${msg.toolName}`, toolName: msg.toolName!, args: msg.args },
-        ]);
       } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
         // Replay missed messages after reconnect
         setMessages(msg.messages as Message[]);
@@ -92,7 +84,7 @@ export default function Chat() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent, toolEvents]);
+  }, [messages, streamingContent]);
 
   async function loadMessages(): Promise<Message[]> {
     if (!id) return [];
@@ -117,7 +109,6 @@ export default function Chat() {
     try {
       setSending(true);
       setThinkingMode("processing");
-      setToolEvents([]); // Clear tool events for new conversation
       wsClient.send({ type: "prompt", text: input.trim() });
       const userMessage: Message = {
         id: Date.now().toString(),
@@ -173,20 +164,6 @@ export default function Chat() {
                   <div className="prose prose-invert prose-sm max-w-none">
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
                   </div>
-                </div>
-              </div>
-            ))}
-
-            {/* Tool call indicators */}
-            {toolEvents.map((ev) => (
-              <div key={ev.id} className="flex justify-start">
-                <div className="text-xs text-gray-500 bg-gray-900 border border-gray-700 rounded px-3 py-1 font-mono">
-                  ⚙ {ev.toolName}
-                  {ev.args && Object.keys(ev.args).length > 0 && (
-                    <span className="text-gray-600 ml-1">
-                      ({Object.entries(ev.args).map(([k, v]) => `${k}: ${v}`).join(", ")})
-                    </span>
-                  )}
                 </div>
               </div>
             ))}

@@ -36,6 +36,7 @@ export const config = {
   piAgentVolume: process.env.PI_AGENT_VOLUME ?? "harness-pi-auth",
   // Agent provider configuration for E2E tests
   agentProvider: process.env.AGENT_PROVIDER ?? "opencode-go", // Only OpenCode Go is supported
+  harnessApiUrl: process.env.HARNESS_API_URL ?? "http://backend:3000",
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
   
