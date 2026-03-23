@@ -40,39 +40,62 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-## Task: Add remark-gfm dependency to package.json
+## Task: Update Chat.tsx with remark-gfm plugin
 
 **Repository:** multi-agent-harness
-**Files to modify:** `frontend/package.json`
+**Files to modify:** `frontend/src/pages/Chat.tsx`
 
 ### Objective
-Add `remark-gfm` v4 to the frontend package.json dependencies to enable GitHub Flavored Markdown (GFM) support for tables, task lists, and strikethrough.
+Modify `frontend/src/pages/Chat.tsx` to import `remarkGfm` and apply it to both ReactMarkdown instances (message content and streaming content).
 
 ### Changes Required
 
-1. Read `frontend/package.json` to understand current structure
-2. Add `"remark-gfm": "^4.0.0"` to the `dependencies` section (not devDependencies)
-3. Ensure valid JSON formatting
+1. **Add import** after the existing `import ReactMarkdown` line:
+```tsx
+import remarkGfm from 'remark-gfm';
+```
 
-### Expected dependency
-```json
-"dependencies": {
-  "react": "^18.2.0",
-  "react-dom": "^18.2.0",
-  "react-markdown": "^9.0.1",
-  "react-router-dom": "^6.21.0",
-  "remark-gfm": "^4.0.0"
-}
+2. **Find the first ReactMarkdown** (for message content rendering). Look for:
+```tsx
+<ReactMarkdown>{msg.content}</ReactMarkdown>
+```
+Replace with:
+```tsx
+<ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+```
+
+3. **Find the second ReactMarkdown** (for streaming content). Look for:
+```tsx
+<ReactMarkdown>{streamingContent}</ReactMarkdown>
+```
+Replace with:
+```tsx
+<ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingContent}</ReactMarkdown>
+```
+
+### Context
+The Chat component uses ReactMarkdown to render assistant messages. Without remark-gfm, GitHub Flavored Markdown tables appear as plain text. With the plugin, tables will render properly with Tailwind Typography (`prose`) styling.
+
+### Expected Import Section
+```tsx
+import { useEffect, useRef, useState } from "react";
+import { useParams, useLocation } from "react-router-dom";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { api, Message, Project } from "../lib/api";
+import { wsClient } from "../lib/ws";
 ```
 
 ### Verification
-After modification, run `cd frontend && bun install` to install the dependency.
+```bash
+cd frontend && npx tsc --noEmit
+```
 
 ### Commit
 ```bash
-git add frontend/package.json frontend/bun.lock
-git commit -m "feat: add remark-gfm dependency for GFM table support"
+git add frontend/src/pages/Chat.tsx
+git commit -m "feat: apply remark-gfm plugin to ReactMarkdown for GFM table support"
 ```
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T22:56:41.593Z
+Completed at: 2026-03-23T22:59:11.802Z
