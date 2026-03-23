@@ -45,6 +45,8 @@ export interface ContainerCreateOptions {
   agentProvider?: string;
   agentModel?: string;
   taskId?: string;
+  /** Base branch to merge before work. Defaults to "main". */
+  baseBranch?: string;
 }
 
 export async function createSubAgentContainer(docker: Dockerode, opts: ContainerCreateOptions): Promise<string> {
@@ -63,6 +65,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     `TASK_ID=${opts.taskId ?? ""}`,
     `HARNESS_API_URL=${config.harnessApiUrl}`,
     `AGENT_SESSION_ID=${opts.sessionId}`,
+    `BASE_BRANCH=${opts.baseBranch ?? "main"}`,
   ];
 
   const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);

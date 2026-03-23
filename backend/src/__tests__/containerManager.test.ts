@@ -50,4 +50,29 @@ describe("containerManager", () => {
     const mockDocker = { getContainer: vi.fn().mockReturnValue({ inspect: vi.fn().mockRejectedValue(new Error("No such container")) }) };
     expect(await getContainerStatus(mockDocker as never, "abc")).toBe("unknown");
   });
+
+  it("injects BASE_BRANCH when baseBranch option is provided", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-abc" });
+    const mockDocker = { createContainer: mockCreate };
+    await createSubAgentContainer(mockDocker as never, {
+      sessionId: "sess-1",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/proj-1/task-1",
+      baseBranch: "develop",
+    });
+    const callArg = mockCreate.mock.calls[0][0] as { Env: string[] };
+    expect(callArg.Env).toContain("BASE_BRANCH=develop");
+  });
+
+  it("injects BASE_BRANCH=main when baseBranch option is omitted", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-abc" });
+    const mockDocker = { createContainer: mockCreate };
+    await createSubAgentContainer(mockDocker as never, {
+      sessionId: "sess-1",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/proj-1/task-1",
+    });
+    const callArg = mockCreate.mock.calls[0][0] as { Env: string[] };
+    expect(callArg.Env).toContain("BASE_BRANCH=main");
+  });
 });
