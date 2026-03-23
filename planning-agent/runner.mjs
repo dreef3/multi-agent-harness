@@ -15,12 +15,27 @@ import {
 import { Type } from "@sinclair/typebox";
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { PassThrough } from "node:stream";
 import { join } from "node:path";
 
-// Pause stdin immediately so buffered prompt data is not discarded before runRpcMode
-// attaches its data listener. Bun starts stdin in flowing mode by default; if data
-// arrives during the ~20s init window with no listener, it would be silently dropped.
-process.stdin.pause();
+// Buffer stdin via a PassThrough proxy so data arriving during the ~25s init window
+// (git clone + model init) is not lost. attachJsonlLineReader (inside runRpcMode) uses
+// stream.on("data", ...) which only auto-resumes if readableFlowing !== false.  Calling
+// process.stdin.pause() sets readableFlowing=false, preventing auto-resume — so we use
+// a proxy instead: real stdin is consumed immediately (flowing) into a PassThrough buffer,
+// and process.stdin is overridden to point at the proxy so runRpcMode reads from it.
+const stdinProxy = new PassThrough();
+process.stdin.on("data", (chunk) => {
+  console.error(`[planning-agent] stdin: forwarding ${chunk.length} bytes to proxy`);
+  stdinProxy.write(chunk);
+});
+process.stdin.on("end", () => stdinProxy.end());
+Object.defineProperty(process, "stdin", {
+  get: () => stdinProxy,
+  configurable: true,
+  enumerable: true,
+});
+console.error("[planning-agent] stdin proxy installed");
 
 const PROJECT_ID = process.env.PROJECT_ID ?? "unknown";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:3000";
