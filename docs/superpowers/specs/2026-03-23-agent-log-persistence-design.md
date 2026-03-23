@@ -79,7 +79,9 @@ In the project-wide broadcaster registered once per project, the `tool_call`, `t
 
 The `delta` case (streaming text) is intentionally excluded — deltas are high-frequency partial tokens; only `message_complete` (which writes the assembled message to the chat store) is persisted.
 
-### New endpoint (`projects.ts` or `api/routes.ts`)
+### New endpoint (`api/projects.ts`)
+
+The endpoint is added to the existing `createProjectsRouter()` in `api/projects.ts`, following the same pattern as other project-scoped routes:
 
 ```
 GET /api/projects/:id/master-events
@@ -120,7 +122,7 @@ Both are best-effort: failures are logged as warnings but never block the stop o
 
 A new private async method `commitSessionLog(projectId)`:
 
-1. Read `/pi-agent/sessions/planning-${projectId}.jsonl` using `fs.readFileSync`. If the file doesn't exist, return silently.
+1. Read `/pi-agent/sessions/planning-${projectId}.jsonl` using `fs.promises.readFile` (async). If the file doesn't exist (ENOENT), return silently.
 2. Look up `getProject(projectId)` → `project.primary_repository_id` → `getRepository(id)`. If no primary repo, return silently.
 3. Instantiate `GitHubConnector` (already used elsewhere in the backend).
 4. Call `connector.commitFile(repo, repo.defaultBranch, path, content, message)` where:
