@@ -197,3 +197,27 @@ describe("updateTaskInPlan", () => {
     expect(() => updateTaskInPlan("nonexistent-project", "task-1", { status: "completed" })).not.toThrow();
   });
 });
+
+describe("agent_events table", () => {
+  let tmpDir: string;
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
+    initDb(tmpDir);
+  });
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("table exists after migration", () => {
+    const tables = getDb()
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_events'")
+      .all() as Array<{ name: string }>;
+    expect(tables).toHaveLength(1);
+    expect(tables[0].name).toBe("agent_events");
+  });
+
+  it("index exists after migration", () => {
+    const indexes = getDb()
+      .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_agent_events_session'")
+      .all() as Array<{ name: string }>;
+    expect(indexes).toHaveLength(1);
+  });
+});
