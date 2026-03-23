@@ -70,18 +70,19 @@ export default function Chat() {
         loadMessages();
       } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
         const replayedMessages = msg.messages as Message[];
-
+        
         // Merge replay messages with existing, deduplicate by seqId
-        setMessages((prev) => {
-          const existingSeqIds = new Set(prev.map((m) => m.seqId));
-          const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
-
+        setMessages(prev => {
+          const existingSeqIds = new Set(prev.map(m => m.seqId));
+          const newFromReplay = replayedMessages.filter(m => !existingSeqIds.has(m.seqId));
+          
           if (newFromReplay.length === 0) return prev;
-
-          const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+          
+          const merged = [...prev, ...newFromReplay]
+            .sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
           return merged;
         });
-
+        
         const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
         if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
       }
@@ -101,13 +102,27 @@ export default function Chat() {
     if (!id) return [];
     try {
       const data = await api.projects.messages.list(id);
-      setMessages(data);
+      
+      // Merge with existing messages, deduplicate by seqId
+      setMessages(prev => {
+        const existingSeqIds = new Set(prev.map(m => m.seqId));
+        const newMsgs = data.filter(m => !existingSeqIds.has(m.seqId));
+        
+        if (newMsgs.length === 0) return prev;  // No new messages
+        
+        const merged = [...prev, ...newMsgs]
+          .sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+        return merged;
+      });
+      
+      // Update last known good state
       const maxSeq = data.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
       if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+      
       return data;
     } catch (err) {
       console.error("Failed to load messages:", err);
-      return [];
+      return messages;  // Return current state on error
     } finally {
       setIsLoadingMessages(false);
     }
@@ -138,6 +153,8 @@ export default function Chat() {
     }
   }
 
+if (isLoadingMessages) return <div className="text-gray-400">Loading...</div>;
+
   const isThinking = thinkingMode === "processing";
   const isTyping = thinkingMode === "typing";
 
@@ -154,6 +171,9 @@ export default function Chat() {
           </div>
         ) : (
           <>
+            {isLoadingMessages && messages.length === 0 && (
+              <div className="text-gray-400">Loading...</div>
+            )}
             {messages.map((msg) => (
               <div
                 key={msg.id}
