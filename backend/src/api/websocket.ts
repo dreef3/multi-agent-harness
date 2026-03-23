@@ -144,13 +144,6 @@ ${repoList}
 ${sourceSection}`;
 }
 
-export async function getOrInitAgent(projectId: string): Promise<{ prompt: (text: string) => Promise<void> }> {
-  // Backward compat stub — RecoveryService still imports this; will be removed in Task 8.
-  return {
-    prompt: (text: string) => getPlanningAgentManager().sendPrompt(projectId, text),
-  };
-}
-
 export function preInitAgent(projectId: string): void {
   // Pre-init is a no-op now — planning agent starts on first WS connection
   console.log(`[ws] preInitAgent(${projectId}): deferred to first WS connection`);
