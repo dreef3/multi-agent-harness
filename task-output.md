@@ -40,26 +40,17 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 1: Update State Management in Chat.tsx
+### Task 6: Verify All References to `loading` Variable
 
 **Repository:** multi-agent-harness
 **File:** `frontend/src/pages/Chat.tsx`
 
 **Steps:**
-- [ ] Rename `loading` state variable to `isLoadingMessages` for clarity
-- [ ] Ensure `messages` state is never cleared during loads
-- [ ] Verify initial state is correct: `isLoadingMessages: true`, `messages: []`
-
-**Code Change:**
-```typescript
-// BEFORE:
-const [loading, setLoading] = useState(true);
-
-// AFTER:
-const [isLoadingMessages, setIsLoadingMessages] = useState(true);
-```
+- [ ] Find all references to the old `loading` variable
+- [ ] Replace with `isLoadingMessages`
+- [ ] Verify `setLoading` is replaced with `setIsLoadingMessages`
 
 ---
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T20:48:06.525Z
+Completed at: 2026-03-23T20:48:32.672Z
