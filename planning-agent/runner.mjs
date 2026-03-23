@@ -123,7 +123,19 @@ const getPullRequestsTool = {
   },
 };
 
+// ── Catch unhandled errors globally ───────────────────────────────────────────
+process.on("uncaughtException", (err) => {
+  console.error("[planning-agent] uncaughtException:", err?.message ?? err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[planning-agent] unhandledRejection:", reason instanceof Error ? reason.message : reason);
+  process.exit(1);
+});
+
 // ── Session setup ─────────────────────────────────────────────────────────────
+console.error(`[planning-agent] initialising session — provider=${AGENT_PROVIDER} model=${AGENT_MODEL ?? "(default)"}`);
+
 const sessionDir = join(PI_AGENT_DIR, "sessions");
 mkdirSync(sessionDir, { recursive: true });
 const sessionPath = join(sessionDir, `planning-${PROJECT_ID}.jsonl`);
@@ -141,30 +153,45 @@ const resourceLoader = new DefaultResourceLoader({
   noThemes: true,
   systemPrompt,
 });
+console.error("[planning-agent] loading resources...");
 await resourceLoader.reload();
+console.error("[planning-agent] resources loaded");
 
 const authStorage = AuthStorage.create();
 const modelRegistry = new ModelRegistry(authStorage);
 
 let model;
 if (AGENT_MODEL) {
-  try { model = modelRegistry.find(AGENT_PROVIDER, AGENT_MODEL); } catch { /* use default */ }
+  try {
+    model = modelRegistry.find(AGENT_PROVIDER, AGENT_MODEL);
+    console.error(`[planning-agent] model resolved: ${model?.id ?? "(unknown)"}`);
+  } catch (err) {
+    console.error(`[planning-agent] modelRegistry.find failed (using default):`, err?.message ?? err);
+  }
 }
 
 const sessionManager = existsSync(sessionPath)
   ? SessionManager.open(sessionPath)
   : SessionManager.create(PI_AGENT_DIR, sessionDir);
 
-const { session } = await createAgentSession({
-  sessionManager,
-  settingsManager,
-  resourceLoader,
-  modelRegistry,
-  authStorage,
-  cwd: "/workspace",
-  ...(model ? { model } : {}),
-  customTools: [dispatchTasksTool, getTaskStatusTool, getPullRequestsTool],
-});
+console.error("[planning-agent] creating agent session...");
+let session;
+try {
+  const result = await createAgentSession({
+    sessionManager,
+    settingsManager,
+    resourceLoader,
+    modelRegistry,
+    authStorage,
+    cwd: "/workspace",
+    ...(model ? { model } : {}),
+    customTools: [dispatchTasksTool, getTaskStatusTool, getPullRequestsTool],
+  });
+  session = result.session;
+} catch (err) {
+  console.error("[planning-agent] createAgentSession failed:", err?.message ?? err, err?.stack ?? "");
+  process.exit(1);
+}
 
-console.log(`[planning-agent] session ready for project ${PROJECT_ID}, running RPC mode`);
+console.error(`[planning-agent] session ready for project ${PROJECT_ID}, running RPC mode`);
 await runRpcMode(session);
