@@ -75,6 +75,15 @@ export interface Config {
   };
 }
 
+export interface AgentSession {
+  id: string;
+  projectId: string;
+  type: "master" | "sub";
+  status: string;
+  taskId?: string;
+  createdAt: string;
+}
+
 export interface Repository {
   id: string;
   name: string;
@@ -141,6 +150,7 @@ export const api = {
       fetchJson<{ success: boolean; status: string }>(`${API_BASE}/projects/${projectId}/cancel`, {
         method: "POST",
       }),
+    agents: (projectId: string) => fetchJson<AgentSession[]>(`${API_BASE}/projects/${projectId}/agents`),
   },
   repositories: {
     list: () => fetchJson<Repository[]>(`${API_BASE}/repositories`),
