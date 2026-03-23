@@ -1,7 +1,19 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
+import { Octokit } from "@octokit/rest";
 import { insertRepository, getRepository, listRepositories, updateRepository, deleteRepository } from "../store/repositories.js";
 import type { Repository } from "../models/types.js";
+
+export interface GitHubRepoInfo {
+  name: string;
+  fullName: string;
+  cloneUrl: string;
+  defaultBranch: string;
+  owner: string;
+  repo: string;
+  private: boolean;
+  description?: string;
+}
 
 export function createRepositoriesRouter(): Router {
   const router = Router();
@@ -10,6 +22,36 @@ export function createRepositoriesRouter(): Router {
   router.get("/", (_req, res) => {
     const repos = listRepositories();
     res.json(repos);
+  });
+
+  // List GitHub repositories for the authenticated user
+  router.get("/github", (_req, res) => {
+    const token = process.env.GITHUB_TOKEN;
+    if (!token) {
+      res.status(401).json({ error: "GITHUB_TOKEN not configured" });
+      return;
+    }
+
+    const octokit = new Octokit({ auth: token });
+
+    octokit.repos.listForAuthenticatedUser({ per_page: 100, sort: "updated" })
+      .then(({ data }) => {
+        const repos: GitHubRepoInfo[] = data.map((r) => ({
+          name: r.name,
+          fullName: r.full_name,
+          cloneUrl: r.clone_url,
+          defaultBranch: r.default_branch ?? "main",
+          owner: r.owner.login,
+          repo: r.name,
+          private: r.private,
+          description: r.description ?? undefined,
+        }));
+        res.json(repos);
+      })
+      .catch((err) => {
+        console.error("Failed to list GitHub repositories:", err);
+        res.status(500).json({ error: "Failed to list GitHub repositories" });
+      });
   });
 
   // Get a single repository by ID
