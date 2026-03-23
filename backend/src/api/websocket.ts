@@ -1,90 +1,28 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server } from "http";
-import { MasterAgent } from "../agents/masterAgent.js";
-import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
-import { createWritePlanningDocumentTool } from "../agents/planningTool.js";
-import { createSubAgentStatusTool } from "../agents/subAgentStatusTool.js";
-import { createRestartFailedTasksTool } from "../agents/restartFailedTasksTool.js";
-import { execSync } from "child_process";
+import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
+import type { PlanningAgentEvent } from "../orchestrator/planningAgentManager.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
-import { listRepositories, getRepository } from "../store/repositories.js";
+import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
-import path from "path";
-import fs from "fs";
 
-const agentSessions = new Map<string, MasterAgent>();
-const agentInitPromises = new Map<string, Promise<MasterAgent>>();
-let globalDataDir = "";
+interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
+interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "replay" | "error"; [key: string]: unknown; }
 
-function cloneReposForProject(projectId: string, repos: Repository[], dataDir: string): string {
-  const reposDir = path.join(dataDir, "repos", projectId);
-  fs.mkdirSync(reposDir, { recursive: true });
-
-  for (const repo of repos) {
-    const repoDir = path.join(reposDir, repo.name);
-    const token = process.env.GITHUB_TOKEN;
-    const cloneUrl = token
-      ? repo.cloneUrl.replace("https://", `https://${token}@`)
-      : repo.cloneUrl;
-
-    try {
-      if (fs.existsSync(path.join(repoDir, ".git"))) {
-        console.log(`[ws] repo ${repo.name}: fetching latest`);
-        execSync(`git fetch --all`, { cwd: repoDir, stdio: "pipe" });
-        execSync(`git reset --hard origin/${repo.defaultBranch}`, { cwd: repoDir, stdio: "pipe" });
-      } else {
-        console.log(`[ws] repo ${repo.name}: cloning to ${repoDir}`);
-        execSync(`git clone ${cloneUrl} ${repoDir}`, { stdio: "pipe" });
-      }
-    } catch (err) {
-      console.error(`[ws] Failed to clone/fetch repo ${repo.name}:`, err);
-    }
-  }
-
-  return reposDir;
+function send(ws: WebSocket, msg: WsServerMessage) {
+  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
 }
 
-export async function getOrInitAgent(projectId: string): Promise<MasterAgent> {
-  const existing = agentSessions.get(projectId);
-  if (existing) { console.log(`[ws] getOrInitAgent(${projectId}): returning cached agent`); return existing; }
+// Track all active WebSocket connections per project
+const projectConnections = new Map<string, Set<WebSocket>>();
+// Track which projects already have an output broadcaster registered (one per project)
+const projectBroadcasters = new Set<string>();
 
-  const existingPromise = agentInitPromises.get(projectId);
-  if (existingPromise) { console.log(`[ws] getOrInitAgent(${projectId}): awaiting in-progress init`); return existingPromise; }
-
-  console.log(`[ws] getOrInitAgent(${projectId}): starting new init`);
-  const promise = (async () => {
-    const sessionDir = path.join(globalDataDir, "sessions", projectId);
-    fs.mkdirSync(sessionDir, { recursive: true });
-    const sessionPath = path.join(sessionDir, "master.jsonl");
-    const planningTool = createWritePlanningDocumentTool(projectId, globalDataDir);
-    const statusTool = createSubAgentStatusTool(projectId);
-    const restartTool = createRestartFailedTasksTool(projectId);
-    // TypeBox generic contravariance prevents direct assignment; cast is safe at runtime
-    const agent = new MasterAgent(projectId, sessionPath, [
-      planningTool as unknown as ToolDefinition,
-      statusTool as unknown as ToolDefinition,
-      restartTool as unknown as ToolDefinition,
-    ]);
-    try {
-      await agent.init();
-      agentSessions.set(projectId, agent);
-      console.log(`[ws] getOrInitAgent(${projectId}): init complete, agent stored`);
-      return agent;
-    } finally {
-      agentInitPromises.delete(projectId);
-    }
-  })();
-
-  agentInitPromises.set(projectId, promise);
-  return promise;
-}
-
-export function preInitAgent(projectId: string): void {
-  if (agentSessions.has(projectId) || agentInitPromises.has(projectId)) return;
-  getOrInitAgent(projectId).catch((err) => {
-    console.error(`[preInitAgent] Failed to init agent for ${projectId}:`, err);
-  });
+function broadcastToProject(projectId: string, msg: WsServerMessage) {
+  const connections = projectConnections.get(projectId);
+  if (!connections) return;
+  for (const ws of connections) send(ws, msg);
 }
 
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
@@ -206,164 +144,132 @@ ${repoList}
 ${sourceSection}`;
 }
 
-interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
-interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "replay" | "error"; [key: string]: unknown; }
-
-function send(ws: WebSocket, msg: WsServerMessage) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+export async function getOrInitAgent(projectId: string): Promise<{ prompt: (text: string) => Promise<void> }> {
+  // Backward compat stub — RecoveryService still imports this; will be removed in Task 8.
+  return {
+    prompt: (text: string) => getPlanningAgentManager().sendPrompt(projectId, text),
+  };
 }
 
-async function handleWsMessage(agent: MasterAgent, ws: WebSocket, projectId: string, raw: Buffer): Promise<void> {
-  let msg: WsClientMessage;
-  try { msg = JSON.parse(raw.toString()) as WsClientMessage; }
-  catch { send(ws, { type: "error", message: "Invalid JSON" }); return; }
-
-  if (msg.type === "resume" && msg.lastSeqId !== undefined) {
-    const missed = listMessagesSince(projectId, msg.lastSeqId);
-    send(ws, { type: "replay", messages: missed });
-    return;
-  }
-
-  if (msg.type === "prompt" && msg.text) {
-    console.log(`[ws] prompt received for project=${projectId}, text length=${msg.text.length}`);
-    const savedUserMsg = appendMessage(projectId, "user", msg.text);
-    const isFirstMessage = savedUserMsg.seqId === 1;
-    console.log(`[ws] user message saved seqId=${savedUserMsg.seqId}, isFirstMessage=${isFirstMessage}`);
-
-    let promptText = msg.text;
-    if (isFirstMessage) {
-      const project = getProject(projectId);
-      if (project) {
-        const allRepos = listRepositories();
-        const projectRepos = allRepos.filter((r) => project.repositoryIds.includes(r.id));
-        console.log(`[ws] injecting context: sourceType=${project.source.type}, repos=[${projectRepos.map((r) => r.name).join(", ")}]`);
-        const context = buildMasterAgentContext(project, projectRepos);
-        promptText = `${context}\n\n---\n\n${msg.text}`;
-        console.log(`[ws] final prompt length with context=${promptText.length}`);
-        // Transition to spec_in_progress on first user message; guard against replay/test re-entry
-        if (isFirstMessage && project.status === "brainstorming") {
-          updateProject(projectId, { status: "spec_in_progress" });
-        }
-      }
-    }
-
-    // Per-turn message accumulation: save a separate message on each message_stop,
-    // so multi-turn conversations (text → tool → text) show as separate bubbles.
-    let currentBuffer = "";
-    let totalDeltaCount = 0;
-
-    const onDelta = (text: string) => { currentBuffer += text; totalDeltaCount++; };
-    const onTurnComplete = () => {
-      if (currentBuffer) {
-        console.log(`[ws] saving assistant turn, length=${currentBuffer.length}`);
-        appendMessage(projectId, "assistant", currentBuffer);
-        broadcastToProject(projectId, { type: "message_complete" });
-        currentBuffer = "";
-      }
-    };
-    const onToolCall = (toolName: string, args: unknown) => {
-      // Forward tool call info to all connected clients (transient, not persisted)
-      const safeArgs = toolName === "write_planning_document"
-        ? { type: (args as { type?: string })?.type }
-        : {};
-      broadcastToProject(projectId, { type: "tool_call", toolName, args: safeArgs });
-    };
-
-    agent.on("delta", onDelta);
-    agent.on("message_complete", onTurnComplete);
-    agent.on("tool_call", onToolCall);
-    console.log(`[ws] calling agent.prompt()...`);
-    try {
-      await agent.prompt(promptText);
-      console.log(`[ws] agent.prompt() resolved. totalDeltaCount=${totalDeltaCount}`);
-      // Flush any remaining buffer (shouldn't normally happen)
-      if (currentBuffer) {
-        appendMessage(projectId, "assistant", currentBuffer);
-        broadcastToProject(projectId, { type: "message_complete" });
-      }
-      if (totalDeltaCount === 0) {
-        console.warn(`[ws] agent returned empty response`);
-      }
-      // Signal that the full conversation turn is done (broadcast to all connections)
-      broadcastToProject(projectId, { type: "conversation_complete" });
-      console.log(`[ws] conversation_complete broadcast`);
-    } catch (err) {
-      console.error(`[ws] agent.prompt() error:`, err);
-      send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
-    } finally {
-      agent.off("delta", onDelta);
-      agent.off("message_complete", onTurnComplete);
-      agent.off("tool_call", onToolCall);
-    }
-    return;
-  }
-
-  if (msg.type === "steer" && msg.text) {
-    await agent.steer(msg.text);
-    return;
-  }
+export function preInitAgent(projectId: string): void {
+  // Pre-init is a no-op now — planning agent starts on first WS connection
+  console.log(`[ws] preInitAgent(${projectId}): deferred to first WS connection`);
 }
 
-// Track all active WebSocket connections per project so lifecycle events
-// (message_complete, conversation_complete, tool_call) reach reconnected clients.
-const projectConnections = new Map<string, Set<WebSocket>>();
-
-function broadcastToProject(projectId: string, msg: WsServerMessage) {
-  const connections = projectConnections.get(projectId);
-  if (!connections) return;
-  for (const ws of connections) send(ws, msg);
-}
-
-export function setupWebSocket(server: Server, dataDir: string): void {
-  globalDataDir = dataDir;
+export function setupWebSocket(server: Server, _dataDir: string): void {
   const wss = new WebSocketServer({ server });
+
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
     const match = /\/ws\/projects\/([^/]+)\/chat/.exec(req.url ?? "");
     if (!match) { ws.close(4000, "Invalid URL"); return; }
     const projectId = match[1];
     console.log(`[ws] new connection for project=${projectId}`);
-    const project = getProject(projectId);
-    if (!project) { console.error(`[ws] project not found: ${projectId}`); ws.close(4004, "Project not found"); return; }
 
-    // Register connection for project-wide broadcasts
+    const project = getProject(projectId);
+    if (!project) { ws.close(4004, "Project not found"); return; }
+
+    // Register connection
     if (!projectConnections.has(projectId)) projectConnections.set(projectId, new Set());
     projectConnections.get(projectId)!.add(ws);
 
-    const pendingMessages: Buffer[] = [];
-    let agent: MasterAgent | undefined = agentSessions.get(projectId);
-    console.log(`[ws] agent already cached: ${!!agent}`);
+    const manager = getPlanningAgentManager();
 
-    ws.on("message", async (raw: Buffer) => {
-      if (!agent) {
-        console.log(`[ws] message buffered (agent not ready yet) for project=${projectId}`);
-        pendingMessages.push(raw);
-        return;
-      }
-      await handleWsMessage(agent, ws, projectId, raw);
-    });
-
-    if (!agent) {
-      console.log(`[ws] awaiting agent init for project=${projectId}`);
-      agent = await getOrInitAgent(projectId);
-      console.log(`[ws] agent ready for project=${projectId}`);
+    // Start planning agent if not running
+    const allRepos = listRepositories().filter(r => project.repositoryIds.includes(r.id));
+    const repoUrls = allRepos.map(r => ({
+      name: r.name,
+      url: process.env.GITHUB_TOKEN
+        ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/`)
+        : r.cloneUrl,
+    }));
+    try {
+      await manager.ensureRunning(projectId, repoUrls);
+    } catch (err) {
+      console.error(`[ws] failed to start planning agent for ${projectId}:`, err);
+      send(ws, { type: "error", message: "Failed to start planning agent" });
     }
 
-    const onDeltaFwd = (text: string) => send(ws, { type: "delta", text });
-    const onErrorFwd = (err: Error) => send(ws, { type: "error", message: err.message });
-    agent.on("delta", onDeltaFwd);
-    agent.on("error", onErrorFwd);
+    manager.incrementConnections(projectId);
+
+    // Forward planning agent delta events to this WS client
+    const onDeltaFwd = (event: PlanningAgentEvent) => {
+      if (event.type === "delta") send(ws, { type: "delta", text: event.text });
+    };
+    const unsubscribeDelta = manager.onOutput(projectId, onDeltaFwd);
+
+    // Register project-wide event broadcaster exactly once per project.
+    if (!projectBroadcasters.has(projectId)) {
+      projectBroadcasters.add(projectId);
+      let messageBuffer = "";
+      manager.onOutput(projectId, (event: PlanningAgentEvent) => {
+        switch (event.type) {
+          case "delta":
+            messageBuffer += event.text;
+            break;
+          case "message_complete":
+            if (messageBuffer) {
+              appendMessage(projectId, "assistant", messageBuffer);
+              messageBuffer = "";
+            }
+            broadcastToProject(projectId, { type: "message_complete" });
+            break;
+          case "tool_call":
+            broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
+            break;
+          case "conversation_complete":
+            broadcastToProject(projectId, { type: "conversation_complete" });
+            break;
+        }
+      });
+    }
+
+    ws.on("message", async (raw: Buffer) => {
+      let msg: WsClientMessage;
+      try { msg = JSON.parse(raw.toString()) as WsClientMessage; }
+      catch { send(ws, { type: "error", message: "Invalid JSON" }); return; }
+
+      if (msg.type === "resume" && msg.lastSeqId !== undefined) {
+        const missed = listMessagesSince(projectId, msg.lastSeqId);
+        send(ws, { type: "replay", messages: missed });
+        return;
+      }
+
+      if (msg.type === "prompt" && msg.text) {
+        console.log(`[ws] prompt received for project=${projectId}, length=${msg.text.length}`);
+        const savedUserMsg = appendMessage(projectId, "user", msg.text);
+
+        let promptText = msg.text;
+        if (savedUserMsg.seqId === 1) {
+          const proj = getProject(projectId);
+          if (proj) {
+            const repos = listRepositories().filter(r => proj.repositoryIds.includes(r.id));
+            const context = buildMasterAgentContext(proj, repos);
+            promptText = `${context}\n\n---\n\n${msg.text}`;
+            if (proj.status === "brainstorming") {
+              updateProject(projectId, { status: "spec_in_progress" });
+            }
+          }
+        }
+
+        try {
+          await manager.sendPrompt(projectId, promptText);
+        } catch (err) {
+          console.error(`[ws] sendPrompt error:`, err);
+          send(ws, { type: "error", message: err instanceof Error ? err.message : "Unknown error" });
+        }
+        return;
+      }
+
+      if (msg.type === "steer" && msg.text) {
+        await manager.sendPrompt(projectId, msg.text);
+        return;
+      }
+    });
 
     ws.on("close", () => {
       projectConnections.get(projectId)?.delete(ws);
-      agent!.off("delta", onDeltaFwd);
-      agent!.off("error", onErrorFwd);
+      unsubscribeDelta();
+      manager.decrementConnections(projectId);
     });
-
-    if (pendingMessages.length > 0) {
-      console.log(`[ws] flushing ${pendingMessages.length} buffered messages for project=${projectId}`);
-    }
-    for (const raw of pendingMessages) {
-      await handleWsMessage(agent, ws, projectId, raw);
-    }
   });
 }
