@@ -69,9 +69,20 @@ export default function Chat() {
         setThinkingMode("none");
         loadMessages();
       } else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-        // Replay missed messages after reconnect
-        setMessages(msg.messages as Message[]);
-        const maxSeq = (msg.messages as Message[]).reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+        const replayedMessages = msg.messages as Message[];
+
+        // Merge replay messages with existing, deduplicate by seqId
+        setMessages((prev) => {
+          const existingSeqIds = new Set(prev.map((m) => m.seqId));
+          const newFromReplay = replayedMessages.filter((m) => !existingSeqIds.has(m.seqId));
+
+          if (newFromReplay.length === 0) return prev;
+
+          const merged = [...prev, ...newFromReplay].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+          return merged;
+        });
+
+        const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
         if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
       }
     });
