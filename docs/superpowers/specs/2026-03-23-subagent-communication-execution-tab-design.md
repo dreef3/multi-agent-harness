@@ -29,9 +29,9 @@ When a sub-agent's AI (pi-coding-agent) is blocked and needs clarification:
 2. Tool POSTs `{ question }` to `POST /api/agents/{sessionId}/message`
 3. Request long-polls (5-minute timeout)
 4. Harness injects a new turn into the planning agent's conversation:
-   > *"[Sub-agent: {taskDescription}] asks: {question}"*
+   > *"[msgId: {uuid}] [Sub-agent: {taskDescription}] asks: {question}"*
 5. Planning agent answers autonomously if it has enough context; otherwise asks the human via Chat
-6. Planning agent calls `reply_to_subagent(sessionId, reply)` tool
+6. Planning agent calls `reply_to_subagent(msgId, sessionId, reply)` tool
 7. Harness resolves the pending long-poll; sub-agent unblocks and receives the reply
 
 **5-minute timeout behaviour:** If no reply arrives within 5 minutes, the harness sends a WebSocket notification to the frontend Chat tab prompting the human to respond.
@@ -89,7 +89,7 @@ ask_planning_agent(question: string) → string
 
 Implementation: when called, runner POSTs to `${HARNESS_API_URL}/api/agents/${AGENT_SESSION_ID}/message` and holds the MCP response open until the harness replies. The AI is fully blocked at this tool call — no further tool invocations execute until the reply arrives.
 
-**Note on `AGENT_PROVIDER` default:** `sub-agent/runner.mjs` currently defaults `AGENT_PROVIDER` to `"opencode-go"`. This default must be updated to the correct pi-coding-agent provider string as part of this work.
+**Note on `AGENT_PROVIDER` default:** `sub-agent/runner.mjs` currently defaults `AGENT_PROVIDER` to `"opencode-go"`. This default must be updated to the correct pi-coding-agent provider string as part of this work. The correct value must be confirmed with the team before implementation (check `config.ts` `agentProvider` default or environment documentation).
 
 **B) Activity event forwarding**
 
@@ -152,10 +152,10 @@ The tool description instructs the planning agent to copy the `msgId` exactly fr
 Registered in the planning agent container's tool configuration:
 
 ```
-reply_to_subagent(sessionId: string, reply: string) → void
+reply_to_subagent(msgId: string, sessionId: string, reply: string) → void
 ```
 
-Calls `POST /api/agents/{sessionId}/message/{msgId}/reply`. Resolves the blocked sub-agent.
+Calls `POST /api/agents/{sessionId}/message/{msgId}/reply`. The `msgId` is copied verbatim from the injected message text (see Section 3.2a). Resolves the blocked sub-agent.
 
 ### 3.4 Stuck Detection
 
@@ -238,7 +238,7 @@ Auto-scrolls to the bottom while the selected agent is running. Stops auto-scrol
 User → Chat tab (text only)
          ↓
    Planning Agent container (TCP RPC)
-         ↓ tool calls → tagged agent_activity (master) → WebSocket → Execution tab
+         ↓ tool calls → tagged with agentType:"master" → WebSocket → Execution tab
          ↓ injectMessage() ↑ reply_to_subagent()
          ↓
    Harness backend
