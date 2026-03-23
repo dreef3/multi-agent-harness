@@ -180,7 +180,19 @@ export class PlanningAgentManager {
 
     const type = obj.type as string;
 
-    if (type === "agent_start") { state.isStreaming = true; return; }
+    // Log error responses and any unexpected event types for diagnostics
+    if (type === "response") {
+      if (!(obj.success as boolean)) {
+        console.error(`[PlanningAgentManager] prompt error from agent for ${projectId}: ${JSON.stringify(obj)}`);
+      }
+      return;
+    }
+    if (!["agent_start", "message_update", "tool_execution_start", "message_end", "agent_end",
+         "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end"].includes(type)) {
+      console.log(`[PlanningAgentManager] unhandled event type="${type}" for ${projectId}: ${line.slice(0, 200)}`);
+    }
+
+    if (type === "agent_start") { state.isStreaming = true; console.log(`[PlanningAgentManager] agent_start for ${projectId}`); return; }
 
     if (type === "message_update") {
       const evt = obj.assistantMessageEvent as Record<string, unknown> | undefined;
