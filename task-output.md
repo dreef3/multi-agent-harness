@@ -40,40 +40,24 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 3: Update WebSocket replay Handler
+### Task 5: Update Conditional Loading Indicator
 
 **Repository:** multi-agent-harness
 **File:** `frontend/src/pages/Chat.tsx`
 
 **Steps:**
-- [ ] Update the `replay` message handler to merge instead of replace
-- [ ] Add deduplication by `seqId`
-- [ ] Sort merged messages by `seqId`
-- [ ] Update `lastSeqIdRef` with max from replayed messages
+- [ ] Add loading indicator that shows when loading but messages exist
+- [ ] This provides feedback during refresh operations
 
 **Code Change:**
+Add this inside the messages area (before mapping messages):
 ```typescript
-} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
-  const replayedMessages = msg.messages as Message[];
-  
-  // Merge replay messages with existing, deduplicate by seqId
-  setMessages(prev => {
-    const existingSeqIds = new Set(prev.map(m => m.seqId));
-    const newFromReplay = replayedMessages.filter(m => !existingSeqIds.has(m.seqId));
-    
-    if (newFromReplay.length === 0) return prev;
-    
-    const merged = [...prev, ...newFromReplay]
-      .sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
-    return merged;
-  });
-  
-  const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
-  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
-}
+{isLoadingMessages && messages.length === 0 && (
+  <div className="text-gray-400">Loading...</div>
+)}
 ```
 
 ---
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T21:13:20.091Z
+Completed at: 2026-03-23T21:15:19.238Z
