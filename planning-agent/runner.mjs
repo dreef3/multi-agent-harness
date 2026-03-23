@@ -69,6 +69,9 @@ const dispatchTasksTool = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ tasks: params.tasks }),
     });
+    if (!res.ok) {
+      return { content: [{ type: "text", text: `Error: backend returned ${res.status} ${res.statusText}` }], details: {} };
+    }
     const data = await res.json();
     return {
       content: [{ type: "text", text: `Dispatched ${data.dispatched} task(s). Sub-agents are running.` }],
@@ -84,6 +87,9 @@ const getTaskStatusTool = {
   parameters: Type.Object({}),
   execute: async () => {
     const res = await fetch(`${BACKEND_URL}/api/projects/${PROJECT_ID}/tasks`);
+    if (!res.ok) {
+      return { content: [{ type: "text", text: `Error: backend returned ${res.status} ${res.statusText}` }], details: {} };
+    }
     const data = await res.json();
     const summary = data.tasks.map(t =>
       `- [${t.status}] ${t.id}: ${t.description.slice(0, 60)}${t.errorMessage ? ` — ERROR: ${t.errorMessage}` : ""}`
@@ -102,6 +108,9 @@ const getPullRequestsTool = {
   parameters: Type.Object({}),
   execute: async () => {
     const res = await fetch(`${BACKEND_URL}/api/pull-requests/project/${PROJECT_ID}`);
+    if (!res.ok) {
+      return { content: [{ type: "text", text: `Error: backend returned ${res.status} ${res.statusText}` }], details: {} };
+    }
     const data = await res.json();
     const prs = Array.isArray(data) ? data : data.pullRequests ?? [];
     const summary = prs.map(pr =>
