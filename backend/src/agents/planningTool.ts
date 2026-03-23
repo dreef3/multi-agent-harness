@@ -184,17 +184,12 @@ export async function handleWritePlanningDocument(
         }
       }
 
-      // Store plan content and parse tasks so dispatchTasks can find them at execution time.
-      // Import parsePlan lazily to avoid circular dependency.
-      const { parsePlan } = await import("./planParser.js");
-      const { listRepositories } = await import("../store/repositories.js");
-      const allRepos = listRepositories();
-      const tasks = parsePlan(projectId, content, allRepos);
+      // Store plan content; tasks are submitted via dispatch_tasks tool, not parsed from Markdown.
       const planRecord = {
         id: project.plan?.id ?? project.id + "-plan",
         projectId,
         content,
-        tasks,
+        tasks: project.plan?.tasks ?? [],
       };
 
       updateProject(projectId, { plan: planRecord, status: "awaiting_plan_approval" });

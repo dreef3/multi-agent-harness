@@ -24,9 +24,22 @@ export function getRecoveryService(): RecoveryService {
 export class RecoveryService {
   private activeTaskIds = new Set<string>(); // keyed by PlanTask.id
   private dispatcher: TaskDispatcher;
+  // Global concurrency semaphore — limits total simultaneous sub-agent containers
+  private slots: number = config.maxConcurrentSubAgents;
+  private waiters: Array<() => void> = [];
 
   constructor(private readonly docker: Dockerode) {
     this.dispatcher = new TaskDispatcher();
+  }
+
+  private acquireSlot(): Promise<void> {
+    if (this.slots > 0) { this.slots--; return Promise.resolve(); }
+    return new Promise((resolve) => { this.waiters.push(resolve); });
+  }
+
+  private releaseSlot(): void {
+    const next = this.waiters.shift();
+    if (next) { next(); } else { this.slots++; }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -151,7 +164,18 @@ export class RecoveryService {
           : task;
 
         const freshProject = getProject(project.id)!;
-        const result = await this.dispatcher.runTask(this.docker, freshProject, taskForRun);
+        // Acquire a concurrency slot before starting a container
+        await this.acquireSlot();
+        console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
+        let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
+        try {
+          result = await this.dispatcher.runTask(this.docker, freshProject, taskForRun);
+        } catch (err) {
+          this.releaseSlot();
+          throw err;
+        }
+        this.releaseSlot();
+        console.log(`[recoveryService] slot released for task ${task.id}`);
 
         if (result.success) {
           updateTaskInPlan(project.id, task.id, { status: "completed" });

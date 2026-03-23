@@ -201,7 +201,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           planningPr: { ...project.planningPr, specApprovedAt: new Date().toISOString() },
           status: "plan_in_progress",
         });
-        lgtmPollStates.delete(project.id);
+        // Advance cursor to now so plan-phase polling only considers comments posted after spec approval
+        lgtmPollStates.set(project.id, new Date().toISOString());
         await planningManager.sendPrompt(
           project.id,
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
@@ -209,17 +210,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
         );
       } else if (project.status === "awaiting_plan_approval") {
-        // plan.content and tasks were stored by write_planning_document(type: "plan") tool handler
         const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
-
-        // Invariant: "executing" requires at least one task in the plan
-        if (!project.plan?.tasks?.length) {
-          console.warn(
-            `[polling] LGTM detected for project ${project.id} but plan has no tasks — ` +
-            `not transitioning to "executing". Master agent must add tasks to the plan first.`
-          );
-          continue;
-        }
 
         updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
@@ -227,7 +218,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         });
         lgtmPollStates.delete(project.id);
 
-        // Create branches and commit plan file to non-primary repos
+        // Commit plan file to non-primary repos (primary repo was committed by write_planning_document)
         const freshProject = getFreshProject(project.id);
         if (freshProject?.plan?.content && freshProject.planningBranch) {
           const { listRepositories } = await import("./store/repositories.js");
@@ -243,7 +234,6 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
             if (!nonPrimaryRepo) continue;
             try {
               const nonPrimaryConnector = getConnector(nonPrimaryRepo.provider);
-              // createBranch=true creates the branch from defaultBranch
               await nonPrimaryConnector.commitFile(
                 nonPrimaryRepo,
                 freshProject.planningBranch,
@@ -259,20 +249,12 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           }
         }
 
+        // Notify the planning agent — it will call dispatch_tasks to start sub-agents
         await planningManager.sendPrompt(
           project.id,
           '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
-          'Tell the user that implementation is starting and the sub-agents will take it from here.'
+          'Call dispatch_tasks now to submit the implementation tasks to sub-agents, then inform the user that implementation is starting.'
         );
-
-        const freshProject2 = getFreshProject(project.id);
-        const taskCount = freshProject2?.plan?.tasks?.length ?? 0;
-        console.log(`[polling] project ${project.id}: plan has ${taskCount} task(s) — starting dispatch`);
-
-        const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
-        getRecoveryService().dispatchTasksForProject(project.id).catch(err => {
-          console.error(`[polling] dispatchTasksForProject failed for project ${project.id}:`, err);
-        });
       }
     } catch (error) {
       console.error(`[polling] Error processing LGTM for project ${project.id}:`, error);
