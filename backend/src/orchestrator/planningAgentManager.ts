@@ -351,6 +351,15 @@ export class PlanningAgentManager {
     state.tcpSocket.write(cmd);
   }
 
+  injectMessage(projectId: string, text: string): void {
+    const state = this.projects.get(projectId);
+    if (!state) {
+      console.warn(`[PlanningAgentManager] injectMessage: no container for ${projectId}, dropping message`);
+      return;
+    }
+    state.tcpSocket.write(JSON.stringify({ type: "prompt", message: text }) + "\n");
+  }
+
   onOutput(projectId: string, handler: (event: PlanningAgentEvent) => void): () => void {
     const state = this.projects.get(projectId);
     if (!state) return () => {};

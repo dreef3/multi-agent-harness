@@ -228,3 +228,35 @@ describe("PlanningAgentManager - communication", () => {
     expect(events).toEqual([{ type: "thinking", text: "hmm..." }]);
   });
 });
+
+// ── injectMessage tests ───────────────────────────────────────────────────────
+
+describe("PlanningAgentManager - injectMessage", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("injectMessage writes a prompt to the TCP socket", async () => {
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as unknown as import("dockerode").default);
+    await mgr.ensureRunning("proj-inject", []);
+    const socket = netState.lastSocket!;
+    socket.write.mockClear();
+    mgr.injectMessage("proj-inject", "[Sub-agent: Task A] asks: Is this right?");
+    expect(socket.write).toHaveBeenCalledOnce();
+    const written = JSON.parse((socket.write.mock.calls[0][0] as string).trim());
+    expect(written).toMatchObject({ type: "prompt", message: "[Sub-agent: Task A] asks: Is this right?" });
+  });
+
+  it("injectMessage is a no-op and warns when project has no running container", async () => {
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as unknown as import("dockerode").default);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    mgr.injectMessage("nonexistent", "hello");
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+});
