@@ -162,9 +162,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         const { updateProject } = await import("./store/projects.js");
         updateProject(project.id, { status: "failed" });
         lgtmPollStates.delete(project.id);
-        const { getOrInitAgent } = await import("./api/websocket.js");
-        const closedAgent = await getOrInitAgent(project.id);
-        await closedAgent.prompt(
+        const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+        await getPlanningAgentManager().sendPrompt(
+          project.id,
           "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
         );
         continue;
@@ -192,8 +192,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
 
       // Import here to avoid circular dependency
-      const { getOrInitAgent } = await import("./api/websocket.js");
-      const agent = await getOrInitAgent(project.id);
+      const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+      const planningManager = getPlanningAgentManager();
 
       if (project.status === "awaiting_spec_approval") {
         const { updateProject } = await import("./store/projects.js");
@@ -202,7 +202,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           status: "plan_in_progress",
         });
         lgtmPollStates.delete(project.id);
-        await agent.prompt(
+        await planningManager.sendPrompt(
+          project.id,
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
           'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
           'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
@@ -258,7 +259,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           }
         }
 
-        await agent.prompt(
+        await planningManager.sendPrompt(
+          project.id,
           '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
           'Tell the user that implementation is starting and the sub-agents will take it from here.'
         );

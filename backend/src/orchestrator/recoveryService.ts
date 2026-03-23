@@ -204,7 +204,7 @@ export class RecoveryService {
     let msg = `[SYSTEM] Sub-agent execution complete.\n`;
     if (succeeded.length) msg += `Succeeded: ${succeeded.join(", ")}\n`;
     if (failed.length) msg += `Failed (retries exhausted): ${failed.join(", ")}\n`;
-    if (failed.length) msg += `\nUse restart_failed_tasks to retry failed tasks, or inform the user.`;
+    if (failed.length) msg += `\nUse get_task_status to see error details, then dispatch_tasks to retry failed tasks or inform the user.`;
 
     await this.notifyMaster(projectId, msg);
   }
@@ -212,18 +212,17 @@ export class RecoveryService {
   private async notifyMasterPartialFailure(projectId: string, task: PlanTask, attempts: number): Promise<void> {
     const msg =
       `[SYSTEM] Task "${task.description.slice(0, 50)}" has permanently failed after ${attempts} attempt(s).\n` +
-      `Other tasks may still be running. Use restart_failed_tasks when ready, ` +
-      `or wait for the remaining tasks to finish first.`;
+      `Error: ${task.errorMessage ?? "unknown"}.\n` +
+      `Other tasks may still be running. Use get_task_status for details, then dispatch_tasks to retry or inform the user.`;
     await this.notifyMaster(projectId, msg);
   }
 
   private async notifyMaster(projectId: string, message: string): Promise<void> {
     try {
-      const { getOrInitAgent } = await import("../api/websocket.js");
-      const agent = await getOrInitAgent(projectId);
-      await agent.prompt(message);
+      const { getPlanningAgentManager } = await import("./planningAgentManager.js");
+      await getPlanningAgentManager().sendPrompt(projectId, message);
     } catch (err) {
-      console.error(`[recoveryService] Failed to notify master for project ${projectId}:`, err);
+      console.error(`[recoveryService] Failed to notify planning agent for project ${projectId}:`, err);
     }
   }
 
