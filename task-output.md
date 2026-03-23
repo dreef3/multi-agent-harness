@@ -40,30 +40,45 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 4: Update Render Logic
+### Task 7: Test the Changes
 
 **Repository:** multi-agent-harness
-**File:** `frontend/src/pages/Chat.tsx`
 
-**Steps:**
-- [ ] Update initial loading check to use `isLoadingMessages`
-- [ ] Update empty state check to use `isLoadingMessages`
-- [ ] Ensure loading indicator only shows when truly loading AND no messages
-
-**Code Change:**
-```typescript
-// Remove: if (loading) return <div className="text-gray-400">Loading...</div>;
-// (Replace with conditional rendering in the messages area)
-
-// Update the messages area conditional:
-{messages.length === 0 && !streamingContent && !isThinking && !isLoadingMessages && (
-  <div className="text-gray-500 text-center py-8">
-    No messages yet. Start the conversation!
-  </div>
-)}
+**Commands to run:**
+```bash
+cd /workspace/multi-agent-harness
+npm run build  # Verify no TypeScript errors
 ```
+
+**Expected Output:**
+- Build completes without errors
+- TypeScript compilation succeeds
 
 ---
 
+## Summary
+
+| Task | Description | File |
+|------|-------------|------|
+| 1 | Update state variable name | Chat.tsx |
+| 2 | Update loadMessages() function | Chat.tsx |
+| 3 | Update WebSocket replay handler | Chat.tsx |
+| 4 | Update render logic for loading | Chat.tsx |
+| 5 | Add conditional loading indicator | Chat.tsx |
+| 6 | Update all `loading` references | Chat.tsx |
+| 7 | Build and verify | Project root |
+
+## Files Modified
+
+- `frontend/src/pages/Chat.tsx` — All changes
+
+## Verification Checklist
+
+- [ ] Build succeeds without errors
+- [ ] No TypeScript errors
+- [ ] All `loading` references updated to `isLoadingMessages`
+- [ ] Messages merge with deduplication by `seqId`
+- [ ] Empty state only shows when not loading and no messages
+
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T20:38:20.970Z
+Completed at: 2026-03-23T20:41:35.104Z
