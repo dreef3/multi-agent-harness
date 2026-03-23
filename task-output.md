@@ -40,7 +40,40 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-Replace the RepositoryForm component with a GitHub repository picker. When the user has a GITHUB_TOKEN configured, show a dropdown list of accessible GitHub repositories. When the user selects a repository, auto-fill the name, cloneUrl, owner, repo, and defaultBranch fields. Keep the manual form as a fallback.
+### Task 3: Update WebSocket replay Handler
+
+**Repository:** multi-agent-harness
+**File:** `frontend/src/pages/Chat.tsx`
+
+**Steps:**
+- [ ] Update the `replay` message handler to merge instead of replace
+- [ ] Add deduplication by `seqId`
+- [ ] Sort merged messages by `seqId`
+- [ ] Update `lastSeqIdRef` with max from replayed messages
+
+**Code Change:**
+```typescript
+} else if (msg.type === "replay" && Array.isArray(msg.messages)) {
+  const replayedMessages = msg.messages as Message[];
+  
+  // Merge replay messages with existing, deduplicate by seqId
+  setMessages(prev => {
+    const existingSeqIds = new Set(prev.map(m => m.seqId));
+    const newFromReplay = replayedMessages.filter(m => !existingSeqIds.has(m.seqId));
+    
+    if (newFromReplay.length === 0) return prev;
+    
+    const merged = [...prev, ...newFromReplay]
+      .sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+    return merged;
+  });
+  
+  const maxSeq = replayedMessages.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+  if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+}
+```
+
+---
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T08:11:21.545Z
+Completed at: 2026-03-23T20:38:06.540Z
