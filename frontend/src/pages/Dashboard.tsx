@@ -120,14 +120,12 @@ export default function Dashboard() {
                     Review PR ↗
                   </a>
                 )}
-                {project.status === "executing" && (
-                  <Link
-                    to={`/projects/${project.id}/execute`}
-                    className="text-purple-400 hover:text-purple-300 px-3 py-1 text-sm"
-                  >
-                    Execute
-                  </Link>
-                )}
+                <Link
+                  to={`/projects/${project.id}/execute`}
+                  className="text-purple-400 hover:text-purple-300 px-3 py-1 text-sm"
+                >
+                  Execute
+                </Link>
                 <button
                   onClick={() => handleDelete(project.id)}
                   className="text-red-400 hover:text-red-300 px-3 py-1 text-sm"

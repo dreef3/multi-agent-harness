@@ -12,6 +12,7 @@ class WebSocketClient {
   private baseUrl: string;
   private projectId: string | null = null;
   private messageQueue: unknown[] = [];
+  private stopped = false;
 
   constructor(baseUrl: string = "/ws") {
     this.baseUrl = baseUrl;
@@ -31,6 +32,7 @@ class WebSocketClient {
   }
 
   connect(): void {
+    this.stopped = false;
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     this.ws = new WebSocket(this.getUrl());
@@ -68,7 +70,7 @@ class WebSocketClient {
   }
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.stopped || this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
@@ -76,6 +78,7 @@ class WebSocketClient {
   }
 
   disconnect(): void {
+    this.stopped = true;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

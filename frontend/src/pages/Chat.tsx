@@ -89,6 +89,7 @@ export default function Chat() {
     return () => {
       unsubConnect();
       unsubMessage();
+      wsClient.disconnect();
     };
   }, [id]);
 

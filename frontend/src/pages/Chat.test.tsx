@@ -25,6 +25,7 @@ vi.mock('../lib/ws', () => {
     wsClient: {
       setProjectId: vi.fn(),
       connect: vi.fn(),
+      disconnect: vi.fn(),
       send: vi.fn(),
       onConnect: vi.fn(() => () => {}),
       onMessage: vi.fn((handler: (data: unknown) => void) => {
@@ -249,6 +250,23 @@ describe('Chat Component State Management', () => {
       
       // Message count should be unchanged
       expect(document.querySelectorAll('.prose').length).toBe(messagesAfterFirst);
+    });
+  });
+
+  describe('WebSocket lifecycle', () => {
+    it('disconnects WebSocket when navigating away from a project', async () => {
+      const { wsClient } = await import('../lib/ws');
+      const { unmount } = render(
+        <MemoryRouter initialEntries={['/project/project-a']}>
+          <Routes>
+            <Route path="/project/:id" element={<Chat />} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      unmount();
+
+      expect(wsClient.disconnect).toHaveBeenCalledOnce();
     });
   });
 });
