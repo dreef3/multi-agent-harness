@@ -40,17 +40,52 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 6: Verify All References to `loading` Variable
+### Task 2: Update loadMessages() Function
 
 **Repository:** multi-agent-harness
 **File:** `frontend/src/pages/Chat.tsx`
 
 **Steps:**
-- [ ] Find all references to the old `loading` variable
-- [ ] Replace with `isLoadingMessages`
-- [ ] Verify `setLoading` is replaced with `setIsLoadingMessages`
+- [ ] Modify `loadMessages()` to merge with existing messages instead of replacing
+- [ ] Add deduplication by `seqId`
+- [ ] Update `lastSeqIdRef` when new max seqId is found
+- [ ] Update `isLoadingMessages` to `false` in finally block
+- [ ] Handle errors gracefully by returning current state
+
+**Code Change:**
+```typescript
+async function loadMessages(): Promise<Message[]> {
+  if (!id) return [];
+  try {
+    const data = await api.projects.messages.list(id);
+    
+    // Merge with existing messages, deduplicate by seqId
+    setMessages(prev => {
+      const existingSeqIds = new Set(prev.map(m => m.seqId));
+      const newMsgs = data.filter(m => !existingSeqIds.has(m.seqId));
+      
+      if (newMsgs.length === 0) return prev;  // No new messages
+      
+      const merged = [...prev, ...newMsgs]
+        .sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+      return merged;
+    });
+    
+    // Update last known good state
+    const maxSeq = data.reduce((m, msg) => Math.max(m, msg.seqId ?? 0), 0);
+    if (maxSeq > lastSeqIdRef.current) lastSeqIdRef.current = maxSeq;
+    
+    return data;
+  } catch (err) {
+    console.error("Failed to load messages:", err);
+    return messages;  // Return current state on error
+  } finally {
+    setIsLoadingMessages(false);
+  }
+}
+```
 
 ---
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T20:48:32.672Z
+Completed at: 2026-03-23T20:49:11.412Z
