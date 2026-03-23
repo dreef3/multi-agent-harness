@@ -40,45 +40,24 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-### Task 7: Test the Changes
+### Task 5: Update Conditional Loading Indicator
 
 **Repository:** multi-agent-harness
+**File:** `frontend/src/pages/Chat.tsx`
 
-**Commands to run:**
-```bash
-cd /workspace/multi-agent-harness
-npm run build  # Verify no TypeScript errors
+**Steps:**
+- [ ] Add loading indicator that shows when loading but messages exist
+- [ ] This provides feedback during refresh operations
+
+**Code Change:**
+Add this inside the messages area (before mapping messages):
+```typescript
+{isLoadingMessages && messages.length === 0 && (
+  <div className="text-gray-400">Loading...</div>
+)}
 ```
-
-**Expected Output:**
-- Build completes without errors
-- TypeScript compilation succeeds
 
 ---
 
-## Summary
-
-| Task | Description | File |
-|------|-------------|------|
-| 1 | Update state variable name | Chat.tsx |
-| 2 | Update loadMessages() function | Chat.tsx |
-| 3 | Update WebSocket replay handler | Chat.tsx |
-| 4 | Update render logic for loading | Chat.tsx |
-| 5 | Add conditional loading indicator | Chat.tsx |
-| 6 | Update all `loading` references | Chat.tsx |
-| 7 | Build and verify | Project root |
-
-## Files Modified
-
-- `frontend/src/pages/Chat.tsx` — All changes
-
-## Verification Checklist
-
-- [ ] Build succeeds without errors
-- [ ] No TypeScript errors
-- [ ] All `loading` references updated to `isLoadingMessages`
-- [ ] Messages merge with deduplication by `seqId`
-- [ ] Empty state only shows when not loading and no messages
-
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T20:41:35.104Z
+Completed at: 2026-03-23T20:43:23.538Z
