@@ -105,8 +105,7 @@ export class PlanningAgentManager {
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 
-    // @ts-ignore — planningAgentImage will be added to config in Task 6
-    const image = config.planningAgentImage as string;
+    const image = config.planningAgentImage;
 
     const container = await this.docker.createContainer({
       Image: image,

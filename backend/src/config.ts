@@ -4,6 +4,8 @@ export const config = {
   dockerProxyUrl: process.env.DOCKER_PROXY_URL ?? "http://docker-proxy:2375",
   subAgentImage:
     process.env.SUB_AGENT_IMAGE ?? "multi-agent-harness/sub-agent:latest",
+  planningAgentImage:
+    process.env.PLANNING_AGENT_IMAGE ?? "multi-agent-harness/planning-agent:latest",
   subAgentNetwork:
     process.env.SUB_AGENT_NETWORK ?? "multi-agent-harness_harness-agents",
   // 4 GB

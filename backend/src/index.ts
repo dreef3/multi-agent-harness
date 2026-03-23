@@ -10,6 +10,7 @@ import { startPolling } from "./polling.js";
 import { DebounceEngine } from "./debounce/engine.js";
 import { setDebounceEngine } from "./api/webhooks.js";
 import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
+import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -31,6 +32,10 @@ async function main() {
   console.log("[startup] Initializing recovery service...");
   const recoveryService = new RecoveryService(docker);
   setRecoveryService(recoveryService);
+
+  console.log("[startup] Initializing planning agent manager...");
+  const planningAgentManager = new PlanningAgentManager(docker);
+  setPlanningAgentManager(planningAgentManager);
 
   console.log("[startup] Running boot recovery (stale session scan)...");
   await recoveryService.recoverOnBoot();
