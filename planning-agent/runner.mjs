@@ -194,4 +194,14 @@ try {
 }
 
 console.error(`[planning-agent] session ready for project ${PROJECT_ID}, running RPC mode`);
+
+// Diagnostic: write a test event to raw stdout to verify the backend stdout channel works.
+// (runRpcMode will redirect process.stdout.write to stderr, so this must happen first.)
+process.stdout.write(JSON.stringify({ type: "agent_diagnostic", projectId: PROJECT_ID }) + "\n");
+console.error("[planning-agent] wrote agent_diagnostic to stdout");
+
+// Diagnostic: check if stdin is already readable (pre-buffered data from backend)
+const stdinReadable = !process.stdin.destroyed && process.stdin.readable;
+console.error(`[planning-agent] stdin readable=${stdinReadable} paused=${process.stdin.isPaused()}`);
+
 await runRpcMode(session);
