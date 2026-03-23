@@ -222,8 +222,9 @@ export function createAgentsRouter(): Router {
       res.status(400).json({ error: "Missing or invalid type" });
       return;
     }
-    appendEvent(req.params.id, event as { type: string; payload: Record<string, unknown>; timestamp: string });
-    broadcastAgentActivity(session.projectId, req.params.id, event);
+    const validEvent = { type: event.type, payload: event.payload ?? {}, timestamp: event.timestamp ?? new Date().toISOString() };
+    appendEvent(req.params.id, validEvent);
+    broadcastAgentActivity(session.projectId, req.params.id, validEvent);
     res.json({ ok: true });
   });
 
