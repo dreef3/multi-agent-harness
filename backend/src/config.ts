@@ -30,6 +30,8 @@ export const config = {
     10
   ),
   subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "1", 10),
+  // Maximum number of sub-agent containers allowed to run simultaneously (across all projects)
+  maxConcurrentSubAgents: parseInt(process.env.MAX_CONCURRENT_SUB_AGENTS ?? "3", 10),
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
   // Named Docker volume shared between backend and sub-agents for pi agent auth (OAuth tokens)
@@ -58,12 +60,12 @@ export const config = {
     // OpenCode Go provider (uses OpenCode models)
     "opencode-go": {
       masterAgent: {
-        model: "minimax-m2.7",
+        model: process.env.OPENCODE_PLANNING_MODEL ?? "glm-5",
         temperature: 0.7,
         maxTokens: 4096,
       },
       workerAgent: {
-        model: "minimax-m2.7",
+        model: process.env.OPENCODE_IMPLEMENTATION_MODEL ?? "minimax-m2.7",
         temperature: 0.5,
         maxTokens: 2048,
       },

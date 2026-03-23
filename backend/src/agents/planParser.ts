@@ -7,7 +7,7 @@ export function parsePlan(projectId: string, markdown: string, repositories: Pic
   console.log(`[planParser:${projectId}] plan markdown length=${markdown.length}`);
 
   const tasks: PlanTask[] = [];
-  const taskBlockRegex = /^###\s+Task\s+\d+:\s+.+?\n([\s\S]*?)(?=^###\s+Task\s+\d+:|(?![\s\S]))/gm;
+  const taskBlockRegex = /^#{2,3}\s+Task\s+\d+:\s+.+?\n([\s\S]*?)(?=^#{2,3}\s+Task\s+\d+:|(?![\s\S]))/gm;
   const allBlocks = [...markdown.matchAll(taskBlockRegex)];
   console.log(`[planParser:${projectId}] task blocks found: ${allBlocks.length}`);
 

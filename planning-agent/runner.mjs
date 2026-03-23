@@ -5,6 +5,7 @@
  */
 import {
   createAgentSession,
+  createCodingTools,
   SessionManager,
   SettingsManager,
   DefaultResourceLoader,
@@ -14,15 +15,17 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { PassThrough } from "node:stream";
+import { createPlanningAgentGuardHook, createWebFetchTool } from "./tools.mjs";
 
 const PROJECT_ID = process.env.PROJECT_ID ?? "unknown";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:3000";
 const GIT_CLONE_URLS = process.env.GIT_CLONE_URLS ?? "[]";
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+// Note: GITHUB_TOKEN is NOT captured here — it is consumed and deleted in setupCredentials()
 const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "opencode-go";
 const AGENT_MODEL = process.env.AGENT_MODEL;
 const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
@@ -30,6 +33,37 @@ const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
 function git(...args) {
   return execFileSync("git", args, { stdio: "inherit" });
 }
+
+/** Configure git credential store and gh auth using GITHUB_TOKEN. Deletes the env var. */
+function setupCredentials() {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    console.warn("[planning-agent] GITHUB_TOKEN not set — git/gh auth may fail");
+    return;
+  }
+
+  execFileSync("git", ["config", "--global", "credential.helper", "store"], { stdio: "inherit" });
+  const credLine = `https://x-access-token:${token}@github.com\n`;
+  try {
+    appendFileSync(join(homedir(), ".git-credentials"), credLine);
+  } catch (err) {
+    throw new Error(`[planning-agent] Failed to write ~/.git-credentials: ${err.message}`);
+  }
+
+  try {
+    execFileSync("gh", ["auth", "login", "--with-token"], {
+      input: Buffer.from(token + "\n"),
+      stdio: ["pipe", "inherit", "inherit"],
+    });
+  } catch (err) {
+    console.warn("[planning-agent] gh auth login failed (non-fatal):", err.message);
+  }
+
+  delete process.env.GITHUB_TOKEN;
+}
+
+// ── Credential setup — must happen before clone ───────────────────────────────
+setupCredentials();
 
 // ── Git setup ─────────────────────────────────────────────────────────────────
 git("config", "--global", "user.email", process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply");
@@ -40,12 +74,8 @@ const repos = JSON.parse(GIT_CLONE_URLS);
 for (const { name, url } of repos) {
   const dest = `/workspace/${name}`;
   if (!existsSync(join(dest, ".git"))) {
-    let cloneUrl = url;
-    if (GITHUB_TOKEN && cloneUrl.startsWith("https://github.com/")) {
-      cloneUrl = `https://x-access-token:${GITHUB_TOKEN}@github.com/${cloneUrl.slice("https://github.com/".length)}`;
-    }
     console.log(`[planning-agent] cloning ${name}...`);
-    git("clone", cloneUrl, dest);
+    git("clone", url, dest);   // credential store handles auth
   } else {
     console.log(`[planning-agent] ${name} already cloned, fetching...`);
     execFileSync("git", ["fetch", "--all"], { cwd: dest, stdio: "inherit" });
@@ -93,7 +123,7 @@ const writePlanningDocumentTool = {
     'Write a planning document to the project\'s planning branch in the primary repository. ' +
     'Call with type "spec" first to write the design spec and open the PR. ' +
     'Call with type "plan" after spec is approved (LGTM received) to write the implementation plan. ' +
-    'Returns the PR URL. You MUST call this instead of using bash/git/curl to create PRs.',
+    'Returns the PR URL. Use this tool to create PRs — direct `gh pr create` calls are blocked.',
   parameters: Type.Object({
     type: Type.Union([Type.Literal("spec"), Type.Literal("plan")], { description: '"spec" or "plan"' }),
     content: Type.String({ description: "Full Markdown content of the document" }),
@@ -205,11 +235,6 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ── Session setup ─────────────────────────────────────────────────────────────
-// Remove GITHUB_TOKEN from env before starting the AI session — the planning agent
-// must use the write_planning_document tool (which calls the backend) instead of
-// directly calling the GitHub API via bash/curl.
-delete process.env.GITHUB_TOKEN;
-
 console.error(`[planning-agent] initialising session — provider=${AGENT_PROVIDER} model=${AGENT_MODEL ?? "(default)"}`);
 
 const sessionDir = join(PI_AGENT_DIR, "sessions");
@@ -224,7 +249,6 @@ const systemPrompt = systemPromptTemplate.replace("{{PROJECT_ID}}", PROJECT_ID);
 const resourceLoader = new DefaultResourceLoader({
   settingsManager,
   noExtensions: true,
-  noSkills: true,
   noPromptTemplates: true,
   noThemes: true,
   systemPrompt,
@@ -261,7 +285,8 @@ try {
     authStorage,
     cwd: "/workspace",
     ...(model ? { model } : {}),
-    customTools: [writePlanningDocumentTool, dispatchTasksTool, getTaskStatusTool, getPullRequestsTool, replyToSubagentTool],
+    tools: createCodingTools("/workspace", { bash: { spawnHook: createPlanningAgentGuardHook() } }),
+    customTools: [createWebFetchTool(), writePlanningDocumentTool, dispatchTasksTool, getTaskStatusTool, getPullRequestsTool, replyToSubagentTool],
   });
   session = result.session;
 } catch (err) {
