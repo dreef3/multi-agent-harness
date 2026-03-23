@@ -167,59 +167,14 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
 
     const manager = getPlanningAgentManager();
 
-    // Start planning agent if not running
-    const allRepos = listRepositories().filter(r => project.repositoryIds.includes(r.id));
-    const repoUrls = allRepos.map(r => ({
-      name: r.name,
-      url: process.env.GITHUB_TOKEN
-        ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/`)
-        : r.cloneUrl,
-    }));
-    try {
-      await manager.ensureRunning(projectId, repoUrls);
-    } catch (err) {
-      console.error(`[ws] failed to start planning agent for ${projectId}:`, err);
-      send(ws, { type: "error", message: "Failed to start planning agent" });
-      projectConnections.get(projectId)?.delete(ws);
-      ws.close(1011, "Failed to start planning agent");
-      return;
-    }
+    // ensureRunning can take 30+ seconds (container create/start/attach). Register handlers
+    // immediately so messages and close events are never dropped during startup.
+    const msgQueue: Buffer[] = [];
+    let setupComplete = false;
+    let connectionIncremented = false;
+    let unsubscribeDelta: () => void = () => {};
 
-    manager.incrementConnections(projectId);
-
-    // Forward planning agent delta events to this WS client
-    const onDeltaFwd = (event: PlanningAgentEvent) => {
-      if (event.type === "delta") send(ws, { type: "delta", text: event.text });
-    };
-    const unsubscribeDelta = manager.onOutput(projectId, onDeltaFwd);
-
-    // Register project-wide event broadcaster exactly once per project.
-    if (!projectBroadcasters.has(projectId)) {
-      projectBroadcasters.add(projectId);
-      let messageBuffer = "";
-      manager.onOutput(projectId, (event: PlanningAgentEvent) => {
-        switch (event.type) {
-          case "delta":
-            messageBuffer += event.text;
-            break;
-          case "message_complete":
-            if (messageBuffer) {
-              appendMessage(projectId, "assistant", messageBuffer);
-              messageBuffer = "";
-            }
-            broadcastToProject(projectId, { type: "message_complete" });
-            break;
-          case "tool_call":
-            broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
-            break;
-          case "conversation_complete":
-            broadcastToProject(projectId, { type: "conversation_complete" });
-            break;
-        }
-      });
-    }
-
-    ws.on("message", async (raw: Buffer) => {
+    const processMessage = async (raw: Buffer): Promise<void> => {
       let msg: WsClientMessage;
       try { msg = JSON.parse(raw.toString()) as WsClientMessage; }
       catch { send(ws, { type: "error", message: "Invalid JSON" }); return; }
@@ -265,6 +220,11 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
         }
         return;
       }
+    };
+
+    // Register handlers before any async work so no events are missed
+    ws.on("message", (raw: Buffer) => {
+      if (!setupComplete) { msgQueue.push(raw); } else { void processMessage(raw); }
     });
 
     ws.on("close", () => {
@@ -276,7 +236,71 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
         if (conns.size === 0) projectBroadcasters.delete(projectId);
       }
       unsubscribeDelta();
-      manager.decrementConnections(projectId);
+      if (connectionIncremented) manager.decrementConnections(projectId);
     });
+
+    // Start planning agent if not running
+    const allRepos = listRepositories().filter(r => project.repositoryIds.includes(r.id));
+    const repoUrls = allRepos.map(r => ({
+      name: r.name,
+      url: process.env.GITHUB_TOKEN
+        ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/`)
+        : r.cloneUrl,
+    }));
+    try {
+      await manager.ensureRunning(projectId, repoUrls);
+    } catch (err) {
+      console.error(`[ws] failed to start planning agent for ${projectId}:`, err);
+      send(ws, { type: "error", message: "Failed to start planning agent" });
+      ws.close(1011, "Failed to start planning agent");
+      return;
+    }
+
+    // If client navigated away during startup, don't increment connections
+    if (ws.readyState !== WebSocket.OPEN) {
+      console.log(`[ws] WS closed during startup for project=${projectId}, skipping setup`);
+      return;
+    }
+
+    connectionIncremented = true;
+    manager.incrementConnections(projectId);
+
+    // Forward planning agent delta events to this WS client
+    unsubscribeDelta = manager.onOutput(projectId, (event: PlanningAgentEvent) => {
+      if (event.type === "delta") send(ws, { type: "delta", text: event.text });
+    });
+
+    // Register project-wide event broadcaster exactly once per project.
+    if (!projectBroadcasters.has(projectId)) {
+      projectBroadcasters.add(projectId);
+      let messageBuffer = "";
+      manager.onOutput(projectId, (event: PlanningAgentEvent) => {
+        switch (event.type) {
+          case "delta":
+            messageBuffer += event.text;
+            break;
+          case "message_complete":
+            if (messageBuffer) {
+              appendMessage(projectId, "assistant", messageBuffer);
+              messageBuffer = "";
+            }
+            broadcastToProject(projectId, { type: "message_complete" });
+            break;
+          case "tool_call":
+            broadcastToProject(projectId, { type: "tool_call", toolName: event.toolName, args: event.args ?? {} });
+            break;
+          case "conversation_complete":
+            broadcastToProject(projectId, { type: "conversation_complete" });
+            break;
+        }
+      });
+    }
+
+    setupComplete = true;
+
+    // Flush messages that arrived during startup (resume + initial prompt)
+    for (const raw of msgQueue) {
+      await processMessage(raw);
+    }
   });
 }
