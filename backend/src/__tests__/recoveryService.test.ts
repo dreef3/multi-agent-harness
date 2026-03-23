@@ -475,9 +475,6 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       svc.notifyMaster = mockNotify;
 
-      // Update session retryCount to be at max so recovery exhausts retries
-      updateAgentSession(session.id, { retryCount: config.subAgentMaxRetries });
-
       // Manually update task retryCount to match so the exhaustion branch is triggered
       const { updateTaskInPlan } = await import("../store/projects.js");
       updateTaskInPlan("proj-recover", "task-1", { retryCount: config.subAgentMaxRetries });
