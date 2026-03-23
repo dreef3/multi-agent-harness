@@ -107,7 +107,7 @@ After a successful rebase the branch history is rewritten, making a plain `git p
 | Rebase conflict — planning agent replies "abort" | `process.exit(1)` |
 | Rebase conflict — planning agent times out (5 min) | `process.exit(1)` |
 | `GIT_PUSH_URL` not set | Fall back to `REPO_CLONE_URL` (unauthenticated) — fetch may fail; treated as fetch failure |
-| `BASE_BRANCH` env var absent at runtime | Skip rebase block entirely, log warning, continue — treats missing env as "no sync required" |
+| `BASE_BRANCH` env var absent at runtime | `containerManager` always injects `BASE_BRANCH` (defaults to `"main"`), so this is unreachable in normal operation. As a defensive guard in the script, treat absence the same as `"main"` — the `?? "main"` default in the constant declaration handles this silently. |
 
 ---
 
@@ -116,3 +116,4 @@ After a successful rebase the branch history is rewritten, making a plain `git p
 - Unit: `containerManager.test.ts` — assert `BASE_BRANCH` is injected with and without the option
 - Unit: `taskDispatcher.test.ts` — assert `baseBranch: repository.defaultBranch` passed in `runTask` and `runFixRun`
 - Shell integration: `sub-agent/test-git-sync.sh` — real git repo, advance base, verify rebase merges it into feature branch
+- Shell integration (conflict path): `sub-agent/test-git-sync.sh` — introduce a real conflict between base and feature branch, verify the script exits 1 (simulating planning agent replying "abort") rather than proceeding with broken state

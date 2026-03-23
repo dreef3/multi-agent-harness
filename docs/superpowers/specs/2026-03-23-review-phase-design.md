@@ -40,7 +40,7 @@ This makes the dashboard hard to read — projects pile up in "completed" with n
 | `backend/src/orchestrator/taskDispatcher.ts` | Set `"review"` instead of `"completed"` in `dispatchTasks()` |
 | `backend/src/orchestrator/recoveryService.ts` | Set `"review"` instead of `"completed"` in `checkAllTerminal()` |
 | `backend/src/api/projects.ts` | Add `POST /:id/mark-done`; update cancel guard |
-| `backend/src/api/websocket.ts` | Export `broadcastProjectStatusChanged()` |
+| `backend/src/api/websocket.ts` | Add `"project_status_changed"` to `WsServerMessage` union; export `broadcastProjectStatusChanged()` |
 | `frontend/src/lib/api.ts` | Update `Project.status` union; add `api.projects.markDone()` |
 | `frontend/src/pages/Dashboard.tsx` | Amber/green badges; "Pull Requests" link for review projects |
 | `frontend/src/components/ProjectLayout.tsx` | New file — shared tab nav |
@@ -93,6 +93,12 @@ Guards:
 
 On success: sets `status = "done"`, broadcasts `project_status_changed` via WebSocket (so the dashboard updates without a page refresh), returns `{ success: true, status: "done" }`.
 
+The broadcast message shape (added to `WsServerMessage` union in `websocket.ts`):
+```ts
+{ type: "project_status_changed"; projectId: string; status: string }
+```
+`projects.ts` must import `broadcastProjectStatusChanged` from `websocket.ts`.
+
 The cancel endpoint currently rejects `project.status === "completed" || project.status === "cancelled"`. Since `"completed"` is being removed, this guard must be updated to: reject `"review"`, `"done"`, and `"cancelled"`.
 
 ### Dashboard changes (`frontend/src/pages/Dashboard.tsx`)
@@ -101,6 +107,8 @@ The cancel endpoint currently rejects `project.status === "completed" || project
 - `"done"` → green badge, label `"Done"`, "View PRs" link to `/projects/:id/prs`
 
 No inline PR count on the card — a link to the PRs tab is sufficient (option A from design discussion).
+
+Dashboard must also subscribe to WebSocket `project_status_changed` messages so the badge updates without a page refresh. When a `project_status_changed` event is received, update the matching project's status in local state.
 
 ### ProjectLayout — shared tab nav
 
@@ -123,6 +131,8 @@ A new `frontend/src/components/ProjectLayout.tsx` wraps all project detail route
 
 The existing four flat routes (`/projects/:id/chat` etc.) are replaced by this nested structure. Child components continue to use `useParams<{ id: string }>()` unchanged — the `/:id` param is inherited from the parent route.
 
+The `/projects/new` route remains as a sibling **before** the `/:id` parent route. React Router v6 matches static segments (`new`) with higher priority than dynamic params (`/:id`), so the ordering is safe and no collision occurs.
+
 ### PrOverview changes (`frontend/src/pages/PrOverview.tsx`)
 
 - When project is in `"review"`: amber banner "Awaiting PR Merge" + "Mark as Done" button
@@ -131,7 +141,7 @@ The existing four flat routes (`/projects/:id/chat` etc.) are replaced by this n
 
 ### Frontend API (`frontend/src/lib/api.ts`)
 
-- `Project["status"]` union updated to include `"review"` and `"done"`, remove `"completed"`
+- `Project["status"]` union updated: remove `"completed"`, `"draft"`, and `"error"` (pre-existing strays not in the backend type); add `"review"` and `"done"`
 - New method: `api.projects.markDone(projectId)` → `POST /api/projects/:id/mark-done`
 
 ---
