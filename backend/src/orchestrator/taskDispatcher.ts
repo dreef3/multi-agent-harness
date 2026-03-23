@@ -5,7 +5,7 @@ import { getProject, updateProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
-import { getConnector } from "../connectors/types.js";
+import { getConnector, ConnectorError } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
 import { config } from "../config.js";
 
@@ -94,8 +94,18 @@ Stage and commit all changes. The harness will open the pull request automatical
       throw new Error(`Project ${projectId} does not have an approved plan (planningPr.planApprovedAt not set)`);
     }
 
-    if (!project.plan || project.plan.tasks.length === 0) {
+    if (!project.plan) {
+      console.warn(`[taskDispatcher] Project ${projectId} has no plan — nothing to dispatch`);
       return [];
+    }
+    if (project.plan.tasks.length === 0) {
+      console.warn(`[taskDispatcher] Project ${projectId} plan has 0 tasks — nothing to dispatch`);
+      return [];
+    }
+
+    console.log(`[taskDispatcher] Dispatching ${project.plan.tasks.length} task(s) for project ${projectId}`);
+    for (const t of project.plan.tasks) {
+      console.log(`[taskDispatcher]   task id=${t.id} repoId=${t.repositoryId} status=${t.status}`);
     }
 
     // Launch all tasks in parallel
@@ -119,7 +129,7 @@ Stage and commit all changes. The harness will open the pull request automatical
   /**
    * Run a single task: create container, run sub-agent, wait for completion.
    */
-  private async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
+  public async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
     const repository = getRepository(task.repositoryId);
     if (!repository) {
       return {
@@ -158,9 +168,17 @@ Stage and commit all changes. The harness will open the pull request automatical
       console.log(`[taskDispatcher] Branch created, spinning up container`);
 
       // Create container
+      // Build authenticated push URL with token embedded; the sub-agent runner uses this
+      // for clone/push and deletes it from env before starting the AI session.
+      const ghToken = process.env.GITHUB_TOKEN;
+      const gitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
+        ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+        : repository.cloneUrl;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
+        gitPushUrl,
         branchName,
         taskDescription: this.buildTaskPrompt(task),
         taskId: task.id,
@@ -250,8 +268,11 @@ Stage and commit all changes. The harness will open the pull request automatical
 
     return new Promise((resolve) => {
       const checkInterval = setInterval(async () => {
+        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+
         // Check timeout
         if (Date.now() - startTime > timeoutMs) {
+          console.warn(`[taskDispatcher] waitForCompletion: timeout after ${elapsedSec}s for container ${containerId}`);
           clearInterval(checkInterval);
           resolve(false);
           return;
@@ -259,6 +280,7 @@ Stage and commit all changes. The harness will open the pull request automatical
 
         // Check container status
         const status = await getContainerStatus(docker, containerId);
+        console.log(`[taskDispatcher] waitForCompletion: elapsed=${elapsedSec}s container=${containerId} status=${status}`);
 
         if (status === "exited") {
           clearInterval(checkInterval);
@@ -311,12 +333,29 @@ Stage and commit all changes. The harness will open the pull request automatical
 
     const closingRefs = buildClosingRefs(project.source?.githubIssues ?? []);
 
-    const prResult = await connector.createPullRequest(repository, {
-      title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
-      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
-      headBranch: branchName,
-      baseBranch: repository.defaultBranch,
-    });
+    let prResult;
+    try {
+      prResult = await connector.createPullRequest(repository, {
+        title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
+        description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
+        headBranch: branchName,
+        baseBranch: repository.defaultBranch,
+      });
+    } catch (err) {
+      // If a PR already exists for this branch (common when reusing the planning branch),
+      // find and register the existing one instead of failing.
+      if (err instanceof ConnectorError && err.message.toLowerCase().includes("already exists")) {
+        const existing = await connector.findPullRequestByBranch(repository, branchName);
+        if (existing) {
+          console.log(`[taskDispatcher] PR already exists for branch ${branchName}, registering existing PR ${existing.id}`);
+          prResult = existing;
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
     const pullRequest: PullRequest = {
       id: randomUUID(),
@@ -394,9 +433,15 @@ Stage and commit all changes. The harness will open the pull request automatical
       // Create container for fix-run (using existing branch)
       const taskDescription = `Address the following code review comments on the pull request branch "${pr.branch}":\n\n${commentsText}\n\nMake any necessary code changes and ensure the changes are committed.`;
 
+      const ghToken = process.env.GITHUB_TOKEN;
+      const fixGitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
+        ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+        : repository.cloneUrl;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
+        gitPushUrl: fixGitPushUrl,
         branchName: pr.branch,
         taskDescription,
         taskId: `fix-${sessionId.slice(0, 8)}`,

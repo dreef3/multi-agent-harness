@@ -139,8 +139,16 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
     return;
   }
 
+  console.log(`[polling] pollPlanningPrs: ${projects.length} project(s) awaiting LGTM`);
+  for (const p of projects) {
+    console.log(`[polling]   project id=${p.id} name="${p.name}" status=${p.status} planningPr=${p.planningPr?.number ?? "none"}`);
+  }
+
   for (const project of projects) {
-    if (!project.planningPr || !project.primaryRepositoryId) continue;
+    if (!project.planningPr || !project.primaryRepositoryId) {
+      console.warn(`[polling] project ${project.id} skipped — missing planningPr or primaryRepositoryId`);
+      continue;
+    }
     const repo = getRepository(project.primaryRepositoryId);
     if (!repo) continue;
 
@@ -154,9 +162,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         const { updateProject } = await import("./store/projects.js");
         updateProject(project.id, { status: "failed" });
         lgtmPollStates.delete(project.id);
-        const { getOrInitAgent } = await import("./api/websocket.js");
-        const closedAgent = await getOrInitAgent(project.id);
-        await closedAgent.prompt(
+        const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+        await getPlanningAgentManager().sendPrompt(
+          project.id,
           "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
         );
         continue;
@@ -171,7 +179,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         lgtmPollStates.set(project.id, latest);
       }
 
+      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
       const hasLgtm = comments.some(c => detectLgtm(c.body));
+      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
       if (!hasLgtm) continue;
 
       // Re-fetch to confirm status hasn't changed
@@ -182,8 +192,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
 
       // Import here to avoid circular dependency
-      const { getOrInitAgent } = await import("./api/websocket.js");
-      const agent = await getOrInitAgent(project.id);
+      const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
+      const planningManager = getPlanningAgentManager();
 
       if (project.status === "awaiting_spec_approval") {
         const { updateProject } = await import("./store/projects.js");
@@ -192,7 +202,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           status: "plan_in_progress",
         });
         lgtmPollStates.delete(project.id);
-        await agent.prompt(
+        await planningManager.sendPrompt(
+          project.id,
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
           'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
           'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
@@ -200,7 +211,15 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       } else if (project.status === "awaiting_plan_approval") {
         // plan.content and tasks were stored by write_planning_document(type: "plan") tool handler
         const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
-        const { TaskDispatcher } = await import("./orchestrator/taskDispatcher.js");
+
+        // Invariant: "executing" requires at least one task in the plan
+        if (!project.plan?.tasks?.length) {
+          console.warn(
+            `[polling] LGTM detected for project ${project.id} but plan has no tasks — ` +
+            `not transitioning to "executing". Master agent must add tasks to the plan first.`
+          );
+          continue;
+        }
 
         updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
@@ -240,14 +259,19 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           }
         }
 
-        await agent.prompt(
+        await planningManager.sendPrompt(
+          project.id,
           '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
           'Tell the user that implementation is starting and the sub-agents will take it from here.'
         );
 
-        const dispatcher = new TaskDispatcher();
-        dispatcher.dispatchTasks(docker, project.id).catch(err => {
-          console.error(`[polling] Task dispatch failed for project ${project.id}:`, err);
+        const freshProject2 = getFreshProject(project.id);
+        const taskCount = freshProject2?.plan?.tasks?.length ?? 0;
+        console.log(`[polling] project ${project.id}: plan has ${taskCount} task(s) — starting dispatch`);
+
+        const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
+        getRecoveryService().dispatchTasksForProject(project.id).catch(err => {
+          console.error(`[polling] dispatchTasksForProject failed for project ${project.id}:`, err);
         });
       }
     } catch (error) {
@@ -263,6 +287,10 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
 
   try {
+    // Recover any stale sub-agent sessions
+    const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
+    await getRecoveryService().recoverExecutingProjects();
+
     // Import here to avoid circular dependency issues
     const { listProjects } = await import("./store/projects.js");
     const projects = listProjects();

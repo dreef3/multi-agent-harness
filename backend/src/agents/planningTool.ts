@@ -87,7 +87,7 @@ export function createWritePlanningDocumentTool(
 
 // ── Handler ───────────────────────────────────────────────────────────────────
 
-async function handleWritePlanningDocument(
+export async function handleWritePlanningDocument(
   projectId: string,
   type: "spec" | "plan",
   content: string,

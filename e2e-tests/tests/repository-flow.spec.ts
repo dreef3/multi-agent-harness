@@ -5,6 +5,72 @@ const GH_TOKEN = process.env.GITHUB_TOKEN || '';
 const TEST_REPO_OWNER = 'dreef3';
 const TEST_REPO_NAME = 'multi-agent-harness-test-repo';
 const TEST_REPO_HTTPS_URL = `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}.git`;
+const GH_HEADERS = {
+  Authorization: `token ${GH_TOKEN}`,
+  'User-Agent': 'harness-e2e',
+  'Content-Type': 'application/json',
+};
+
+/**
+ * Create a branch with one commit in the test repo and open a PR.
+ * Returns the branch name, PR number, and PR URL.
+ */
+async function createPlanningPr(suffix: string): Promise<{ branch: string; prNumber: number; prUrl: string }> {
+  // Get current main SHA
+  const refRes = await fetch(
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/main`,
+    { headers: GH_HEADERS }
+  );
+  const refData = await refRes.json() as { object: { sha: string } };
+  const sha = refData.object.sha;
+
+  const branch = `harness/e2e-plan-${suffix}`;
+
+  // Create branch
+  await fetch(`https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs`, {
+    method: 'POST',
+    headers: GH_HEADERS,
+    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
+  });
+
+  // Commit a placeholder file so the branch has at least one commit ahead of main
+  await fetch(
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/contents/.harness/e2e-${suffix}.md`,
+    {
+      method: 'PUT',
+      headers: GH_HEADERS,
+      body: JSON.stringify({
+        message: 'chore: e2e test planning document',
+        content: Buffer.from('# E2E test plan').toString('base64'),
+        branch,
+      }),
+    }
+  );
+
+  // Open PR
+  const prRes = await fetch(
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls`,
+    {
+      method: 'POST',
+      headers: GH_HEADERS,
+      body: JSON.stringify({ title: '[Harness] E2E Test', head: branch, base: 'main', body: 'E2E test' }),
+    }
+  );
+  const pr = await prRes.json() as { number: number; html_url: string };
+  return { branch, prNumber: pr.number, prUrl: pr.html_url };
+}
+
+/** Post a LGTM comment on a GitHub PR to trigger the harness polling flow. */
+async function postLgtmComment(prNumber: number): Promise<void> {
+  await fetch(
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/${prNumber}/comments`,
+    {
+      method: 'POST',
+      headers: GH_HEADERS,
+      body: JSON.stringify({ body: 'LGTM' }),
+    }
+  );
+}
 
 test.describe('Repository Configuration Flow', () => {
   let initialBranchNames: string[] = [];
@@ -15,7 +81,7 @@ test.describe('Repository Configuration Flow', () => {
       `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
       { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
     );
-    if (branchRes.ok) {
+    if (branchRes.ok()) {
       const branches = await branchRes.json();
       if (Array.isArray(branches)) {
         initialBranchNames = (branches as { name: string }[]).map(b => b.name);
@@ -36,7 +102,7 @@ test.describe('Repository Configuration Flow', () => {
 
   test.afterEach(async ({ request }) => {
     const repos = await request.get(`${API_BASE}/repositories`);
-    if (repos.ok) {
+    if (repos.ok()) {
       const data = await repos.json();
       for (const repo of (data as { id: string; name: string }[])) {
         if (repo.name === 'E2E Test Repo') {
@@ -44,10 +110,29 @@ test.describe('Repository Configuration Flow', () => {
         }
       }
     }
+
+    // Clean up any GitHub branches created during the test to prevent accumulation
+    // beyond the per_page=100 limit which would break the branch-detection check.
+    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
+    const branchRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: ghHeaders }
+    );
+    if (branchRes.ok) {
+      const branches = await branchRes.json() as { name: string }[];
+      for (const branch of branches) {
+        if (!initialBranchNames.includes(branch.name)) {
+          await fetch(
+            `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch.name}`,
+            { method: 'DELETE', headers: ghHeaders }
+          );
+        }
+      }
+    }
   });
 
   test('create project with repository and verify sub-agent pushes a branch', async ({ page, request }) => {
-    test.setTimeout(10 * 60 * 1000); // 10 minutes — covers full agent execution cycle
+    test.setTimeout(15 * 60 * 1000); // 15 minutes — covers full agent execution cycle (sub-agent can take ~10 min)
 
     // Navigate to new project form
     await page.goto('/');
@@ -99,6 +184,11 @@ test.describe('Repository Configuration Flow', () => {
 
     // Wait for the project to reach awaiting_plan_approval (agent wrote spec + plan).
     // If the agent didn't complete the full planning flow in time, inject a plan via API.
+    const reposRes = await request.get(`${API_BASE}/repositories`);
+    const repos = await reposRes.json() as { id: string; name: string }[];
+    const testRepo = repos.find(r => r.name === 'E2E Test Repo');
+    expect(testRepo).toBeDefined();
+
     const projectInApproval = await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
@@ -109,39 +199,67 @@ test.describe('Repository Configuration Flow', () => {
       { timeout: 90000, intervals: [5000] }
     ).toBe(true).then(() => true).catch(() => false);
 
-    if (!projectInApproval) {
-      // Agent didn't complete planning — inject a plan via API
-      const reposRes = await request.get(`${API_BASE}/repositories`);
-      const repos = await reposRes.json() as { id: string; name: string }[];
-      const testRepo = repos.find(r => r.name === 'E2E Test Repo');
-      expect(testRepo).toBeDefined();
+    // Get current project state to check if master agent created the planning PR
+    const projStateRes = await request.get(`${API_BASE}/projects/${projectId}`);
+    const projState = await projStateRes.json() as {
+      planningPr?: { number: number; url: string };
+      planningBranch?: string;
+    };
 
-      await request.patch(`${API_BASE}/projects/${projectId}`, {
-        data: {
-          plan: {
-            id: `e2e-plan-${Date.now()}`,
-            projectId,
-            content: `### Task 1: Create e2e-marker.md\n**Repository:** E2E Test Repo\n**Description:**\nCreate e2e-marker.md.`,
-            tasks: [{
-              id: `e2e-task-${Date.now()}`,
-              repositoryId: testRepo!.id,
-              description: 'Create a file called `e2e-marker.md` with the content "# E2E Test Passed" and commit it to the current branch.',
-              status: 'pending',
-            }],
-          },
-        },
-      });
+    let planningPrNumber: number;
+
+    if (projState.planningPr?.number) {
+      // Master agent completed the planning flow — planning PR already exists
+      planningPrNumber = projState.planningPr.number;
+    } else {
+      // Injection path — create a planning PR on GitHub manually
+      const suffix = Date.now().toString();
+      const { branch, prNumber, prUrl } = await createPlanningPr(suffix);
+
+      const patchData: Record<string, unknown> = {
+        planningBranch: branch,
+        planningPr: { number: prNumber, url: prUrl },
+        status: 'awaiting_plan_approval',
+      };
+
+      if (!projectInApproval) {
+        // Also inject the plan tasks
+        patchData.plan = {
+          id: `e2e-plan-${suffix}`,
+          projectId,
+          content: `### Task 1: Create e2e-marker.md\n**Repository:** E2E Test Repo\n**Description:**\nCreate e2e-marker.md.`,
+          tasks: [{
+            id: `e2e-task-${suffix}`,
+            repositoryId: testRepo!.id,
+            description: 'Create a file called `e2e-marker.md` with the content "# E2E Test Passed" and commit it to the current branch.',
+            status: 'pending',
+          }],
+        };
+      }
+
+      await request.patch(`${API_BASE}/projects/${projectId}`, { data: patchData });
+      planningPrNumber = prNumber;
     }
 
-    // Approve the plan via API — sets planningPr.planApprovedAt and triggers task dispatch
-    const approveRes = await request.post(`${API_BASE}/projects/${projectId}/approve`);
-    expect(approveRes.ok()).toBe(true);
+    // Post LGTM comment on the planning PR — triggers the polling cycle to dispatch tasks
+    await postLgtmComment(planningPrNumber);
+
+    // Wait for polling to detect LGTM and transition project to executing (up to 120s)
+    await expect.poll(
+      async () => {
+        const res = await request.get(`${API_BASE}/projects/${projectId}`);
+        if (!res.ok()) return false;
+        const project = await res.json() as { status: string };
+        return project.status === 'executing';
+      },
+      { timeout: 120000, intervals: [5000] }
+    ).toBe(true);
 
     // Poll for sub-agent session completing — proves the container was spun up and ran
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}/agents`);
-        if (!res.ok) return false;
+        if (!res.ok()) return false;
         const sessions = await res.json() as { type: string; status: string }[];
         return sessions.some(s => s.type === 'sub' && s.status === 'completed');
       },
@@ -155,7 +273,7 @@ test.describe('Repository Configuration Flow', () => {
           `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
           { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
         );
-        if (!res.ok) return false;
+        if (!res.ok()) return false;
         const branches = await res.json() as { name: string }[];
         return branches.some(b => !initialBranchNames.includes(b.name));
       },

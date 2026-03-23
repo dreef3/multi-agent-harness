@@ -47,6 +47,8 @@ export interface PlanTask {
   description: string;
   status: "pending" | "executing" | "completed" | "failed" | "cancelled";
   dependsOn?: string[]; // MVP: unused, all tasks execute in parallel
+  retryCount?: number;  // failed attempts consumed (undefined = 0)
+  errorMessage?: string;  // populated on permanent failure
 }
 
 export interface Repository {

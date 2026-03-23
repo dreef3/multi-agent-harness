@@ -62,6 +62,29 @@ export function listProjectsAwaitingLgtm(): Project[] {
   ).all() as ProjectRow[]).map(fromRow);
 }
 
+export function listExecutingProjects(): Project[] {
+  return (getDb().prepare(
+    "SELECT * FROM projects WHERE status = 'executing'"
+  ).all() as ProjectRow[]).map(fromRow);
+}
+
+export function updateTaskInPlan(
+  projectId: string,
+  taskId: string,
+  updates: Partial<import("../models/types.js").PlanTask>
+): void {
+  const db = getDb();
+  db.transaction(() => {
+    const row = db.prepare("SELECT plan_json FROM projects WHERE id = ?").get(projectId) as { plan_json: string | null } | undefined;
+    if (!row?.plan_json) return;
+    const plan = JSON.parse(row.plan_json) as import("../models/types.js").Plan;
+    const task = plan.tasks.find(t => t.id === taskId);
+    if (task) Object.assign(task, updates);
+    db.prepare("UPDATE projects SET plan_json = ?, updated_at = ? WHERE id = ?")
+      .run(JSON.stringify(plan), new Date().toISOString(), projectId);
+  })();
+}
+
 export function deleteProject(id: string): void {
   const db = getDb();
   db.prepare("DELETE FROM messages WHERE project_id = ?").run(id);

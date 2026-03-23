@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { initDb, getDb } from "../store/db.js";
 import os from "os";
 import path from "path";
@@ -7,6 +7,18 @@ import { insertProject, getProject, listProjects, updateProject, listProjectsAwa
 import { appendMessage, listMessages, listMessagesSince } from "../store/messages.js";
 import { parsePlan } from "../agents/planParser.js";
 import type { Project, Plan } from "../models/types.js";
+import request from "supertest";
+import express from "express";
+import { createProjectsRouter } from "../api/projects.js";
+
+vi.mock("../api/websocket.js", () => ({
+  preInitAgent: vi.fn(),
+  setupWebSocket: vi.fn(),
+}));
+
+vi.mock("../orchestrator/recoveryService.js", () => ({
+  getRecoveryService: () => ({ dispatchTasksForProject: vi.fn().mockResolvedValue(undefined) }),
+}));
 
 describe("projects store", () => {
   let tmpDir: string;
@@ -328,5 +340,104 @@ describe("buildClosingRefs", () => {
     const { buildClosingRefs } = await import("../orchestrator/taskDispatcher.js");
     const result = buildClosingRefs(["org/repo#1", "org/repo#2", "#3"]);
     expect(result).toBe("Closes #1\nCloses #2\nCloses #3");
+  });
+});
+
+// ── HTTP route tests ──────────────────────────────────────────────────────────
+
+let app: ReturnType<typeof express>;
+let tmpHttpDir: string;
+
+function createTestProject(): Project {
+  const now = new Date().toISOString();
+  const project: Project = {
+    id: `proj-${Math.random().toString(36).slice(2)}`,
+    name: "Test Project",
+    status: "brainstorming",
+    source: { type: "freeform", freeformDescription: "Test" },
+    repositoryIds: ["repo-1"],
+    masterSessionPath: "",
+    createdAt: now,
+    updatedAt: now,
+  };
+  insertProject(project);
+  return project;
+}
+
+beforeEach(() => {
+  tmpHttpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-http-"));
+  initDb(tmpHttpDir);
+  app = express();
+  app.use(express.json());
+  app.use("/projects", createProjectsRouter("/tmp/test-data"));
+});
+
+afterEach(() => {
+  fs.rmSync(tmpHttpDir, { recursive: true, force: true });
+});
+
+describe("POST /projects/:id/tasks", () => {
+  it("returns 404 for unknown project", async () => {
+    const res = await request(app).post("/projects/nonexistent/tasks").send({ tasks: [] });
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when tasks array is missing", async () => {
+    const project = createTestProject();
+    const res = await request(app).post(`/projects/${project.id}/tasks`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("upserts tasks into plan and returns dispatched count", async () => {
+    const project = createTestProject();
+    // Seed a plan with one existing task
+    updateProject(project.id, {
+      plan: { id: "plan-1", projectId: project.id, content: "", tasks: [
+        { id: "task-1", repositoryId: "repo-1", description: "Old task", status: "failed", retryCount: 2, errorMessage: "prev error" }
+      ]},
+      status: "executing",
+    });
+
+    const res = await request(app).post(`/projects/${project.id}/tasks`).send({
+      tasks: [
+        { id: "task-1", repositoryId: "repo-1", description: "Retried task" },  // upsert
+        { repositoryId: "repo-1", description: "New task" },                      // new (no id)
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.dispatched).toBe(2);
+    const updated = getProject(project.id)!;
+    const task1 = updated.plan!.tasks.find(t => t.id === "task-1")!;
+    expect(task1.status).toBe("pending");
+    expect(task1.retryCount).toBe(0);
+    expect(task1.errorMessage).toBeUndefined();
+    expect(updated.plan!.tasks).toHaveLength(2);
+  });
+});
+
+describe("GET /projects/:id/tasks", () => {
+  it("returns 404 for unknown project", async () => {
+    const res = await request(app).get("/projects/nonexistent/tasks");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns empty tasks when no plan", async () => {
+    const project = createTestProject();
+    const res = await request(app).get(`/projects/${project.id}/tasks`);
+    expect(res.status).toBe(200);
+    expect(res.body.tasks).toEqual([]);
+  });
+
+  it("returns task list with errorMessage when plan exists", async () => {
+    const project = createTestProject();
+    updateProject(project.id, {
+      plan: { id: "plan-1", projectId: project.id, content: "", tasks: [
+        { id: "t1", repositoryId: "repo-1", description: "Do A", status: "failed", errorMessage: "timeout" },
+      ]},
+    });
+    const res = await request(app).get(`/projects/${project.id}/tasks`);
+    expect(res.status).toBe(200);
+    expect(res.body.tasks[0].errorMessage).toBe("timeout");
   });
 });

@@ -10,6 +10,7 @@ import {
   ModelRegistry,
   AuthStorage,
 } from "@mariozechner/pi-coding-agent";
+import { Type } from "@sinclair/typebox";
 import { execSync, execFileSync } from "node:child_process";
 import { writeFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
 import { join } from "node:path";
@@ -19,24 +20,17 @@ const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
 const TASK_DESCRIPTION =
   process.env.TASK_DESCRIPTION ??
   "Create a file called task-complete.md with the content '# Task Complete'";
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const AGENT_PROVIDER = process.env.AGENT_PROVIDER ?? "opencode-go";
 const AGENT_MODEL = process.env.AGENT_MODEL ?? "minimax-m2.7";
 const TASK_ID = process.env.TASK_ID ?? "unknown";
 
-/** Run a shell command, redacting secrets from log output. */
-function exec(cmd, opts = {}) {
-  const safe = GITHUB_TOKEN ? cmd.replace(GITHUB_TOKEN, "***") : cmd;
-  console.log("[sub-agent] $", safe);
-  return execSync(cmd, { stdio: "inherit", ...opts });
-}
+// GIT_PUSH_URL is the authenticated push URL — consumed here and cleared from env
+// before the AI agent starts so the agent cannot use it for direct GitHub API calls.
+const GIT_PUSH_URL = process.env.GIT_PUSH_URL || REPO_CLONE_URL;
 
 /** Run git with explicit args array (safe against special chars in args). */
 function git(...args) {
-  const safeArgs = args.map(a =>
-    GITHUB_TOKEN && typeof a === "string" ? a.replace(GITHUB_TOKEN, "***") : a
-  );
-  console.log("[sub-agent] $ git", safeArgs.join(" "));
+  console.log("[sub-agent] $ git", args.map(a => (GIT_PUSH_URL && a === GIT_PUSH_URL ? "***" : a)).join(" "));
   return execFileSync("git", args, { stdio: "inherit" });
 }
 
@@ -46,24 +40,19 @@ const GIT_AUTHOR_EMAIL = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply
 git("config", "--global", "user.email", GIT_AUTHOR_EMAIL);
 git("config", "--global", "user.name", GIT_AUTHOR_NAME);
 
-// Build authenticated HTTPS clone URL
-let cloneUrl = REPO_CLONE_URL;
-if (GITHUB_TOKEN && cloneUrl) {
-  if (cloneUrl.startsWith("git@github.com:")) {
-    const repoPath = cloneUrl.slice("git@github.com:".length);
-    cloneUrl = `https://x-access-token:${GITHUB_TOKEN}@github.com/${repoPath}`;
-  } else if (cloneUrl.startsWith("https://github.com/")) {
-    cloneUrl = `https://x-access-token:${GITHUB_TOKEN}@github.com/${cloneUrl.slice(
-      "https://github.com/".length
-    )}`;
-  }
-}
-
 // ── Clone & checkout ─────────────────────────────────────────────────────────
 console.log("[sub-agent] Cloning repository, branch:", BRANCH_NAME);
-git("clone", cloneUrl, "/workspace/repo");
+git("clone", GIT_PUSH_URL, "/workspace/repo");
 process.chdir("/workspace/repo");
 git("checkout", BRANCH_NAME);
+
+// Reset origin to non-authenticated URL so the AI agent cannot push directly via bash.
+// The push_branch tool (below) uses the stored GIT_PUSH_URL via a JS closure.
+git("remote", "set-url", "origin", REPO_CLONE_URL);
+
+// Remove auth credentials from env before starting the AI agent
+delete process.env.GIT_PUSH_URL;
+delete process.env.GITHUB_TOKEN;
 
 // ── Run AI agent ─────────────────────────────────────────────────────────────
 console.log("[sub-agent] Running task:", TASK_DESCRIPTION);
@@ -91,12 +80,30 @@ try {
     console.warn("[sub-agent] Could not find model", AGENT_PROVIDER, AGENT_MODEL, "- using default");
   }
 
+  // push_branch tool — uses the authenticated GIT_PUSH_URL from the JS closure.
+  // The agent MUST use this tool to push; direct `git push` will fail (origin has no auth).
+  const pushBranchTool = {
+    name: "push_branch",
+    label: "Push Branch",
+    description: `Push committed changes to the remote branch (${BRANCH_NAME}). Call this after committing your changes. Do NOT use git push directly — it will fail. Use this tool instead.`,
+    parameters: Type.Object({}),
+    execute: async () => {
+      try {
+        execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "pipe" });
+        return { content: [{ type: "text", text: `Changes pushed to ${BRANCH_NAME}` }], details: {} };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Push failed: ${err.message}` }], details: {} };
+      }
+    },
+  };
+
   const { session } = await createAgentSession({
     sessionManager: SessionManager.create(sessionDir, sessionDir),
     settingsManager,
     resourceLoader,
     modelRegistry,
     ...(model ? { model } : {}),
+    customTools: [pushBranchTool],
   });
 
   try {
@@ -129,7 +136,7 @@ try {
   const finalDiff = execSync("git diff --cached --stat").toString().trim();
   if (finalDiff) {
     git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
-    git("push", "origin", `HEAD:${BRANCH_NAME}`);
+    execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
     console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
   } else {
     console.log("[sub-agent] No changes to commit");
@@ -152,7 +159,7 @@ try {
     const logDiff = execSync("git diff --cached --stat").toString().trim();
     if (logDiff) {
       git("commit", "-m", `chore: add agent log for task ${TASK_ID}`);
-      git("push", "origin", `HEAD:${BRANCH_NAME}`);
+      execFileSync("git", ["push", GIT_PUSH_URL, `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
       console.log("[sub-agent] Session log committed for task:", TASK_ID);
     }
   } else {

@@ -1,5 +1,4 @@
 import { Router } from "express";
-import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
@@ -7,8 +6,10 @@ import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
+import { getRecoveryService } from "../orchestrator/recoveryService.js";
+import { handleWritePlanningDocument } from "../agents/planningTool.js";
 
-export function createProjectsRouter(docker: Dockerode): Router {
+export function createProjectsRouter(dataDir: string): Router {
   const router = Router();
   // List all projects
   router.get("/", (_req, res) => {
@@ -82,7 +83,7 @@ export function createProjectsRouter(docker: Dockerode): Router {
 
   // Update a project
   router.patch("/:id", (req, res) => {
-    const { name, source, repositoryIds, plan, status } = req.body;
+    const { name, source, repositoryIds, plan, status, planningBranch, planningPr } = req.body;
     const existing = getProject(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Project not found" });
@@ -95,6 +96,8 @@ export function createProjectsRouter(docker: Dockerode): Router {
     if (repositoryIds !== undefined) updates.repositoryIds = repositoryIds;
     if (plan !== undefined) updates.plan = plan;
     if (status !== undefined) updates.status = status;
+    if (planningBranch !== undefined) updates.planningBranch = planningBranch;
+    if (planningPr !== undefined) updates.planningPr = planningPr;
 
     updateProject(req.params.id, updates);
     res.json(getProject(req.params.id));
@@ -133,46 +136,6 @@ export function createProjectsRouter(docker: Dockerode): Router {
     res.json({ success: true });
   });
 
-  // Approve plan and start execution (manual override / test bypass for PR-based approval)
-  router.post("/:id/approve", async (req, res) => {
-    const project = getProject(req.params.id);
-    if (!project) {
-      res.status(404).json({ error: "Project not found" });
-      return;
-    }
-    if (project.status === "completed" || project.status === "cancelled") {
-      res.status(400).json({ error: `Cannot approve project with status: ${project.status}` });
-      return;
-    }
-
-    const { plan } = req.body;
-    const now = new Date().toISOString();
-
-    const updates: Partial<Omit<Project, "id" | "createdAt">> = {
-      status: "executing",
-      planningPr: {
-        ...(project.planningPr ?? { number: 0, url: "" }),
-        specApprovedAt: project.planningPr?.specApprovedAt ?? now,
-        planApprovedAt: now,
-      },
-    };
-    if (plan !== undefined) updates.plan = plan;
-
-    updateProject(req.params.id, updates);
-
-    try {
-      const { TaskDispatcher } = await import("../orchestrator/taskDispatcher.js");
-      const dispatcher = new TaskDispatcher();
-      dispatcher.dispatchTasks(docker, req.params.id).catch((err: Error) => {
-        console.error(`[projects] Task dispatch failed for project ${req.params.id}:`, err.message);
-      });
-    } catch (err) {
-      console.warn("[projects] Could not import TaskDispatcher:", err);
-    }
-
-    res.json({ success: true, status: "executing" });
-  });
-
   // Cancel project
   router.post("/:id/cancel", (req, res) => {
     const project = getProject(req.params.id);
@@ -187,6 +150,82 @@ export function createProjectsRouter(docker: Dockerode): Router {
 
     updateProject(req.params.id, { status: "cancelled" });
     res.json({ success: true, status: "cancelled" });
+  });
+
+  // GET /api/projects/:id/tasks — return task list for planning agent get_task_status tool
+  router.get("/:id/tasks", (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+    res.json({ tasks: project.plan?.tasks ?? [] });
+  });
+
+  // POST /api/projects/:id/tasks — upsert tasks and dispatch (for planning agent dispatch_tasks tool)
+  router.post("/:id/tasks", async (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+
+    const { tasks } = req.body as { tasks?: Array<{ id?: string; repositoryId: string; description: string }> };
+    if (!Array.isArray(tasks)) { res.status(400).json({ error: "tasks must be an array" }); return; }
+
+    const existingTasks = project.plan?.tasks ?? [];
+
+    const updatedTasks = [...existingTasks];
+    for (const incoming of tasks) {
+      const existingIdx = incoming.id ? updatedTasks.findIndex(t => t.id === incoming.id) : -1;
+      if (existingIdx >= 0) {
+        // Upsert: reset to pending, clear error
+        updatedTasks[existingIdx] = {
+          ...updatedTasks[existingIdx],
+          description: incoming.description,
+          repositoryId: incoming.repositoryId,
+          status: "pending",
+          retryCount: 0,
+          errorMessage: undefined,
+        };
+      } else {
+        // New task
+        updatedTasks.push({
+          id: incoming.id ?? randomUUID(),
+          repositoryId: incoming.repositoryId,
+          description: incoming.description,
+          status: "pending",
+        });
+      }
+    }
+
+    const plan = project.plan
+      ? { ...project.plan, tasks: updatedTasks }
+      : { id: randomUUID(), projectId: project.id, content: "", tasks: updatedTasks };
+
+    updateProject(project.id, { plan, status: "executing" });
+
+    try {
+      await getRecoveryService().dispatchTasksForProject(project.id);
+    } catch (err) {
+      console.error(`[projects] dispatchTasksForProject error:`, err);
+    }
+
+    res.json({ dispatched: tasks.length });
+  });
+
+  // Write planning document (spec or plan) — called by the planning agent container
+  router.post("/:id/planning-document", async (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+
+    const { type, content } = req.body as { type?: string; content?: string };
+    if (type !== "spec" && type !== "plan") {
+      res.status(400).json({ error: 'type must be "spec" or "plan"' });
+      return;
+    }
+    if (!content) { res.status(400).json({ error: "content is required" }); return; }
+
+    const result = await handleWritePlanningDocument(req.params.id, type, content, dataDir);
+    if ("error" in result) {
+      res.status(400).json(result);
+    } else {
+      res.json(result);
+    }
   });
 
   return router;

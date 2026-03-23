@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { api } from "../lib/api";
 import { wsClient } from "../lib/ws";
 
 interface ExecutionStatus {
@@ -21,7 +20,6 @@ export default function Execution() {
     progress: 0,
     logs: [],
   });
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -39,7 +37,7 @@ export default function Execution() {
             log?: string;
           };
         };
-        
+
         if (msg.type === "execution_status" && msg.payload) {
           setStatus((prev) => ({
             ...prev,
@@ -62,33 +60,6 @@ export default function Execution() {
       unsubscribe();
     };
   }, [id]);
-
-  async function handleStart() {
-    if (!id || loading) return;
-    try {
-      setLoading(true);
-      // Execution start endpoint not implemented yet
-      // await api.projects.approve(id);
-      setStatus((prev) => ({ ...prev, status: "running" }));
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to start execution");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleStop() {
-    if (!id || loading) return;
-    try {
-      setLoading(true);
-      // Execution stop endpoint not implemented yet
-      // await api.projects.cancel(id);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Failed to stop execution");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   const statusColors: Record<string, string> = {
     idle: "bg-gray-600",
@@ -147,23 +118,6 @@ export default function Execution() {
       </div>
 
       <div className="flex items-center gap-4">
-        {status.status === "idle" || status.status === "failed" ? (
-          <button
-            onClick={handleStart}
-            disabled={loading}
-            className="bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-medium"
-          >
-            {loading ? "Starting..." : "Start Execution"}
-          </button>
-        ) : status.status === "running" ? (
-          <button
-            onClick={handleStop}
-            disabled={loading}
-            className="bg-red-600 hover:bg-red-500 disabled:bg-gray-700 disabled:cursor-not-allowed px-6 py-2 rounded-lg font-medium"
-          >
-            {loading ? "Stopping..." : "Stop Execution"}
-          </button>
-        ) : null}
         <button
           onClick={() => navigate(`/projects/${id}/plan`)}
           className="text-gray-400 hover:text-white"

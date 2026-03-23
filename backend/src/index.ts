@@ -9,13 +9,16 @@ import { setupWebSocket } from "./api/websocket.js";
 import { startPolling } from "./polling.js";
 import { DebounceEngine } from "./debounce/engine.js";
 import { setDebounceEngine } from "./api/webhooks.js";
+import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
+import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
   initDb(config.dataDir);
 
-  console.log("[startup] Connecting to Docker proxy...");
+  console.log(`[startup] Connecting to Docker proxy at ${config.dockerProxyUrl}...`);
   const dockerUrl = new URL(config.dockerProxyUrl);
+  console.log(`[startup]   Docker host=${dockerUrl.hostname} port=${dockerUrl.port}`);
   const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port, 10) });
 
   console.log("[startup] Ensuring sub-agent image exists...");
@@ -26,7 +29,18 @@ async function main() {
   const debounceEngine = new DebounceEngine({ delayMs: 10 * 60 * 1000 }); // 10 minutes
   setDebounceEngine(debounceEngine);
 
-  console.log("[startup] Starting Bitbucket Server polling...");
+  console.log("[startup] Initializing recovery service...");
+  const recoveryService = new RecoveryService(docker);
+  setRecoveryService(recoveryService);
+
+  console.log("[startup] Initializing planning agent manager...");
+  const planningAgentManager = new PlanningAgentManager(docker);
+  setPlanningAgentManager(planningAgentManager);
+
+  console.log("[startup] Running boot recovery (stale session scan)...");
+  await recoveryService.recoverOnBoot();
+
+  console.log("[startup] Starting polling...");
   startPolling(docker);
 
   const app = express();

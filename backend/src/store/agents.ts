@@ -38,6 +38,13 @@ export function listAgentSessions(projectId: string): AgentSession[] {
   return rows.map(fromRow);
 }
 
+export function listStaleAgentSessions(): AgentSession[] {
+  const rows = getDb()
+    .prepare("SELECT * FROM agent_sessions WHERE status IN ('starting', 'running') AND type = 'sub'")
+    .all() as AgentSessionRow[];
+  return rows.map(fromRow);
+}
+
 export function updateAgentSession(id: string, updates: Partial<Omit<AgentSession, "id" | "projectId" | "type">>): void {
   const existing = getAgentSession(id);
   if (!existing) throw new Error(`AgentSession not found: ${id}`);

@@ -36,6 +36,11 @@ export interface VcsConnector {
   getPullRequest(repo: Repository, prId: string): Promise<PullRequestInfo>;
 
   /**
+   * Find an open pull request by head branch. Returns null if not found.
+   */
+  findPullRequestByBranch(repo: Repository, headBranch: string): Promise<PullRequestResult | null>;
+
+  /**
    * Get review comments on a pull request
    * @param since - Optional ISO timestamp to filter comments since a specific time
    */

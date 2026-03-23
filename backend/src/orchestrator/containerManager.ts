@@ -19,8 +19,7 @@ const PROVIDER_ENV_VARS = [
   "KIMI_API_KEY",
   "MINIMAX_API_KEY",
   "MINIMAX_CN_API_KEY",
-  // Git / VCS credentials
-  "GITHUB_TOKEN",
+  // Git / VCS credentials intentionally excluded — sub-agent gets GIT_PUSH_URL instead
   // Cloud providers
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
@@ -39,6 +38,8 @@ const PROVIDER_ENV_VARS = [
 export interface ContainerCreateOptions {
   sessionId: string;
   repoCloneUrl: string;
+  /** Authenticated push URL (token embedded). Used by runner.mjs for push; deleted from env before agent starts. */
+  gitPushUrl?: string;
   branchName: string;
   taskDescription?: string;
   agentProvider?: string;
@@ -51,15 +52,33 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     .filter(name => process.env[name])
     .map(name => `${name}=${process.env[name]}`);
 
+  const agentProvider = opts.agentProvider ?? config.agentProvider;
+  const agentModel = opts.agentModel ?? config.models[config.agentProvider as keyof typeof config.models]?.workerAgent?.model ?? "minimax-m2.7";
+
   const taskEnv = [
     ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
-    `AGENT_PROVIDER=${opts.agentProvider ?? config.agentProvider}`,
-    `AGENT_MODEL=${opts.agentModel ?? config.models[config.agentProvider as keyof typeof config.models]?.workerAgent?.model ?? "minimax-m2.7"}`,
+    ...(opts.gitPushUrl ? [`GIT_PUSH_URL=${opts.gitPushUrl}`] : []),
+    `AGENT_PROVIDER=${agentProvider}`,
+    `AGENT_MODEL=${agentModel}`,
     `TASK_ID=${opts.taskId ?? ""}`,
   ];
 
+  const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
+
+  console.log(`[containerManager] Creating container for session=${opts.sessionId} taskId=${opts.taskId ?? "n/a"}`);
+  console.log(`[containerManager]   image=${config.subAgentImage}`);
+  console.log(`[containerManager]   network=${config.subAgentNetwork}`);
+  console.log(`[containerManager]   piAgentVolume=${config.piAgentVolume}`);
+  console.log(`[containerManager]   branch=${opts.branchName}`);
+  console.log(`[containerManager]   agentProvider=${agentProvider} agentModel=${agentModel}`);
+  console.log(`[containerManager]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
+  console.log(`[containerManager]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
+
+  const containerName = `task-${(opts.taskId ?? opts.sessionId).slice(0, 16)}`;
+
   const container = await docker.createContainer({
     Image: config.subAgentImage,
+    name: containerName,
     Env: [`REPO_CLONE_URL=${opts.repoCloneUrl}`, `BRANCH_NAME=${opts.branchName}`, ...taskEnv, ...providerEnv],
     WorkingDir: "/workspace",
     HostConfig: {
@@ -74,18 +93,23 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     },
     Labels: { "harness.session-id": opts.sessionId },
   });
+  console.log(`[containerManager] Container created: id=${container.id}`);
   return container.id;
 }
 
 export async function startContainer(docker: Dockerode, containerId: string): Promise<void> {
+  console.log(`[containerManager] Starting container ${containerId}`);
   await docker.getContainer(containerId).start();
+  console.log(`[containerManager] Container ${containerId} started`);
 }
 
 export async function stopContainer(docker: Dockerode, containerId: string): Promise<void> {
+  console.log(`[containerManager] Stopping container ${containerId}`);
   await docker.getContainer(containerId).stop({ t: 10 });
 }
 
 export async function removeContainer(docker: Dockerode, containerId: string): Promise<void> {
+  console.log(`[containerManager] Removing container ${containerId}`);
   await docker.getContainer(containerId).remove({ force: true });
 }
 
