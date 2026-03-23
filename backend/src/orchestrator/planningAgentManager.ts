@@ -198,7 +198,10 @@ export class PlanningAgentManager {
     if (type === "agent_end") {
       state.isStreaming = false;
       this.emit(state, { type: "conversation_complete" });
-      this.checkStop(projectId, state);
+      // Note: do NOT call checkStop here. The container lifecycle is driven by WS
+      // connection count — it stops when the last client disconnects (decrementConnections).
+      // Calling checkStop on agent_end races with incrementConnections and would stop
+      // the container before the first prompt is ever sent.
       return;
     }
   }
