@@ -6,6 +6,8 @@ import { config } from "../config.js";
 export type PlanningAgentEvent =
   | { type: "delta"; text: string }
   | { type: "tool_call"; toolName: string; args?: Record<string, unknown> }
+  | { type: "tool_result"; toolName: string; result?: unknown; isError?: boolean }
+  | { type: "thinking"; text: string }
   | { type: "message_complete" }
   | { type: "conversation_complete" };
 
@@ -239,7 +241,7 @@ export class PlanningAgentManager {
       }
       return;
     }
-    if (!["agent_start", "message_update", "tool_execution_start", "message_end", "agent_end",
+    if (!["agent_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
          "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end"].includes(type)) {
       console.log(`[PlanningAgentManager] unhandled event type="${type}" for ${projectId}: ${line.slice(0, 200)}`);
     }
@@ -260,6 +262,21 @@ export class PlanningAgentManager {
         toolName: obj.toolName as string,
         args: obj.args as Record<string, unknown> | undefined,
       });
+      return;
+    }
+
+    if (type === "tool_execution_end") {
+      this.emit(state, {
+        type: "tool_result",
+        toolName: obj.toolName as string,
+        result: obj.result,
+        isError: obj.isError as boolean | undefined,
+      });
+      return;
+    }
+
+    if (type === "thinking_delta") {
+      this.emit(state, { type: "thinking", text: (obj.delta as string) ?? "" });
       return;
     }
 

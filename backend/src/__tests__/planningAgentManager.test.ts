@@ -199,4 +199,32 @@ describe("PlanningAgentManager - communication", () => {
     tcpSocket.emit("data", Buffer.from(JSON.stringify({ type: "agent_end", messages: [] }) + "\n"));
     expect(events[0]).toEqual({ type: "conversation_complete" });
   });
+
+  it("emits tool_result event on tool_execution_end", async () => {
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    const socket = netState.lastSocket!;
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-1", (e) => events.push(e));
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "tool_execution_end", toolName: "bash", result: "ok", isError: false }) + "\n"
+    ));
+    expect(events).toEqual([{ type: "tool_result", toolName: "bash", result: "ok", isError: false }]);
+  });
+
+  it("emits thinking event on thinking_delta", async () => {
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-2", []);
+    const socket = netState.lastSocket!;
+    const events: import("../orchestrator/planningAgentManager.js").PlanningAgentEvent[] = [];
+    mgr.onOutput("proj-2", (e) => events.push(e));
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "thinking_delta", delta: "hmm..." }) + "\n"
+    ));
+    expect(events).toEqual([{ type: "thinking", text: "hmm..." }]);
+  });
 });
