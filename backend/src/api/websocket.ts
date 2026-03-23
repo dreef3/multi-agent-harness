@@ -27,7 +27,7 @@ function broadcastToProject(projectId: string, msg: WsServerMessage) {
 
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
   const repoList = repos.length > 0
-    ? repos.map((r) => `- **${r.name}**: ${r.cloneUrl} (default branch: ${r.defaultBranch})`).join("\n")
+    ? repos.map((r) => `- **${r.name}** (id: \`${r.id}\`): ${r.cloneUrl} (default branch: ${r.defaultBranch})`).join("\n")
     : "  (no repositories configured for this project)";
 
   let sourceSection = "";
@@ -242,6 +242,7 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
     // Start planning agent if not running
     const allRepos = listRepositories().filter(r => project.repositoryIds.includes(r.id));
     const repoUrls = allRepos.map(r => ({
+      id: r.id,
       name: r.name,
       url: process.env.GITHUB_TOKEN
         ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${process.env.GITHUB_TOKEN}@github.com/`)

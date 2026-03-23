@@ -54,14 +54,18 @@ for (const { name, url } of repos) {
 
 // ── Custom tools ──────────────────────────────────────────────────────────────
 
+const availableReposDesc = repos.length > 0
+  ? `Available repositories: ${repos.map(r => `${r.name} (id: ${r.id ?? r.name})`).join(", ")}`
+  : "No repositories configured.";
+
 const dispatchTasksTool = {
   name: "dispatch_tasks",
   label: "Dispatch Tasks",
-  description: "Submit new tasks or re-dispatch failed tasks for implementation sub-agents. Provide `id` to re-submit an existing task (resets it to pending), or omit `id` for new tasks.",
+  description: `Submit new tasks or re-dispatch failed tasks for implementation sub-agents. Provide \`id\` to re-submit an existing task (resets it to pending), or omit \`id\` for new tasks. ${availableReposDesc}`,
   parameters: Type.Object({
     tasks: Type.Array(Type.Object({
       id: Type.Optional(Type.String({ description: "Omit for new tasks; provide to re-dispatch a failed task" })),
-      repositoryId: Type.String({ description: "Repository ID where this task should run" }),
+      repositoryId: Type.String({ description: `Repository ID where this task should run. ${availableReposDesc}` }),
       description: Type.String({ description: "Full self-contained task description for the sub-agent" }),
     })),
   }),
@@ -77,6 +81,36 @@ const dispatchTasksTool = {
     const data = await res.json();
     return {
       content: [{ type: "text", text: `Dispatched ${data.dispatched} task(s). Sub-agents are running.` }],
+      details: {},
+    };
+  },
+};
+
+const writePlanningDocumentTool = {
+  name: "write_planning_document",
+  label: "Write Planning Document",
+  description:
+    'Write a planning document to the project\'s planning branch in the primary repository. ' +
+    'Call with type "spec" first to write the design spec and open the PR. ' +
+    'Call with type "plan" after spec is approved (LGTM received) to write the implementation plan. ' +
+    'Returns the PR URL. You MUST call this instead of using bash/git/curl to create PRs.',
+  parameters: Type.Object({
+    type: Type.Union([Type.Literal("spec"), Type.Literal("plan")], { description: '"spec" or "plan"' }),
+    content: Type.String({ description: "Full Markdown content of the document" }),
+  }),
+  execute: async (_toolCallId, params) => {
+    const res = await fetch(`${BACKEND_URL}/api/projects/${PROJECT_ID}/planning-document`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: params.type, content: params.content }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: `HTTP ${res.status} ${res.statusText}` }));
+      return { content: [{ type: "text", text: `Error: ${err.error ?? JSON.stringify(err)}` }], details: {} };
+    }
+    const data = await res.json();
+    return {
+      content: [{ type: "text", text: `PR created/updated at: ${data.prUrl}` }],
       details: {},
     };
   },
@@ -136,6 +170,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ── Session setup ─────────────────────────────────────────────────────────────
+// Remove GITHUB_TOKEN from env before starting the AI session — the planning agent
+// must use the write_planning_document tool (which calls the backend) instead of
+// directly calling the GitHub API via bash/curl.
+delete process.env.GITHUB_TOKEN;
+
 console.error(`[planning-agent] initialising session — provider=${AGENT_PROVIDER} model=${AGENT_MODEL ?? "(default)"}`);
 
 const sessionDir = join(PI_AGENT_DIR, "sessions");
@@ -187,7 +226,7 @@ try {
     authStorage,
     cwd: "/workspace",
     ...(model ? { model } : {}),
-    customTools: [dispatchTasksTool, getTaskStatusTool, getPullRequestsTool],
+    customTools: [writePlanningDocumentTool, dispatchTasksTool, getTaskStatusTool, getPullRequestsTool],
   });
   session = result.session;
 } catch (err) {

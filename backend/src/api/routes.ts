@@ -29,7 +29,7 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
   });
 
   // Mount sub-routers
-  router.use("/projects", createProjectsRouter());
+  router.use("/projects", createProjectsRouter(dataDir));
   router.use("/repositories", createRepositoriesRouter());
   router.use("/agents", createAgentsRouter());
   router.use("/jira", createJiraRouter());

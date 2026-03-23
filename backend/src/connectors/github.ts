@@ -86,6 +86,23 @@ export class GitHubConnector implements VcsConnector {
     }
   }
 
+  async findPullRequestByBranch(repo: Repository, headBranch: string): Promise<PullRequestResult | null> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+    try {
+      const { data } = await octokit.pulls.list({
+        owner,
+        repo: repoName,
+        head: `${owner}:${headBranch}`,
+        state: "open",
+      });
+      if (data.length === 0) return null;
+      return { id: String(data[0].number), url: data[0].html_url };
+    } catch {
+      return null;
+    }
+  }
+
   async getPullRequest(repo: Repository, prId: string): Promise<PullRequestInfo> {
     const octokit = this.getOctokit();
     const { owner, repoName } = this.getOwnerRepo(repo);

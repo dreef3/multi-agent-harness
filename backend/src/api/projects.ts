@@ -7,8 +7,9 @@ import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
 import { getRecoveryService } from "../orchestrator/recoveryService.js";
+import { handleWritePlanningDocument } from "../agents/planningTool.js";
 
-export function createProjectsRouter(): Router {
+export function createProjectsRouter(dataDir: string): Router {
   const router = Router();
   // List all projects
   router.get("/", (_req, res) => {
@@ -205,6 +206,26 @@ export function createProjectsRouter(): Router {
     }
 
     res.json({ dispatched: tasks.length });
+  });
+
+  // Write planning document (spec or plan) — called by the planning agent container
+  router.post("/:id/planning-document", async (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) { res.status(404).json({ error: "Project not found" }); return; }
+
+    const { type, content } = req.body as { type?: string; content?: string };
+    if (type !== "spec" && type !== "plan") {
+      res.status(400).json({ error: 'type must be "spec" or "plan"' });
+      return;
+    }
+    if (!content) { res.status(400).json({ error: "content is required" }); return; }
+
+    const result = await handleWritePlanningDocument(req.params.id, type, content, dataDir);
+    if ("error" in result) {
+      res.status(400).json(result);
+    } else {
+      res.json(result);
+    }
   });
 
   return router;

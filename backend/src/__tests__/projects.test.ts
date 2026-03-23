@@ -369,7 +369,7 @@ beforeEach(() => {
   initDb(tmpHttpDir);
   app = express();
   app.use(express.json());
-  app.use("/projects", createProjectsRouter());
+  app.use("/projects", createProjectsRouter("/tmp/test-data"));
 });
 
 afterEach(() => {

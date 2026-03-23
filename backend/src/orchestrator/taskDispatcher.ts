@@ -5,7 +5,7 @@ import { getProject, updateProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
-import { getConnector } from "../connectors/types.js";
+import { getConnector, ConnectorError } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
 import { config } from "../config.js";
 
@@ -168,9 +168,17 @@ Stage and commit all changes. The harness will open the pull request automatical
       console.log(`[taskDispatcher] Branch created, spinning up container`);
 
       // Create container
+      // Build authenticated push URL with token embedded; the sub-agent runner uses this
+      // for clone/push and deletes it from env before starting the AI session.
+      const ghToken = process.env.GITHUB_TOKEN;
+      const gitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
+        ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+        : repository.cloneUrl;
+
       containerId = await createSubAgentContainer(docker, {
         sessionId,
         repoCloneUrl: repository.cloneUrl,
+        gitPushUrl,
         branchName,
         taskDescription: this.buildTaskPrompt(task),
         taskId: task.id,
@@ -325,12 +333,29 @@ Stage and commit all changes. The harness will open the pull request automatical
 
     const closingRefs = buildClosingRefs(project.source?.githubIssues ?? []);
 
-    const prResult = await connector.createPullRequest(repository, {
-      title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
-      description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
-      headBranch: branchName,
-      baseBranch: repository.defaultBranch,
-    });
+    let prResult;
+    try {
+      prResult = await connector.createPullRequest(repository, {
+        title: `[${project.name}] ${description.slice(0, 50)}${description.length > 50 ? "..." : ""}`,
+        description: `Task: ${description}\n\nProject: ${project.name}\nAgent Session: ${agentSession.id}${closingRefs ? "\n\n" + closingRefs : ""}`,
+        headBranch: branchName,
+        baseBranch: repository.defaultBranch,
+      });
+    } catch (err) {
+      // If a PR already exists for this branch (common when reusing the planning branch),
+      // find and register the existing one instead of failing.
+      if (err instanceof ConnectorError && err.message.toLowerCase().includes("already exists")) {
+        const existing = await connector.findPullRequestByBranch(repository, branchName);
+        if (existing) {
+          console.log(`[taskDispatcher] PR already exists for branch ${branchName}, registering existing PR ${existing.id}`);
+          prResult = existing;
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
+      }
+    }
 
     const pullRequest: PullRequest = {
       id: randomUUID(),

@@ -151,6 +151,11 @@ export class BitbucketConnector implements VcsConnector {
     }
   }
 
+  async findPullRequestByBranch(_repo: Repository, _headBranch: string): Promise<import("./types.js").PullRequestResult | null> {
+    // Not yet implemented for Bitbucket
+    return null;
+  }
+
   async getPullRequest(repo: Repository, prId: string): Promise<PullRequestInfo> {
     const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
 

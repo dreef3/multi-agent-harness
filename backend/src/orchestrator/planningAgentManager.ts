@@ -42,7 +42,7 @@ export class PlanningAgentManager {
 
   async ensureRunning(
     projectId: string,
-    repos: Array<{ name: string; url: string }>
+    repos: Array<{ id?: string; name: string; url: string }>
   ): Promise<void> {
     if (this.projects.has(projectId)) return;
 
@@ -51,8 +51,19 @@ export class PlanningAgentManager {
 
     const existing = await this.findExistingContainer(containerName);
     if (existing) {
-      console.log(`[PlanningAgentManager] reusing existing container ${existing} for project ${projectId}`);
       containerId = existing;
+      try {
+        const info = await this.docker.getContainer(containerId).inspect();
+        if (!info.State.Running) {
+          await this.docker.getContainer(containerId).start();
+          console.log(`[PlanningAgentManager] restarted stopped container ${containerId} for project ${projectId}`);
+        } else {
+          console.log(`[PlanningAgentManager] reusing running container ${containerId} for project ${projectId}`);
+        }
+      } catch {
+        console.log(`[PlanningAgentManager] could not inspect ${containerId}, attempting start`);
+        try { await this.docker.getContainer(containerId).start(); } catch { /* ignore */ }
+      }
     } else {
       containerId = await this.createContainer(projectId, containerName, repos);
       await this.docker.getContainer(containerId).start();
@@ -111,9 +122,10 @@ export class PlanningAgentManager {
   private async createContainer(
     projectId: string,
     name: string,
-    repos: Array<{ name: string; url: string }>
+    repos: Array<{ id?: string; name: string; url: string }>
   ): Promise<string> {
-    const providerEnvVars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GITHUB_TOKEN", "OPENCODE_API_KEY",
+    // GITHUB_TOKEN is intentionally excluded — clone URLs are pre-authenticated in GIT_CLONE_URLS
+    const providerEnvVars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENCODE_API_KEY",
       "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY", "AGENT_PROVIDER", "AGENT_MODEL"]
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);

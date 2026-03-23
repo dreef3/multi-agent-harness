@@ -19,8 +19,7 @@ const PROVIDER_ENV_VARS = [
   "KIMI_API_KEY",
   "MINIMAX_API_KEY",
   "MINIMAX_CN_API_KEY",
-  // Git / VCS credentials
-  "GITHUB_TOKEN",
+  // Git / VCS credentials intentionally excluded — sub-agent gets GIT_PUSH_URL instead
   // Cloud providers
   "AWS_ACCESS_KEY_ID",
   "AWS_SECRET_ACCESS_KEY",
@@ -39,6 +38,8 @@ const PROVIDER_ENV_VARS = [
 export interface ContainerCreateOptions {
   sessionId: string;
   repoCloneUrl: string;
+  /** Authenticated push URL (token embedded). Used by runner.mjs for push; deleted from env before agent starts. */
+  gitPushUrl?: string;
   branchName: string;
   taskDescription?: string;
   agentProvider?: string;
@@ -56,6 +57,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
 
   const taskEnv = [
     ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
+    ...(opts.gitPushUrl ? [`GIT_PUSH_URL=${opts.gitPushUrl}`] : []),
     `AGENT_PROVIDER=${agentProvider}`,
     `AGENT_MODEL=${agentModel}`,
     `TASK_ID=${opts.taskId ?? ""}`,
