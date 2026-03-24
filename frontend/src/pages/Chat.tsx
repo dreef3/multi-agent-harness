@@ -93,6 +93,11 @@ export default function Chat() {
   const [streamingContent, setStreamingContent] = useState("");
   const [currentToolCall, setCurrentToolCall] = useState<ToolEvent | null>(null);
   const [toolCallCount, setToolCallCount] = useState(0);
+  const [retryBanner, setRetryBanner] = useState<{
+    message: string;
+    attempt?: number;
+    maxAttempts?: number;
+  } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const autoSentRef = useRef(false);
   const lastSeqIdRef = useRef(0);
@@ -108,6 +113,7 @@ export default function Chat() {
     setThinkingMode("none");
     setCurrentToolCall(null);
     setToolCallCount(0);
+    setRetryBanner(null);
     setIsLoadingMessages(true);
     lastSeqIdRef.current = 0;
     autoSentRef.current = false;
@@ -146,6 +152,7 @@ export default function Chat() {
       if (msg.type === "delta" && msg.text) {
         setThinkingMode("typing");
         setStreamingContent((prev) => prev + (msg.text as string));
+        setRetryBanner(null);
       } else if (msg.type === "message_complete") {
         setStreamingContent("");
         setThinkingMode("processing");
@@ -178,6 +185,13 @@ export default function Chat() {
             ? { ...prev, result: msg.result, isError: msg.isError as boolean | undefined }
             : null
         );
+      } else if (msg.type === "error") {
+        const errMsg = msg as { message?: string; retrying?: boolean; attempt?: number; maxAttempts?: number };
+        setRetryBanner({
+          message: (errMsg.message as string) ?? "Unknown error",
+          attempt: errMsg.retrying ? (errMsg.attempt as number | undefined) : undefined,
+          maxAttempts: errMsg.retrying ? (errMsg.maxAttempts as number | undefined) : undefined,
+        });
       }
     });
 
@@ -244,6 +258,28 @@ export default function Chat() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Chat</h1>
       </div>
+
+      {retryBanner && (
+        <div
+          className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm ${
+            retryBanner.attempt !== undefined
+              ? "bg-amber-900/30 border border-amber-600 text-amber-400"
+              : "bg-red-900/30 border border-red-600 text-red-400"
+          }`}
+        >
+          <span>
+            {retryBanner.attempt !== undefined
+              ? `Starting agent… (attempt ${retryBanner.attempt}/${retryBanner.maxAttempts ?? 5})`
+              : `Error: ${retryBanner.message}`}
+          </span>
+          <button
+            onClick={() => setRetryBanner(null)}
+            className="ml-auto text-xs opacity-70 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       <div className="flex-1 overflow-y-auto space-y-3 bg-gray-900 border border-gray-800 rounded-lg p-4">
         {messages.length === 0 && !streamingContent && !isThinking ? (

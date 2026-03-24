@@ -49,7 +49,7 @@ async function main() {
   app.use("/api", createRouter(config.dataDir, docker));
 
   const server = createServer(app);
-  setupWebSocket(server, config.dataDir);
+  setupWebSocket(server);
 
   server.listen(config.port, () => {
     console.log(`[startup] Backend listening on port ${config.port}`);

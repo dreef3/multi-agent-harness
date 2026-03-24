@@ -1,6 +1,7 @@
 import type Dockerode from "dockerode";
 import { PassThrough } from "stream";
 import { Socket } from "net";
+import { EventEmitter } from "node:events";
 import { config } from "../config.js";
 
 export type PlanningAgentEvent =
@@ -35,11 +36,13 @@ export function getPlanningAgentManager(): PlanningAgentManager {
   return instance;
 }
 
-export class PlanningAgentManager {
+export class PlanningAgentManager extends EventEmitter {
   private projects = new Map<string, ProjectState>();
   private readonly commitInProgress = new Set<string>();
 
-  constructor(private readonly docker: Dockerode) {}
+  constructor(private readonly docker: Dockerode) {
+    super();
+  }
 
   isRunning(projectId: string): boolean {
     return this.projects.has(projectId);
@@ -245,7 +248,7 @@ export class PlanningAgentManager {
         currentState.lifecycleState = "crashed";
         this.projects.delete(projectId);
         // Unblock any WS clients waiting for a response
-        this.emit(currentState, { type: "conversation_complete" });
+        this.emitAgentEvent(projectId, currentState, { type: "conversation_complete" });
       } else {
         console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
       }
@@ -281,13 +284,13 @@ export class PlanningAgentManager {
     if (type === "message_update") {
       const evt = obj.assistantMessageEvent as Record<string, unknown> | undefined;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
-        this.emit(state, { type: "delta", text: evt.delta });
+        this.emitAgentEvent(projectId, state, { type: "delta", text: evt.delta });
       }
       return;
     }
 
     if (type === "tool_execution_start") {
-      this.emit(state, {
+      this.emitAgentEvent(projectId, state, {
         type: "tool_call",
         toolName: obj.toolName as string,
         args: obj.args as Record<string, unknown> | undefined,
@@ -296,7 +299,7 @@ export class PlanningAgentManager {
     }
 
     if (type === "tool_execution_end") {
-      this.emit(state, {
+      this.emitAgentEvent(projectId, state, {
         type: "tool_result",
         toolName: obj.toolName as string,
         result: obj.result,
@@ -306,19 +309,19 @@ export class PlanningAgentManager {
     }
 
     if (type === "thinking_delta") {
-      this.emit(state, { type: "thinking", text: (obj.delta as string) ?? "" });
+      this.emitAgentEvent(projectId, state, { type: "thinking", text: (obj.delta as string) ?? "" });
       return;
     }
 
     if (type === "message_end") {
-      this.emit(state, { type: "message_complete" });
+      this.emitAgentEvent(projectId, state, { type: "message_complete" });
       return;
     }
 
     if (type === "agent_end") {
       state.isStreaming = false;
       state.promptPending = false;
-      this.emit(state, { type: "conversation_complete" });
+      this.emitAgentEvent(projectId, state, { type: "conversation_complete" });
       void this.commitSessionLog(projectId);
       // Note: do NOT call checkStop here. The container lifecycle is driven by WS
       // connection count — it stops when the last client disconnects (decrementConnections).
@@ -328,10 +331,11 @@ export class PlanningAgentManager {
     }
   }
 
-  private emit(state: ProjectState, event: PlanningAgentEvent): void {
+  private emitAgentEvent(projectId: string, state: ProjectState, event: PlanningAgentEvent): void {
     for (const handler of state.outputHandlers) {
       try { handler(event); } catch { /* ignore handler errors */ }
     }
+    this.emit(projectId, event);
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
@@ -348,7 +352,7 @@ export class PlanningAgentManager {
     console.log(`[PlanningAgentManager] ${projectId} → idle (2-min grace timer started)`);
   }
 
-  async sendPrompt(projectId: string, message: string): Promise<void> {
+  async sendPrompt(projectId: string, message: string, context?: string): Promise<void> {
     if (!this.projects.has(projectId)) {
       // Container stopped (e.g. idle timeout). Restart it so the system message reaches the agent.
       console.log(`[PlanningAgentManager] sendPrompt: no container for ${projectId}, restarting...`);
@@ -391,6 +395,7 @@ export class PlanningAgentManager {
     const cmd = JSON.stringify({
       type: "prompt",
       message,
+      ...(context ? { context } : {}),
       ...(state.isStreaming ? { streamingBehavior: "followUp" } : {}),
     }) + "\n";
     state.tcpSocket.write(cmd);

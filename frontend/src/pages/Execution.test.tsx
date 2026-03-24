@@ -20,10 +20,10 @@ vi.mock('../lib/ws', () => ({
   },
 }));
 
-global.fetch = vi.fn().mockResolvedValue({
+vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
   ok: false,
   json: async () => [],
-} as Response);
+} as Response));
 
 function renderExecution() {
   return render(

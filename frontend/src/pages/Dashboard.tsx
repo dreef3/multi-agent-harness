@@ -6,6 +6,7 @@ export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadProjects();
@@ -30,6 +31,22 @@ export default function Dashboard() {
       setProjects(projects.filter((p) => p.id !== id));
     } catch (err) {
       alert(err instanceof Error ? err.message : "Failed to delete project");
+    }
+  }
+
+  async function handleRetry(id: string) {
+    setRetrying((prev) => new Set([...prev, id]));
+    try {
+      await api.projects.retry(id);
+      await loadProjects();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Failed to retry project");
+    } finally {
+      setRetrying((prev) => {
+        const s = new Set(prev);
+        s.delete(id);
+        return s;
+      });
     }
   }
 
@@ -102,6 +119,9 @@ export default function Dashboard() {
                 <p className="text-gray-500 text-xs">
                   Created {new Date(project.createdAt).toLocaleDateString()}
                 </p>
+                {project.lastError && (
+                  <p className="text-red-400 text-xs mt-1">{project.lastError}</p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Link
@@ -126,6 +146,15 @@ export default function Dashboard() {
                 >
                   Execute
                 </Link>
+                {(project.status === "failed" || project.status === "error") && (
+                  <button
+                    onClick={() => handleRetry(project.id)}
+                    disabled={retrying.has(project.id)}
+                    className="text-green-400 hover:text-green-300 disabled:text-gray-600 disabled:cursor-not-allowed px-3 py-1 text-sm"
+                  >
+                    {retrying.has(project.id) ? "Retrying…" : "Retry"}
+                  </button>
+                )}
                 <button
                   onClick={() => handleDelete(project.id)}
                   className="text-red-400 hover:text-red-300 px-3 py-1 text-sm"
