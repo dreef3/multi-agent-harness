@@ -198,6 +198,7 @@ export function setupWebSocket(server: Server) {
           console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
           // Master agent prompt
           const context = buildMasterAgentContext(project, allRepos);
+          console.log(`[ws] Dispatching message to planning agent for project ${projectId}`);
           await manager.sendPrompt(projectId, msg.text, context);
         } else if (msg.type === "steer" && msg.text) {
           console.log(`[ws] Received steer for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);

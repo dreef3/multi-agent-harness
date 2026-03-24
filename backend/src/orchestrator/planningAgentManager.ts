@@ -63,20 +63,21 @@ export class PlanningAgentManager extends EventEmitter {
       try {
         const info = await this.docker.getContainer(containerId).inspect();
         if (!info.State.Running) {
-          console.log(`[PlanningAgentManager] starting existing stopped container ${containerId} for project ${projectId}`);
+          console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — starting existing stopped container ${containerId}`);
           await this.docker.getContainer(containerId).start();
           console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
         } else {
           console.log(`[PlanningAgentManager] reusing running container ${containerId} for project ${projectId}`);
         }
       } catch {
-        console.log(`[PlanningAgentManager] could not inspect ${containerId}, attempting start`);
+        console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — could not inspect ${containerId}, attempting start`);
         try {
           await this.docker.getContainer(containerId).start();
           console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
         } catch { /* ignore */ }
       }
     } else {
+      console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — creating new container`);
       containerId = await this.createContainer(projectId, containerName, repos);
       await this.docker.getContainer(containerId).start();
       console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
@@ -361,7 +362,7 @@ export class PlanningAgentManager extends EventEmitter {
   async sendPrompt(projectId: string, message: string, context?: string): Promise<void> {
     if (!this.projects.has(projectId)) {
       // Container stopped (e.g. idle timeout). Restart it so the system message reaches the agent.
-      console.log(`[PlanningAgentManager] sendPrompt: no container for ${projectId}, restarting...`);
+      console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — restarting before sending prompt`);
       try {
         const { getProject } = await import("../store/projects.js");
         const { listRepositories } = await import("../store/repositories.js");
