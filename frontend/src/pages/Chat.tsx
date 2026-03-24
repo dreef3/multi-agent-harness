@@ -102,6 +102,8 @@ export default function Chat() {
 
     // Reset all state when project changes — prevents stale data from previous project
     setMessages([]);
+    setInput("");
+    setSending(false);
     setStreamingContent("");
     setThinkingMode("none");
     setCurrentToolCall(null);
