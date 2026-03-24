@@ -129,11 +129,11 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
     const { listProjectsAwaitingLgtm } = await import("./store/projects.js");
     projects = listProjectsAwaitingLgtm();
   } catch (error) {
-    console.error("[polling] Failed to list projects awaiting LGTM:", error);
+    console.error("[polling] Failed to list projects awaiting approval:", error);
     return;
   }
 
-  console.log(`[polling] pollPlanningPrs: ${projects.length} project(s) awaiting LGTM`);
+  console.log(`[polling] pollPlanningPrs: ${projects.length} project(s) awaiting approval`);
   for (const p of projects) {
     console.log(`[polling]   project id=${p.id} name="${p.name}" status=${p.status} planningPr=${p.planningPr?.number ?? "none"}`);
   }
@@ -289,7 +289,7 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
       console.log(`[polling] Found ${totalNewComments} new comments across all PRs`);
     }
 
-    // Poll planning PRs for LGTM
+    // Poll planning PRs for approval
     await pollPlanningPrs(docker);
   } catch (error) {
     console.error("[polling] Error during poll cycle:", error);
