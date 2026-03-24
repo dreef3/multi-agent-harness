@@ -1,4 +1,4 @@
-import type { Repository, VcsComment } from "../models/types.js";
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo } from "./types.js";
 import { ConnectorError } from "./types.js";
 
@@ -283,6 +283,39 @@ export class BitbucketConnector implements VcsConnector {
     } catch (error) {
       throw new ConnectorError(
         `Failed to commit file: ${error instanceof Error ? error.message : String(error)}`,
+        "bitbucket-server",
+        error
+      );
+    }
+  }
+
+  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
+    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
+
+    try {
+      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/pull-requests/${prId}`;
+      const pr = await this.fetchJson<{
+        reviewers: Array<{
+          user: { name: string; displayName?: string };
+          approved: boolean;
+          lastUpdated?: string;
+        }>;
+      }>(url);
+
+      const approvals: VcsApproval[] = [];
+      for (const reviewer of pr.reviewers ?? []) {
+        if (reviewer.approved && reviewer.user?.name) {
+          approvals.push({
+            author: reviewer.user.name,
+            createdAt: reviewer.lastUpdated ?? new Date().toISOString(),
+          });
+        }
+      }
+
+      return approvals;
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
         "bitbucket-server",
         error
       );

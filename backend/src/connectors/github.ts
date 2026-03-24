@@ -1,5 +1,5 @@
 import { Octokit } from "@octokit/rest";
-import type { Repository, VcsComment } from "../models/types.js";
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo } from "./types.js";
 import { ConnectorError } from "./types.js";
 
@@ -252,6 +252,47 @@ export class GitHubConnector implements VcsConnector {
     } catch (error) {
       throw new ConnectorError(
         `Failed to commit file: ${error instanceof Error ? error.message : String(error)}`,
+        "github",
+        error
+      );
+    }
+  }
+
+  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+
+    try {
+      const { data: reviews } = await octokit.pulls.listReviews({
+        owner,
+        repo: repoName,
+        pull_number: parseInt(prId, 10),
+      });
+
+      // Build map of latest review state per user
+      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
+      for (const review of reviews) {
+        const login = review.user?.login;
+        if (!login) continue;
+        const submittedAt = review.submitted_at ?? new Date().toISOString();
+        const existing = latestByUser.get(login);
+        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
+          latestByUser.set(login, { state: review.state, submittedAt });
+        }
+      }
+
+      // Filter to only APPROVED states
+      const approvals: VcsApproval[] = [];
+      for (const [author, data] of latestByUser) {
+        if (data.state === "APPROVED") {
+          approvals.push({ author, createdAt: data.submittedAt });
+        }
+      }
+
+      return approvals;
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
         "github",
         error
       );
