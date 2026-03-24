@@ -40,50 +40,143 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Add VcsApproval Type and Update VcsConnector Interface**
+**Task: Add Tests for GitHub getApprovals**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling for both GitHub and BitBucket Server.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the GitHub `getApprovals` method.
 
-**Files to modify:**
-1. `backend/src/models/types.ts`
-2. `backend/src/connectors/types.ts`
+**File to modify:** `backend/src/__tests__/connectors.test.ts`
+
+**Prerequisites:** The GitHub connector should have the `getApprovals` method implemented.
 
 **Steps:**
 
-1. Open `backend/src/models/types.ts` and add the following interface after the existing `VcsComment` interface (around line 100):
+1. Open `backend/src/__tests__/connectors.test.ts`
 
+2. Add a new mock variable at the top with the other mocks:
 ```typescript
-export interface VcsApproval {
-  /** User identifier (login/username) */
-  author: string;
-  /** ISO timestamp of when approval was submitted */
-  createdAt: string;
-}
+const mockListReviews = vi.fn();
 ```
 
-2. Open `backend/src/connectors/types.ts` and update the import at the top to include `VcsApproval`:
-
+3. Update the Octokit mock to include `listReviews` in the `pulls` object:
 ```typescript
-import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
+    pulls: {
+      create: mockCreatePR,
+      get: mockGetPR,
+      listReviewComments: mockListReviewComments,
+      listReviews: mockListReviews,  // Add this line
+    },
 ```
 
-3. In the same file, add the `getApprovals` method to the `VcsConnector` interface, after the `commitFile` method:
+4. Add a new test suite for `GitHub getApprovals` after the existing GitHub tests (before the BitbucketConnector describe block):
 
 ```typescript
-  /**
-   * Get approvals on a pull request.
-   * Returns list of users who have approved the PR (latest review state per user).
-   * For GitHub: reviews with state 'APPROVED'
-   * For BitBucket: reviewers with approved: true
-   */
-  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
+describe("GitHub getApprovals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.GITHUB_TOKEN = "test-token";
+  });
+
+  it("returns empty array when no reviews exist", async () => {
+    mockListReviews.mockResolvedValue({ data: [] });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toEqual([]);
+    expect(mockListReviews).toHaveBeenCalledWith({
+      owner: "test-org",
+      repo: "test-repo",
+      pull_number: 123,
+    });
+  });
+
+  it("returns users with APPROVED state only", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "bob" }, state: "COMMENTED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "carol" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+        { user: { login: "dave" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(2);
+    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
+  });
+
+  it("uses latest review state when user has multiple reviews", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+    expect(approvals[0].createdAt).toBe("2024-01-02T00:00:00Z");
+  });
+
+  it("uses latest rejected state even when preceded by approval", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-02T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(0);
+  });
+
+  it("handles missing submitted_at gracefully", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [{ user: { login: "alice" }, state: "APPROVED", submitted_at: null }],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+    expect(approvals[0].createdAt).toBeDefined();
+  });
+
+  it("handles users with null login", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: null, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: null }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+  });
+
+  it("throws ConnectorError on API failure", async () => {
+    mockListReviews.mockRejectedValue(new Error("API error"));
+
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+  });
+
+  it("throws when GITHUB_TOKEN is not set", async () => {
+    delete process.env.GITHUB_TOKEN;
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+    process.env.GITHUB_TOKEN = "test-token";
+  });
+});
 ```
 
-4. Verify TypeScript compiles: `cd backend && bun run build`
+5. Run tests: `cd backend && bun run test connectors.test.ts`
 
-5. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles (will show errors in gitHub.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
+**Expected Result:** All tests pass including the new `GitHub getApprovals` tests.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T16:48:10.551Z
+Completed at: 2026-03-24T16:48:28.946Z
