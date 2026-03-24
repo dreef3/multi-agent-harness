@@ -40,69 +40,143 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Update Polling to Use Approvals Instead of LGTM Comments**
+**Task: Add Tests for GitHub getApprovals**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task updates the polling logic and removes the old LGTM detection.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the GitHub `getApprovals` method.
 
-**File to modify:** `backend/src/polling.ts`
+**File to modify:** `backend/src/__tests__/connectors.test.ts`
+
+**Prerequisites:** The GitHub connector should have the `getApprovals` method implemented.
 
 **Steps:**
 
-1. Open `backend/src/polling.ts`
+1. Open `backend/src/__tests__/connectors.test.ts`
 
-2. Remove the `detectLgtm` function (around lines 62-64):
+2. Add a new mock variable at the top with the other mocks:
 ```typescript
-// DELETE THIS ENTIRE FUNCTION:
-export function detectLgtm(body: string): boolean {
-  return /\bLGTM\b/i.test(body);
-}
+const mockListReviews = vi.fn();
 ```
 
-3. Remove the `lgtmPollStates` map (around line 67):
+3. Update the Octokit mock to include `listReviews` in the `pulls` object:
 ```typescript
-// DELETE THIS LINE:
-const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+    pulls: {
+      create: mockCreatePR,
+      get: mockGetPR,
+      listReviewComments: mockListReviewComments,
+      listReviews: mockListReviews,  // Add this line
+    },
 ```
 
-4. In the `pollPlanningPrs` function, find the section that fetches comments and checks for LGTM. Replace the comment-based detection with approval polling:
+4. Add a new test suite for `GitHub getApprovals` after the existing GitHub tests (before the BitbucketConnector describe block):
 
-**Find this code block:**
 ```typescript
-      const since = lgtmPollStates.get(project.id);
-      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
+describe("GitHub getApprovals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.GITHUB_TOKEN = "test-token";
+  });
 
-      // Update last seen timestamp
-      if (comments.length > 0) {
-        const latest = comments[comments.length - 1].createdAt;
-        lgtmPollStates.set(project.id, latest);
-      }
+  it("returns empty array when no reviews exist", async () => {
+    mockListReviews.mockResolvedValue({ data: [] });
 
-      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
-      const hasLgtm = comments.some(c => detectLgtm(c.body));
-      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
-      if (!hasLgtm) continue;
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toEqual([]);
+    expect(mockListReviews).toHaveBeenCalledWith({
+      owner: "test-org",
+      repo: "test-repo",
+      pull_number: 123,
+    });
+  });
+
+  it("returns users with APPROVED state only", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "bob" }, state: "COMMENTED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "carol" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+        { user: { login: "dave" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(2);
+    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
+  });
+
+  it("uses latest review state when user has multiple reviews", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+    expect(approvals[0].createdAt).toBe("2024-01-02T00:00:00Z");
+  });
+
+  it("uses latest rejected state even when preceded by approval", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-02T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(0);
+  });
+
+  it("handles missing submitted_at gracefully", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [{ user: { login: "alice" }, state: "APPROVED", submitted_at: null }],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+    expect(approvals[0].createdAt).toBeDefined();
+  });
+
+  it("handles users with null login", async () => {
+    mockListReviews.mockResolvedValue({
+      data: [
+        { user: null, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: null }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+      ],
+    });
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+  });
+
+  it("throws ConnectorError on API failure", async () => {
+    mockListReviews.mockRejectedValue(new Error("API error"));
+
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+  });
+
+  it("throws when GITHUB_TOKEN is not set", async () => {
+    delete process.env.GITHUB_TOKEN;
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+    process.env.GITHUB_TOKEN = "test-token";
+  });
+});
 ```
 
-**Replace with:**
-```typescript
-      const approvals = await connector.getApprovals(repo, String(project.planningPr.number));
-      console.log(`[polling] project ${project.id}: ${approvals.length} approval(s) detected`);
-      if (approvals.length === 0) continue;
+5. Run tests: `cd backend && bun run test connectors.test.ts`
 
-      console.log(`[polling] Approval detected on planning PR for project ${project.id} (status: ${project.status})`);
-```
-
-5. Update the system messages to reflect approval instead of LGTM:
-- Change `"[SYSTEM] The spec has been approved (LGTM received on the PR)."` to `"[SYSTEM] The spec has been approved (approval received on the PR)."`
-- Change `"[SYSTEM] The implementation plan has been approved (LGTM received on the PR)."` to `"[SYSTEM] The implementation plan has been approved (approval received on the PR)."`
-
-6. Remove any remaining `lgtmPollStates.delete(project.id)` calls (they were used to track comment timestamps for incremental polling, but approvals don't need this).
-
-7. Verify TypeScript compiles: `cd backend && bun run build`
-
-8. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles without errors. The polling now uses approval detection instead of LGTM comment matching.
+**Expected Result:** All tests pass including the new `GitHub getApprovals` tests.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:09:37.616Z
+Completed at: 2026-03-24T08:11:53.208Z
