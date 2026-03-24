@@ -40,69 +40,73 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Update Polling to Use Approvals Instead of LGTM Comments**
+**Task: Implement getApprovals in GitHub Connector**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task updates the polling logic and removes the old LGTM detection.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for GitHub using the Reviews API.
 
-**File to modify:** `backend/src/polling.ts`
+**File to modify:** `backend/src/connectors/github.ts`
+
+**Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
 
 **Steps:**
 
-1. Open `backend/src/polling.ts`
+1. Open `backend/src/connectors/github.ts`
 
-2. Remove the `detectLgtm` function (around lines 62-64):
+2. Update the import to include `VcsApproval`:
 ```typescript
-// DELETE THIS ENTIRE FUNCTION:
-export function detectLgtm(body: string): boolean {
-  return /\bLGTM\b/i.test(body);
-}
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 ```
 
-3. Remove the `lgtmPollStates` map (around line 67):
+3. Add the `getApprovals` method to the `GitHubConnector` class, after the `commitFile` method:
+
 ```typescript
-// DELETE THIS LINE:
-const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
-```
+  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
 
-4. In the `pollPlanningPrs` function, find the section that fetches comments and checks for LGTM. Replace the comment-based detection with approval polling:
+    try {
+      const { data: reviews } = await octokit.pulls.listReviews({
+        owner,
+        repo: repoName,
+        pull_number: parseInt(prId, 10),
+      });
 
-**Find this code block:**
-```typescript
-      const since = lgtmPollStates.get(project.id);
-      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
-
-      // Update last seen timestamp
-      if (comments.length > 0) {
-        const latest = comments[comments.length - 1].createdAt;
-        lgtmPollStates.set(project.id, latest);
+      // Build map of latest review state per user
+      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
+      for (const review of reviews) {
+        const login = review.user?.login;
+        if (!login) continue;
+        const submittedAt = review.submitted_at ?? new Date().toISOString();
+        const existing = latestByUser.get(login);
+        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
+          latestByUser.set(login, { state: review.state, submittedAt });
+        }
       }
 
-      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
-      const hasLgtm = comments.some(c => detectLgtm(c.body));
-      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
-      if (!hasLgtm) continue;
+      // Filter to only APPROVED states
+      const approvals: VcsApproval[] = [];
+      for (const [author, data] of latestByUser) {
+        if (data.state === "APPROVED") {
+          approvals.push({ author, createdAt: data.submittedAt });
+        }
+      }
+
+      return approvals;
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
+        "github",
+        error
+      );
+    }
+  }
 ```
 
-**Replace with:**
-```typescript
-      const approvals = await connector.getApprovals(repo, String(project.planningPr.number));
-      console.log(`[polling] project ${project.id}: ${approvals.length} approval(s) detected`);
-      if (approvals.length === 0) continue;
+4. Verify TypeScript compiles: `cd backend && bun run build`
 
-      console.log(`[polling] Approval detected on planning PR for project ${project.id} (status: ${project.status})`);
-```
+5. Run tests: `cd backend && bun run test`
 
-5. Update the system messages to reflect approval instead of LGTM:
-- Change `"[SYSTEM] The spec has been approved (LGTM received on the PR)."` to `"[SYSTEM] The spec has been approved (approval received on the PR)."`
-- Change `"[SYSTEM] The implementation plan has been approved (LGTM received on the PR)."` to `"[SYSTEM] The implementation plan has been approved (approval received on the PR)."`
-
-6. Remove any remaining `lgtmPollStates.delete(project.id)` calls (they were used to track comment timestamps for incremental polling, but approvals don't need this).
-
-7. Verify TypeScript compiles: `cd backend && bun run build`
-
-8. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles without errors. The polling now uses approval detection instead of LGTM comment matching.
+**Expected Result:** TypeScript compiles without errors. All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T22:45:22.827Z
+Completed at: 2026-03-24T22:53:14.900Z
