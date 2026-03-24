@@ -1,4 +1,4 @@
-import type { Repository, VcsComment } from "../models/types.js";
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 import { GitHubConnector } from "./github.js";
 import { BitbucketConnector } from "./bitbucket.js";
 
@@ -63,6 +63,14 @@ export interface VcsConnector {
     message: string,
     createBranch?: boolean
   ): Promise<void>;
+
+  /**
+   * Get approvals on a pull request.
+   * Returns list of users who have approved the PR (latest review state per user).
+   * For GitHub: reviews with state 'APPROVED'
+   * For BitBucket: reviewers with approved: true
+   */
+  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
 }
 
 export class ConnectorError extends Error {

@@ -118,6 +118,13 @@ export interface VcsComment {
   createdAt: string;
 }
 
+export interface VcsApproval {
+  /** User identifier (login/username) */
+  author: string;
+  /** ISO timestamp of when approval was submitted */
+  createdAt: string;
+}
+
 export interface DebounceConfig {
   strategy: "timer";
   delayMs: number; // default 600000 (10 minutes)
