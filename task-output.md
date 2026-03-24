@@ -40,65 +40,41 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Implement getApprovals in BitBucket Connector**
+**Task: Remove detectLgtm Tests**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for BitBucket Server using its REST API.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. The `detectLgtm` function has been removed from `polling.ts`, so we need to remove its corresponding tests.
 
-**File to modify:** `backend/src/connectors/bitbucket.ts`
-
-**Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
+**File to modify:** `backend/src/__tests__/polling.test.ts`
 
 **Steps:**
 
-1. Open `backend/src/connectors/bitbucket.ts`
+1. Open `backend/src/__tests__/polling.test.ts`
 
-2. Update the import to include `VcsApproval`:
-```typescript
-import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
-```
-
-3. Add the `getApprovals` method to the `BitbucketConnector` class, after the `commitFile` method:
+2. Find and remove the entire `detectLgtm` test suite:
 
 ```typescript
-  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
-    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
-
-    try {
-      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/pull-requests/${prId}`;
-      const pr = await this.fetchJson<{
-        reviewers: Array<{
-          user: { name: string; displayName?: string };
-          approved: boolean;
-          lastUpdated?: string;
-        }>;
-      }>(url);
-
-      const approvals: VcsApproval[] = [];
-      for (const reviewer of pr.reviewers ?? []) {
-        if (reviewer.approved && reviewer.user?.name) {
-          approvals.push({
-            author: reviewer.user.name,
-            createdAt: reviewer.lastUpdated ?? new Date().toISOString(),
-          });
-        }
-      }
-
-      return approvals;
-    } catch (error) {
-      throw new ConnectorError(
-        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
-        "bitbucket-server",
-        error
-      );
-    }
-  }
+// DELETE THIS ENTIRE BLOCK:
+describe("detectLgtm", () => {
+  it("detects standalone LGTM (case-insensitive)", async () => {
+    const { detectLgtm } = await import("../polling.js");
+    expect(detectLgtm("LGTM")).toBe(true);
+    expect(detectLgtm("lgtm")).toBe(true);
+    expect(detectLgtm("Looks good! LGTM")).toBe(true);
+    expect(detectLgtm("LGTM!")).toBe(true);
+    expect(detectLgtm("Great work")).toBe(false);
+    expect(detectLgtm("LGTMs")).toBe(false); // not a standalone word
+  });
+});
 ```
 
-4. Verify TypeScript compiles: `cd backend && bun run build`
+3. Run tests: `cd backend && bun run test polling.test.ts`
 
-5. Run tests: `cd backend && bun run test`
+4. Run all tests to verify nothing else is broken: `cd backend && bun run test`
 
-**Expected Result:** TypeScript compiles without errors. All existing tests pass.
+**Expected Result:**
+- Test file compiles without errors
+- All remaining tests pass
+- The test suite no longer references `detectLgtm`
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T17:02:33.691Z
+Completed at: 2026-03-24T17:06:54.555Z
