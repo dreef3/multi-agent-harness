@@ -40,133 +40,69 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Add Tests for BitBucket getApprovals**
+**Task: Update Polling to Use Approvals Instead of LGTM Comments**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the BitBucket `getApprovals` method.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task updates the polling logic and removes the old LGTM detection.
 
-**File to modify:** `backend/src/__tests__/connectors.test.ts`
-
-**Prerequisites:** The BitBucket connector should have the `getApprovals` method implemented.
+**File to modify:** `backend/src/polling.ts`
 
 **Steps:**
 
-1. Open `backend/src/__tests__/connectors.test.ts`
+1. Open `backend/src/polling.ts`
 
-2. Add a new test suite for `Bitbucket getApprovals` after the existing Bitbucket tests (at the end of the file, before the final `getConnector` describe block):
-
+2. Remove the `detectLgtm` function (around lines 62-64):
 ```typescript
-describe("Bitbucket getApprovals", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.BITBUCKET_TOKEN = "test-token";
-  });
-
-  it("returns empty array when no reviewers have approved", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: false }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toEqual([]);
-  });
-
-  it("returns empty array when reviewers array is empty", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ reviewers: [] }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toEqual([]);
-  });
-
-  it("returns users with approved: true", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [
-          { user: { name: "alice" }, approved: true, lastUpdated: "2024-01-01T00:00:00Z" },
-          { user: { name: "bob" }, approved: false },
-          { user: { name: "carol" }, approved: true, lastUpdated: "2024-01-02T00:00:00Z" },
-        ],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(2);
-    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
-  });
-
-  it("includes createdAt from lastUpdated timestamp", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: true, lastUpdated: "2024-03-15T10:30:00Z" }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals[0].createdAt).toBe("2024-03-15T10:30:00Z");
-  });
-
-  it("uses current timestamp when lastUpdated is missing", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: true }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].createdAt).toBeDefined();
-    // Should be a valid ISO date string
-    expect(new Date(approvals[0].createdAt).toISOString()).toBe(approvals[0].createdAt);
-  });
-
-  it("handles missing user name gracefully", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [
-          { user: null, approved: true },
-          { user: { name: null }, approved: true },
-          { user: { name: "alice" }, approved: true },
-        ],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].author).toBe("alice");
-  });
-
-  it("throws ConnectorError on API failure", async () => {
-    mockFetch.mockRejectedValue(new Error("API error"));
-
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-  });
-
-  it("throws when BITBUCKET_TOKEN is not set", async () => {
-    delete process.env.BITBUCKET_TOKEN;
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-    process.env.BITBUCKET_TOKEN = "test-token";
-  });
-});
+// DELETE THIS ENTIRE FUNCTION:
+export function detectLgtm(body: string): boolean {
+  return /\bLGTM\b/i.test(body);
+}
 ```
 
-3. Run tests: `cd backend && bun run test connectors.test.ts`
+3. Remove the `lgtmPollStates` map (around line 67):
+```typescript
+// DELETE THIS LINE:
+const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+```
 
-**Expected Result:** All tests pass including the new `Bitbucket getApprovals` tests.
+4. In the `pollPlanningPrs` function, find the section that fetches comments and checks for LGTM. Replace the comment-based detection with approval polling:
+
+**Find this code block:**
+```typescript
+      const since = lgtmPollStates.get(project.id);
+      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
+
+      // Update last seen timestamp
+      if (comments.length > 0) {
+        const latest = comments[comments.length - 1].createdAt;
+        lgtmPollStates.set(project.id, latest);
+      }
+
+      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
+      const hasLgtm = comments.some(c => detectLgtm(c.body));
+      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
+      if (!hasLgtm) continue;
+```
+
+**Replace with:**
+```typescript
+      const approvals = await connector.getApprovals(repo, String(project.planningPr.number));
+      console.log(`[polling] project ${project.id}: ${approvals.length} approval(s) detected`);
+      if (approvals.length === 0) continue;
+
+      console.log(`[polling] Approval detected on planning PR for project ${project.id} (status: ${project.status})`);
+```
+
+5. Update the system messages to reflect approval instead of LGTM:
+- Change `"[SYSTEM] The spec has been approved (LGTM received on the PR)."` to `"[SYSTEM] The spec has been approved (approval received on the PR)."`
+- Change `"[SYSTEM] The implementation plan has been approved (LGTM received on the PR)."` to `"[SYSTEM] The implementation plan has been approved (approval received on the PR)."`
+
+6. Remove any remaining `lgtmPollStates.delete(project.id)` calls (they were used to track comment timestamps for incremental polling, but approvals don't need this).
+
+7. Verify TypeScript compiles: `cd backend && bun run build`
+
+8. Run tests: `cd backend && bun run test`
+
+**Expected Result:** TypeScript compiles without errors. The polling now uses approval detection instead of LGTM comment matching.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T17:18:57.786Z
+Completed at: 2026-03-24T17:23:11.389Z
