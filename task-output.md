@@ -40,41 +40,72 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Remove detectLgtm Tests**
+**Task: Complete VcsApproval Implementation for Approval Polling**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. The `detectLgtm` function has been removed from `polling.ts`, so we need to remove its corresponding tests.
+## Context
+The feature to replace LGTM comments with native PR approvals was never fully implemented. The spec at `docs/superpowers/specs/2024-03-23-approval-polling-design.md` outlines what needs to be done.
 
-**File to modify:** `backend/src/__tests__/polling.test.ts`
+## Required Changes
 
-**Steps:**
-
-1. Open `backend/src/__tests__/polling.test.ts`
-
-2. Find and remove the entire `detectLgtm` test suite:
-
+### 1. Add VcsApproval Type
+Add to `backend/src/models/types.ts`:
 ```typescript
-// DELETE THIS ENTIRE BLOCK:
-describe("detectLgtm", () => {
-  it("detects standalone LGTM (case-insensitive)", async () => {
-    const { detectLgtm } = await import("../polling.js");
-    expect(detectLgtm("LGTM")).toBe(true);
-    expect(detectLgtm("lgtm")).toBe(true);
-    expect(detectLgtm("Looks good! LGTM")).toBe(true);
-    expect(detectLgtm("LGTM!")).toBe(true);
-    expect(detectLgtm("Great work")).toBe(false);
-    expect(detectLgtm("LGTMs")).toBe(false); // not a standalone word
-  });
-});
+export interface VcsApproval {
+  /** User identifier (login/username) */
+  author: string;
+  /** ISO timestamp of when approval was submitted */
+  createdAt: string;
+}
 ```
 
-3. Run tests: `cd backend && bun run test polling.test.ts`
+### 2. Update VcsConnector Interface
+Add to `backend/src/connectors/types.ts`:
+```typescript
+export interface VcsConnector {
+  // ... existing methods ...
 
-4. Run all tests to verify nothing else is broken: `cd backend && bun run test`
+  /**
+   * Get approvals on a pull request.
+   * Returns list of users who have approved the PR (latest review state per user).
+   * For GitHub: reviews with state 'APPROVED'
+   * For BitBucket: reviewers with approved: true
+   */
+  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
+}
+```
 
-**Expected Result:**
-- Test file compiles without errors
-- All remaining tests pass
-- The test suite no longer references `detectLgtm`
+### 3. Implement getApprovals in GitHub Connector
+In `backend/src/connectors/github.ts`, add the method that:
+- Uses `octokit.pulls.listReviews()` to get all reviews
+- Filters for the latest review state per user
+- Returns only those with `APPROVED` state
+- Handles missing `submitted_at` gracefully
+
+### 4. Implement getApprovals in BitBucket Connector
+In `backend/src/connectors/bitbucket.ts`, add the method that:
+- Fetches PR details from `/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}`
+- Returns reviewers where `approved: true`
+- Handles missing `lastUpdated` gracefully
+
+### 5. Update Polling
+In `backend/src/polling.ts`:
+- Remove the `detectLgtm()` function
+- Remove `lgtmPollStates` Map
+- Update `pollPlanningPrs()` to use `getApprovals()` instead of LGTM comment detection
+
+### 6. Add Unit Tests
+Add tests for `getApprovals` in `backend/src/__tests__/connectors.test.ts`:
+- Test empty results
+- Test filtering for APPROVED state only
+- Test that latest review state is used when multiple reviews exist
+- Test error handling
+
+### Verification
+```bash
+cd backend && bun test
+```
+
+All tests must pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T23:11:27.399Z
+Completed at: 2026-03-24T23:12:10.412Z
