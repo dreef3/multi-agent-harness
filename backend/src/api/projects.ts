@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
-import { getRepository } from "../store/repositories.js";
+import { getRepository, listRepositories } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
@@ -265,7 +265,6 @@ export function createProjectsRouter(dataDir: string): Router {
       const { getPlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
       const manager = getPlanningAgentManager();
       if (!manager.isRunning(req.params.id)) {
-        const { listRepositories } = await import("../store/repositories.js");
         const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
         const ghToken = process.env.GITHUB_TOKEN;
         const repoUrls = allRepos.map((r) => ({

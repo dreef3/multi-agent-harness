@@ -12,6 +12,7 @@ export interface Project {
     | "executing"
     | "completed"
     | "failed"
+    | "error"
     | "cancelled";
   source: {
     type: "jira" | "freeform" | "github";
