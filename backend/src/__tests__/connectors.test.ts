@@ -9,32 +9,37 @@ const mockGetRef = vi.fn();
 const mockCreatePR = vi.fn();
 const mockGetPR = vi.fn();
 const mockListReviewComments = vi.fn();
+const mockListReviews = vi.fn();
 const mockListIssueComments = vi.fn();
 const mockCreateComment = vi.fn();
 const mockGetContent = vi.fn();
 const mockCreateOrUpdateFileContents = vi.fn();
 
-vi.mock("@octokit/rest", () => ({
-  Octokit: vi.fn().mockImplementation(() => ({
-    git: {
-      getRef: mockGetRef,
-      createRef: mockCreateRef,
-    },
-    pulls: {
-      create: mockCreatePR,
-      get: mockGetPR,
-      listReviewComments: mockListReviewComments,
-    },
-    issues: {
-      listComments: mockListIssueComments,
-      createComment: mockCreateComment,
-    },
-    repos: {
-      getContent: mockGetContent,
-      createOrUpdateFileContents: mockCreateOrUpdateFileContents,
-    },
-  })),
-}));
+vi.mock("@octokit/rest", () => {
+  const Octokit = function () {
+    return {
+      git: {
+        getRef: mockGetRef,
+        createRef: mockCreateRef,
+      },
+      pulls: {
+        create: mockCreatePR,
+        get: mockGetPR,
+        listReviewComments: mockListReviewComments,
+        listReviews: mockListReviews,
+      },
+      issues: {
+        listComments: mockListIssueComments,
+        createComment: mockCreateComment,
+      },
+      repos: {
+        getContent: mockGetContent,
+        createOrUpdateFileContents: mockCreateOrUpdateFileContents,
+      },
+    };
+  };
+  return { Octokit };
+});
 
 describe("GitHubConnector", () => {
   let connector: GitHubConnector;
@@ -353,6 +358,109 @@ describe("GitHubConnector", () => {
         providerConfig: { owner: "test-org" },
       };
       await expect(connector.createBranch(badRepo, "feature", "main")).rejects.toThrow(ConnectorError);
+    });
+  });
+
+  describe("getApprovals", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+      process.env.GITHUB_TOKEN = "test-token";
+    });
+
+    it("returns empty array when no reviews exist", async () => {
+      mockListReviews.mockResolvedValue({ data: [] });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toEqual([]);
+      expect(mockListReviews).toHaveBeenCalledWith({
+        owner: "test-org",
+        repo: "test-repo",
+        pull_number: 123,
+      });
+    });
+
+    it("returns users with APPROVED state only", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: "bob" }, state: "COMMENTED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: "carol" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+          { user: { login: "dave" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+        ],
+      });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toHaveLength(2);
+      expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
+    });
+
+    it("uses latest review state when user has multiple reviews", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
+        ],
+      });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].author).toBe("alice");
+      expect(approvals[0].createdAt).toBe("2024-01-02T00:00:00Z");
+    });
+
+    it("uses latest rejected state even when preceded by approval", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-02T00:00:00Z" },
+        ],
+      });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toHaveLength(0);
+    });
+
+    it("handles missing submitted_at gracefully", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [{ user: { login: "alice" }, state: "APPROVED", submitted_at: null }],
+      });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].author).toBe("alice");
+      expect(approvals[0].createdAt).toBeDefined();
+    });
+
+    it("handles users with null login", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: null, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: null }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+          { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        ],
+      });
+
+      const approvals = await connector.getApprovals(repo, "123");
+
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0].author).toBe("alice");
+    });
+
+    it("throws ConnectorError on API failure", async () => {
+      mockListReviews.mockRejectedValue(new Error("API error"));
+
+      await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+    });
+
+    it("throws when GITHUB_TOKEN is not set", async () => {
+      delete process.env.GITHUB_TOKEN;
+      await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+      process.env.GITHUB_TOKEN = "test-token";
     });
   });
 });
