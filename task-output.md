@@ -40,69 +40,50 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Update Polling to Use Approvals Instead of LGTM Comments**
+**Task: Add VcsApproval Type and Update VcsConnector Interface**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task updates the polling logic and removes the old LGTM detection.
+**Context:** We are replacing LGTM comment polling with native PR approval polling for both GitHub and BitBucket Server.
 
-**File to modify:** `backend/src/polling.ts`
+**Files to modify:**
+1. `backend/src/models/types.ts`
+2. `backend/src/connectors/types.ts`
 
 **Steps:**
 
-1. Open `backend/src/polling.ts`
+1. Open `backend/src/models/types.ts` and add the following interface after the existing `VcsComment` interface (around line 100):
 
-2. Remove the `detectLgtm` function (around lines 62-64):
 ```typescript
-// DELETE THIS ENTIRE FUNCTION:
-export function detectLgtm(body: string): boolean {
-  return /\bLGTM\b/i.test(body);
+export interface VcsApproval {
+  /** User identifier (login/username) */
+  author: string;
+  /** ISO timestamp of when approval was submitted */
+  createdAt: string;
 }
 ```
 
-3. Remove the `lgtmPollStates` map (around line 67):
+2. Open `backend/src/connectors/types.ts` and update the import at the top to include `VcsApproval`:
+
 ```typescript
-// DELETE THIS LINE:
-const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 ```
 
-4. In the `pollPlanningPrs` function, find the section that fetches comments and checks for LGTM. Replace the comment-based detection with approval polling:
+3. In the same file, add the `getApprovals` method to the `VcsConnector` interface, after the `commitFile` method:
 
-**Find this code block:**
 ```typescript
-      const since = lgtmPollStates.get(project.id);
-      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
-
-      // Update last seen timestamp
-      if (comments.length > 0) {
-        const latest = comments[comments.length - 1].createdAt;
-        lgtmPollStates.set(project.id, latest);
-      }
-
-      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
-      const hasLgtm = comments.some(c => detectLgtm(c.body));
-      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
-      if (!hasLgtm) continue;
+  /**
+   * Get approvals on a pull request.
+   * Returns list of users who have approved the PR (latest review state per user).
+   * For GitHub: reviews with state 'APPROVED'
+   * For BitBucket: reviewers with approved: true
+   */
+  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
 ```
 
-**Replace with:**
-```typescript
-      const approvals = await connector.getApprovals(repo, String(project.planningPr.number));
-      console.log(`[polling] project ${project.id}: ${approvals.length} approval(s) detected`);
-      if (approvals.length === 0) continue;
+4. Verify TypeScript compiles: `cd backend && bun run build`
 
-      console.log(`[polling] Approval detected on planning PR for project ${project.id} (status: ${project.status})`);
-```
+5. Run tests: `cd backend && bun run test`
 
-5. Update the system messages to reflect approval instead of LGTM:
-- Change `"[SYSTEM] The spec has been approved (LGTM received on the PR)."` to `"[SYSTEM] The spec has been approved (approval received on the PR)."`
-- Change `"[SYSTEM] The implementation plan has been approved (LGTM received on the PR)."` to `"[SYSTEM] The implementation plan has been approved (approval received on the PR)."`
-
-6. Remove any remaining `lgtmPollStates.delete(project.id)` calls (they were used to track comment timestamps for incremental polling, but approvals don't need this).
-
-7. Verify TypeScript compiles: `cd backend && bun run build`
-
-8. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles without errors. The polling now uses approval detection instead of LGTM comment matching.
+**Expected Result:** TypeScript compiles (will show errors in github.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T17:23:11.389Z
+Completed at: 2026-03-24T17:27:56.450Z
