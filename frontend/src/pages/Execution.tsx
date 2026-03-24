@@ -282,7 +282,7 @@ export default function Execution() {
       {/* Jump to bottom */}
       {!atBottom && isRunning && (
         <button
-          onClick={() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); }}
+          onClick={() => { if (typeof bottomRef.current?.scrollIntoView === "function") bottomRef.current.scrollIntoView({ behavior: "smooth" }); setAtBottom(true); }}
           className="self-center bg-gray-800 hover:bg-gray-700 border border-gray-700 text-gray-300 text-sm px-4 py-1.5 rounded-full"
         >
           ↓ Jump to bottom
