@@ -40,50 +40,73 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Add VcsApproval Type and Update VcsConnector Interface**
+**Task: Implement getApprovals in GitHub Connector**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling for both GitHub and BitBucket Server.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for GitHub using the Reviews API.
 
-**Files to modify:**
-1. `backend/src/models/types.ts`
-2. `backend/src/connectors/types.ts`
+**File to modify:** `backend/src/connectors/github.ts`
+
+**Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
 
 **Steps:**
 
-1. Open `backend/src/models/types.ts` and add the following interface after the existing `VcsComment` interface (around line 100):
+1. Open `backend/src/connectors/github.ts`
 
-```typescript
-export interface VcsApproval {
-  /** User identifier (login/username) */
-  author: string;
-  /** ISO timestamp of when approval was submitted */
-  createdAt: string;
-}
-```
-
-2. Open `backend/src/connectors/types.ts` and update the import at the top to include `VcsApproval`:
-
+2. Update the import to include `VcsApproval`:
 ```typescript
 import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 ```
 
-3. In the same file, add the `getApprovals` method to the `VcsConnector` interface, after the `commitFile` method:
+3. Add the `getApprovals` method to the `GitHubConnector` class, after the `commitFile` method:
 
 ```typescript
-  /**
-   * Get approvals on a pull request.
-   * Returns list of users who have approved the PR (latest review state per user).
-   * For GitHub: reviews with state 'APPROVED'
-   * For BitBucket: reviewers with approved: true
-   */
-  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
+  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+
+    try {
+      const { data: reviews } = await octokit.pulls.listReviews({
+        owner,
+        repo: repoName,
+        pull_number: parseInt(prId, 10),
+      });
+
+      // Build map of latest review state per user
+      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
+      for (const review of reviews) {
+        const login = review.user?.login;
+        if (!login) continue;
+        const submittedAt = review.submitted_at ?? new Date().toISOString();
+        const existing = latestByUser.get(login);
+        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
+          latestByUser.set(login, { state: review.state, submittedAt });
+        }
+      }
+
+      // Filter to only APPROVED states
+      const approvals: VcsApproval[] = [];
+      for (const [author, data] of latestByUser) {
+        if (data.state === "APPROVED") {
+          approvals.push({ author, createdAt: data.submittedAt });
+        }
+      }
+
+      return approvals;
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
+        "github",
+        error
+      );
+    }
+  }
 ```
 
 4. Verify TypeScript compiles: `cd backend && bun run build`
 
 5. Run tests: `cd backend && bun run test`
 
-**Expected Result:** TypeScript compiles (will show errors in github.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
+**Expected Result:** TypeScript compiles without errors. All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:19:42.018Z
+Completed at: 2026-03-24T08:21:50.036Z
