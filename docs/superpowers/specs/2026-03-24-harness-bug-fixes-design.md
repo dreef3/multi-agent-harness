@@ -57,7 +57,7 @@ Every WebSocket `delta` event calls `setStreamingContent(prev => prev + text)`, 
 
 ### Design: State Machine
 
-`ProjectState` gains `lifecycleState: "starting" | "running" | "idle" | "stopping"` and `stopTimer: ReturnType<typeof setTimeout> | null`.
+`ProjectState` gains `lifecycleState: "starting" | "running" | "idle" | "stopping" | "crashed"` and `stopTimer: ReturnType<typeof setTimeout> | null`.
 
 **Transitions:**
 
