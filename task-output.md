@@ -83,7 +83,7 @@ import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 
 5. Run tests: `cd backend && bun run test`
 
-**Expected Result:** TypeScript compiles (will show errors in gitHub.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
+**Expected Result:** TypeScript compiles (will show errors in github.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:17:16.627Z
+Completed at: 2026-03-24T08:19:42.018Z
