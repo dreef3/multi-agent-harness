@@ -35,6 +35,7 @@ export function getPlanningAgentManager(): PlanningAgentManager {
 
 export class PlanningAgentManager {
   private projects = new Map<string, ProjectState>();
+  private readonly commitInProgress = new Set<string>();
 
   constructor(private readonly docker: Dockerode) {}
 
@@ -388,44 +389,55 @@ export class PlanningAgentManager {
   }
 
   private async commitSessionLog(projectId: string): Promise<void> {
-    const sessionPath = `/pi-agent/sessions/planning-${projectId}.jsonl`;
-    let content: string;
+    if (this.commitInProgress.has(projectId)) return;
+    this.commitInProgress.add(projectId);
     try {
-      const { readFile } = await import("node:fs/promises");
-      content = await readFile(sessionPath, "utf-8");
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-      console.warn(`[PlanningAgentManager] could not read session log for ${projectId}:`, err);
-      return;
-    }
+      const sessionPath = `/pi-agent/sessions/planning-${projectId}.jsonl`;
+      let content: string;
+      try {
+        const { readFile } = await import("node:fs/promises");
+        content = await readFile(sessionPath, "utf-8");
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+        console.warn(`[PlanningAgentManager] could not read session log for ${projectId}:`, err);
+        return;
+      }
 
-    const { getProject } = await import("../store/projects.js");
-    const project = getProject(projectId);
-    if (!project?.primaryRepositoryId) {
-      console.warn(`[PlanningAgentManager] no primary repository for ${projectId}, skipping session log commit`);
-      return;
-    }
+      const { getProject } = await import("../store/projects.js");
+      const project = getProject(projectId);
+      if (!project?.primaryRepositoryId) {
+        console.warn(`[PlanningAgentManager] no primary repository for ${projectId}, skipping session log commit`);
+        return;
+      }
 
-    const { getRepository } = await import("../store/repositories.js");
-    const repo = getRepository(project.primaryRepositoryId);
-    if (!repo || repo.provider !== "github") {
-      console.warn(`[PlanningAgentManager] primary repo for ${projectId} is not GitHub, skipping`);
-      return;
-    }
+      const { getRepository } = await import("../store/repositories.js");
+      const repo = getRepository(project.primaryRepositoryId);
+      if (!repo || repo.provider !== "github") {
+        console.warn(`[PlanningAgentManager] primary repo for ${projectId} is not GitHub, skipping`);
+        return;
+      }
 
-    try {
-      const { GitHubConnector } = await import("../connectors/github.js");
-      const connector = new GitHubConnector();
-      await connector.commitFile(
-        repo,
-        repo.defaultBranch,
-        `.harness/logs/planning-agent/${projectId}.jsonl`,
-        content,
-        `chore: save planning agent session log [${projectId}]`
-      );
-      console.log(`[PlanningAgentManager] session log committed for ${projectId}`);
-    } catch (err) {
-      console.warn(`[PlanningAgentManager] failed to commit session log for ${projectId}:`, err);
+      if (!repo.defaultBranch) {
+        console.warn(`[PlanningAgentManager] primary repo for ${projectId} has no defaultBranch, skipping session log commit`);
+        return;
+      }
+
+      try {
+        const { GitHubConnector } = await import("../connectors/github.js");
+        const connector = new GitHubConnector();
+        await connector.commitFile(
+          repo,
+          repo.defaultBranch,
+          `.harness/logs/planning-agent/${projectId}.jsonl`,
+          content,
+          `chore: save planning agent session log [${projectId}]`
+        );
+        console.log(`[PlanningAgentManager] session log committed for ${projectId}`);
+      } catch (err) {
+        console.warn(`[PlanningAgentManager] failed to commit session log for ${projectId}:`, err);
+      }
+    } finally {
+      this.commitInProgress.delete(projectId);
     }
   }
 }
