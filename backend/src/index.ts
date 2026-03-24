@@ -36,6 +36,7 @@ async function main() {
   console.log("[startup] Initializing planning agent manager...");
   const planningAgentManager = new PlanningAgentManager(docker);
   setPlanningAgentManager(planningAgentManager);
+  void planningAgentManager.cleanupStaleContainers();
 
   console.log("[startup] Running boot recovery (stale session scan)...");
   await recoveryService.recoverOnBoot();

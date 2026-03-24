@@ -37,6 +37,7 @@ function makeMockDocker(overrides: Record<string, unknown> = {}) {
     id: "container-plan-123",
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
     // Attach is only used for stderr logging; return a minimal stream
     attach: vi.fn().mockImplementation((_opts: unknown, cb: (err: null, stream: EventEmitter) => void) => {
       const stream = new EventEmitter();
@@ -396,5 +397,120 @@ describe("PlanningAgentManager - commitSessionLog", () => {
     await mgr.ensureRunning("proj-1", []);
     // Should not throw
     await expect(mgr.stopContainer("proj-1")).resolves.toBeUndefined();
+  });
+});
+
+describe("PlanningAgentManager - lifecycle grace period", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("does not stop container immediately when last WS connection drops", async () => {
+    vi.useFakeTimers();
+    try {
+      const { docker, mockContainer } = makeMockDocker();
+      const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+      const mgr = new PlanningAgentManager(docker as never);
+      await mgr.ensureRunning("proj-grace", []);
+      mgr.incrementConnections("proj-grace");
+      mgr.decrementConnections("proj-grace"); // last connection drops
+
+      // Not stopped yet — grace timer still running
+      expect(mockContainer.stop).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops container after 2-minute grace period elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      const { docker, mockContainer } = makeMockDocker();
+      const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+      const mgr = new PlanningAgentManager(docker as never);
+      await mgr.ensureRunning("proj-timer", []);
+      mgr.incrementConnections("proj-timer");
+      mgr.decrementConnections("proj-timer");
+
+      // Advance past the 120 s grace period
+      await vi.advanceTimersByTimeAsync(121_000);
+
+      expect(mockContainer.stop).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels stop timer when new connection arrives during grace period", async () => {
+    vi.useFakeTimers();
+    try {
+      const { docker, mockContainer } = makeMockDocker();
+      const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+      const mgr = new PlanningAgentManager(docker as never);
+      await mgr.ensureRunning("proj-cancel", []);
+      mgr.incrementConnections("proj-cancel");
+      mgr.decrementConnections("proj-cancel"); // grace timer starts
+
+      mgr.incrementConnections("proj-cancel"); // new connection — should cancel timer
+      await vi.advanceTimersByTimeAsync(121_000);
+
+      expect(mockContainer.stop).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("PlanningAgentManager - docker cleanup", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("removes container after stopping", async () => {
+    const { docker, mockContainer } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-remove", []);
+    await mgr.stopContainer("proj-remove");
+
+    expect(mockContainer.stop).toHaveBeenCalled();
+    expect(mockContainer.remove).toHaveBeenCalled();
+  });
+
+  it("cleanupStaleContainers removes stopped planning- and task- containers", async () => {
+    const removeMock = vi.fn().mockResolvedValue(undefined);
+    const { docker } = makeMockDocker();
+    vi.mocked(docker.listContainers).mockResolvedValue([
+      { Id: "aaa", Names: ["/planning-proj-1"], State: "exited" },
+      { Id: "bbb", Names: ["/task-abc12345678"], State: "exited" },
+      { Id: "ccc", Names: ["/planning-proj-2"], State: "running" }, // skip — running
+      { Id: "ddd", Names: ["/other-container"], State: "exited" }, // skip — not ours
+    ] as never);
+    vi.mocked(docker.getContainer).mockReturnValue({ remove: removeMock } as never);
+
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.cleanupStaleContainers();
+
+    // Only aaa and bbb removed
+    expect(removeMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("cleanupStaleContainers is non-fatal when removal fails", async () => {
+    const { docker } = makeMockDocker();
+    vi.mocked(docker.listContainers).mockResolvedValue([
+      { Id: "aaa", Names: ["/planning-fail"], State: "exited" },
+    ] as never);
+    vi.mocked(docker.getContainer).mockReturnValue({
+      remove: vi.fn().mockRejectedValue(new Error("no such container")),
+    } as never);
+
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+
+    // Must not throw
+    await expect(mgr.cleanupStaleContainers()).resolves.not.toThrow();
   });
 });

@@ -20,6 +20,8 @@ interface ProjectState {
   promptPending: boolean;
   wsConnectionCount: number;
   outputHandlers: Set<(event: PlanningAgentEvent) => void>;
+  lifecycleState: "starting" | "running" | "idle" | "stopping" | "crashed";
+  stopTimer: ReturnType<typeof setTimeout> | null;
 }
 
 let instance: PlanningAgentManager | null = null;
@@ -92,6 +94,8 @@ export class PlanningAgentManager {
       promptPending: false,
       wsConnectionCount: 0,
       outputHandlers: new Set(),
+      lifecycleState: "running",
+      stopTimer: null,
     };
     this.projects.set(projectId, state);
     this.listenTcp(projectId, state);
@@ -100,12 +104,23 @@ export class PlanningAgentManager {
   async stopContainer(projectId: string): Promise<void> {
     const state = this.projects.get(projectId);
     if (!state) return;
+    state.lifecycleState = "stopping";
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+    }
     this.projects.delete(projectId);
     state.tcpSocket.destroy();
     await this.commitSessionLog(projectId);
     try {
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
       console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
+      try {
+        await this.docker.getContainer(state.containerId).remove();
+        console.log(`[PlanningAgentManager] removed container ${state.containerId}`);
+      } catch (removeErr) {
+        console.warn(`[PlanningAgentManager] remove failed (non-fatal):`, removeErr);
+      }
     } catch (err) {
       console.warn(`[PlanningAgentManager] stop failed (may already be stopped):`, err);
     }
@@ -220,7 +235,20 @@ export class PlanningAgentManager {
     });
 
     state.tcpSocket.on("close", () => {
-      console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
+      const currentState = this.projects.get(projectId);
+      if (currentState && currentState.lifecycleState !== "stopping") {
+        console.error(`[PlanningAgentManager] TCP socket closed unexpectedly for ${projectId} — marking as crashed`);
+        if (currentState.stopTimer) {
+          clearTimeout(currentState.stopTimer);
+          currentState.stopTimer = null;
+        }
+        currentState.lifecycleState = "crashed";
+        this.projects.delete(projectId);
+        // Unblock any WS clients waiting for a response
+        this.emit(currentState, { type: "conversation_complete" });
+      } else {
+        console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
+      }
     });
 
     state.tcpSocket.on("error", (err) => {
@@ -307,10 +335,17 @@ export class PlanningAgentManager {
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
-    if (state.wsConnectionCount === 0 && !state.isStreaming && !state.promptPending) {
-      console.log(`[PlanningAgentManager] no connections + idle — stopping container for ${projectId}`);
+    if (state.wsConnectionCount > 0 || state.isStreaming || state.promptPending) return;
+    if (state.lifecycleState !== "running") return;
+    if (state.stopTimer) return; // already counting down
+
+    state.lifecycleState = "idle";
+    state.stopTimer = setTimeout(() => {
+      state.stopTimer = null;
+      console.log(`[PlanningAgentManager] grace period expired for ${projectId}, stopping`);
       void this.stopContainer(projectId);
-    }
+    }, 120_000);
+    console.log(`[PlanningAgentManager] ${projectId} → idle (2-min grace timer started)`);
   }
 
   async sendPrompt(projectId: string, message: string): Promise<void> {
@@ -345,6 +380,13 @@ export class PlanningAgentManager {
       console.warn(`[PlanningAgentManager] sendPrompt: still no container for project ${projectId} after restart`);
       return;
     }
+    // Cancel any pending stop timer — a prompt means the agent is actively needed
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+      state.lifecycleState = "running";
+      console.log(`[PlanningAgentManager] ${projectId} → running (stop timer cancelled by sendPrompt)`);
+    }
     state.promptPending = true;
     const cmd = JSON.stringify({
       type: "prompt",
@@ -372,7 +414,14 @@ export class PlanningAgentManager {
 
   incrementConnections(projectId: string): void {
     const state = this.projects.get(projectId);
-    if (state) state.wsConnectionCount++;
+    if (!state) return;
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+      state.lifecycleState = "running";
+      console.log(`[PlanningAgentManager] ${projectId} → running (stop timer cancelled by new connection)`);
+    }
+    state.wsConnectionCount++;
   }
 
   decrementConnections(projectId: string): void {
@@ -386,6 +435,29 @@ export class PlanningAgentManager {
     const state = this.projects.get(projectId);
     if (!state) return;
     this.checkStop(projectId, state);
+  }
+
+  async cleanupStaleContainers(): Promise<void> {
+    try {
+      const containers = await this.docker.listContainers({ all: true });
+      const stale = containers.filter((c) => {
+        const name = (c.Names?.[0] ?? "").replace(/^\//, "");
+        return (name.startsWith("planning-") || name.startsWith("task-")) && c.State !== "running";
+      });
+      for (const c of stale) {
+        try {
+          await this.docker.getContainer(c.Id).remove({ force: true });
+          console.log(`[PlanningAgentManager] cleaned up stale container ${c.Names?.[0]}`);
+        } catch (err) {
+          console.warn(`[PlanningAgentManager] cleanup failed for ${c.Id}:`, err);
+        }
+      }
+      if (stale.length > 0) {
+        console.log(`[PlanningAgentManager] cleaned up ${stale.length} stale container(s)`);
+      }
+    } catch (err) {
+      console.warn(`[PlanningAgentManager] container cleanup error:`, err);
+    }
   }
 
   private async commitSessionLog(projectId: string): Promise<void> {
