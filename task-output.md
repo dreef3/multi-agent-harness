@@ -40,135 +40,41 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-Note: this is retry attempt 1. The branch for this task may contain partial work from a previous attempt — start from its current remote state.
+**Task: Remove detectLgtm Tests**
 
-**Task: Add Tests for BitBucket getApprovals**
+**Context:** We are replacing LGTM comment polling with native PR approval polling. The `detectLgtm` function has been removed from `polling.ts`, so we need to remove its corresponding tests.
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the BitBucket `getApprovals` method.
-
-**File to modify:** `backend/src/__tests__/connectors.test.ts`
-
-**Prerequisites:** The BitBucket connector should have the `getApprovals` method implemented.
+**File to modify:** `backend/src/__tests__/polling.test.ts`
 
 **Steps:**
 
-1. Open `backend/src/__tests__/connectors.test.ts`
+1. Open `backend/src/__tests__/polling.test.ts`
 
-2. Add a new test suite for `Bitbucket getApprovals` after the existing Bitbucket tests (at the end of the file, before the final `getConnector` describe block):
+2. Find and remove the entire `detectLgtm` test suite:
 
 ```typescript
-describe("Bitbucket getApprovals", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.BITBUCKET_TOKEN = "test-token";
-  });
-
-  it("returns empty array when no reviewers have approved", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: false }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toEqual([]);
-  });
-
-  it("returns empty array when reviewers array is empty", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({ reviewers: [] }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toEqual([]);
-  });
-
-  it("returns users with approved: true", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [
-          { user: { name: "alice" }, approved: true, lastUpdated: "2024-01-01T00:00:00Z" },
-          { user: { name: "bob" }, approved: false },
-          { user: { name: "carol" }, approved: true, lastUpdated: "2024-01-02T00:00:00Z" },
-        ],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(2);
-    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
-  });
-
-  it("includes createdAt from lastUpdated timestamp", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: true, lastUpdated: "2024-03-15T10:30:00Z" }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals[0].createdAt).toBe("2024-03-15T10:30:00Z");
-  });
-
-  it("uses current timestamp when lastUpdated is missing", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [{ user: { name: "alice" }, approved: true }],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].createdAt).toBeDefined();
-    // Should be a valid ISO date string
-    expect(new Date(approvals[0].createdAt).toISOString()).toBe(approvals[0].createdAt);
-  });
-
-  it("handles missing user name gracefully", async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        reviewers: [
-          { user: null, approved: true },
-          { user: { name: null }, approved: true },
-          { user: { name: "alice" }, approved: true },
-        ],
-      }),
-    } as unknown as Response);
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].author).toBe("alice");
-  });
-
-  it("throws ConnectorError on API failure", async () => {
-    mockFetch.mockRejectedValue(new Error("API error"));
-
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-  });
-
-  it("throws when BITBUCKET_TOKEN is not set", async () => {
-    delete process.env.BITBUCKET_TOKEN;
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-    process.env.BITBUCKET_TOKEN = "test-token";
+// DELETE THIS ENTIRE BLOCK:
+describe("detectLgtm", () => {
+  it("detects standalone LGTM (case-insensitive)", async () => {
+    const { detectLgtm } = await import("../polling.js");
+    expect(detectLgtm("LGTM")).toBe(true);
+    expect(detectLgtm("lgtm")).toBe(true);
+    expect(detectLgtm("Looks good! LGTM")).toBe(true);
+    expect(detectLgtm("LGTM!")).toBe(true);
+    expect(detectLgtm("Great work")).toBe(false);
+    expect(detectLgtm("LGTMs")).toBe(false); // not a standalone word
   });
 });
 ```
 
-3. Run tests: `cd backend && bun run test connectors.test.ts`
+3. Run tests: `cd backend && bun run test polling.test.ts`
 
-**Expected Result:** All tests pass including the new `Bitbucket getApprovals` tests.
+4. Run all tests to verify nothing else is broken: `cd backend && bun run test`
+
+**Expected Result:**
+- Test file compiles without errors
+- All remaining tests pass
+- The test suite no longer references `detectLgtm`
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T23:02:51.021Z
+Completed at: 2026-03-24T23:11:27.399Z
