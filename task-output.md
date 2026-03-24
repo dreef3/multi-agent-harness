@@ -40,15 +40,18 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Complete VcsApproval Implementation for Approval Polling**
+**Task: Add VcsApproval Type and Update VcsConnector Interface**
 
-## Context
-The feature to replace LGTM comments with native PR approvals was never fully implemented. The spec at `docs/superpowers/specs/2024-03-23-approval-polling-design.md` outlines what needs to be done.
+**Context:** We are replacing LGTM comment polling with native PR approval polling for both GitHub and BitBucket Server.
 
-## Required Changes
+**Files to modify:**
+1. `backend/src/models/types.ts`
+2. `backend/src/connectors/types.ts`
 
-### 1. Add VcsApproval Type
-Add to `backend/src/models/types.ts`:
+**Steps:**
+
+1. Open `backend/src/models/types.ts` and add the following interface after the existing `VcsComment` interface (around line 100):
+
 ```typescript
 export interface VcsApproval {
   /** User identifier (login/username) */
@@ -58,12 +61,15 @@ export interface VcsApproval {
 }
 ```
 
-### 2. Update VcsConnector Interface
-Add to `backend/src/connectors/types.ts`:
-```typescript
-export interface VcsConnector {
-  // ... existing methods ...
+2. Open `backend/src/connectors/types.ts` and update the import at the top to include `VcsApproval`:
 
+```typescript
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
+```
+
+3. In the same file, add the `getApprovals` method to the `VcsConnector` interface, after the `commitFile` method:
+
+```typescript
   /**
    * Get approvals on a pull request.
    * Returns list of users who have approved the PR (latest review state per user).
@@ -71,41 +77,13 @@ export interface VcsConnector {
    * For BitBucket: reviewers with approved: true
    */
   getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
-}
 ```
 
-### 3. Implement getApprovals in GitHub Connector
-In `backend/src/connectors/github.ts`, add the method that:
-- Uses `octokit.pulls.listReviews()` to get all reviews
-- Filters for the latest review state per user
-- Returns only those with `APPROVED` state
-- Handles missing `submitted_at` gracefully
+4. Verify TypeScript compiles: `cd backend && bun run build`
 
-### 4. Implement getApprovals in BitBucket Connector
-In `backend/src/connectors/bitbucket.ts`, add the method that:
-- Fetches PR details from `/rest/api/1.0/projects/{projectKey}/repos/{repoSlug}/pull-requests/{prId}`
-- Returns reviewers where `approved: true`
-- Handles missing `lastUpdated` gracefully
+5. Run tests: `cd backend && bun run test`
 
-### 5. Update Polling
-In `backend/src/polling.ts`:
-- Remove the `detectLgtm()` function
-- Remove `lgtmPollStates` Map
-- Update `pollPlanningPrs()` to use `getApprovals()` instead of LGTM comment detection
-
-### 6. Add Unit Tests
-Add tests for `getApprovals` in `backend/src/__tests__/connectors.test.ts`:
-- Test empty results
-- Test filtering for APPROVED state only
-- Test that latest review state is used when multiple reviews exist
-- Test error handling
-
-### Verification
-```bash
-cd backend && bun test
-```
-
-All tests must pass.
+**Expected Result:** TypeScript compiles (will show errors in gitHub.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T17:07:54.723Z
+Completed at: 2026-03-24T17:14:26.121Z
