@@ -6,6 +6,7 @@ import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
+import { getEvents } from "../store/agentEvents.js";
 import { getRecoveryService } from "../orchestrator/recoveryService.js";
 import { handleWritePlanningDocument } from "../agents/planningTool.js";
 
@@ -123,6 +124,15 @@ export function createProjectsRouter(dataDir: string): Router {
     }
     const sessions = listAgentSessions(req.params.id);
     res.json(sessions);
+  });
+
+  router.get("/:id/master-events", (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    res.json(getEvents(`master-${req.params.id}`));
   });
 
   // Delete project
