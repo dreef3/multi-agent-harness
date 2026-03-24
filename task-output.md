@@ -40,75 +40,40 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-Note: this is retry attempt 1. The branch for this task may contain partial work from a previous attempt — start from its current remote state.
+## Task: Fix Root package.json Vitest Dependency Issue
 
-**Task: Implement getApprovals in GitHub Connector**
+The E2E tests build is failing because the root package.json has an invalid vitest version.
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for GitHub using the Reviews API.
+### Problem
+The root package.json has vitest version ^4.1.0 but this version doesn't exist:
+- Root package.json: "vitest", "^4.1.0" (INVALID VERSION)
+- backend/package.json: "vitest", "^1.6.1" (CORRECT)
 
-**File to modify:** `backend/src/connectors/github.ts`
+Vitest 4.1.0 doesn't exist. The latest vitest versions are in the 1.x/2.x range.
 
-**Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
+### Solution
+1. Edit /workspace/multi-agent-harness/package.json
+2. REMOVE vitest from devDependencies entirely - it's only needed in backend
+3. Keep vitest in backend/package.json where it belongs
 
-**Steps:**
+### Before (root package.json devDependencies section)
+"devDependencies": {
+  "@types/ws": "^8.18.1",
+  "vitest": "^4.1.0"
+}
 
-1. Open `backend/src/connectors/github.ts`
+### After (should be removed or corrected)
+"devDependencies": {
+  "@types/ws": "^8.18.1"
+}
 
-2. Update the import to include `VcsApproval`:
-```typescript
-import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
-```
+Or just remove the entire devDependencies block if @types/ws is also not needed at root level.
 
-3. Add the `getApprovals` method to the `GitHubConnector` class, after the `commitFile` method:
-
-```typescript
-  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
-    const octokit = this.getOctokit();
-    const { owner, repoName } = this.getOwnerRepo(repo);
-
-    try {
-      const { data: reviews } = await octokit.pulls.listReviews({
-        owner,
-        repo: repoName,
-        pull_number: parseInt(prId, 10),
-      });
-
-      // Build map of latest review state per user
-      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
-      for (const review of reviews) {
-        const login = review.user?.login;
-        if (!login) continue;
-        const submittedAt = review.submitted_at ?? new Date().toISOString();
-        const existing = latestByUser.get(login);
-        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
-          latestByUser.set(login, { state: review.state, submittedAt });
-        }
-      }
-
-      // Filter to only APPROVED states
-      const approvals: VcsApproval[] = [];
-      for (const [author, data] of latestByUser) {
-        if (data.state === "APPROVED") {
-          approvals.push({ author, createdAt: data.submittedAt });
-        }
-      }
-
-      return approvals;
-    } catch (error) {
-      throw new ConnectorError(
-        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
-        "github",
-        error
-      );
-    }
-  }
-```
-
-4. Verify TypeScript compiles: `cd backend && bun run build`
-
-5. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles without errors. All existing tests pass.
+### Steps
+1. Checkout the PR branch: harness/replace-lgtm-comments-with-rea-75c8b
+2. Edit package.json to remove the invalid vitest dependency
+3. Commit with message: "fix: remove invalid vitest dependency from root package.json"
+4. Push to the branch
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T23:21:44.145Z
+Completed at: 2026-03-24T23:25:04.692Z
