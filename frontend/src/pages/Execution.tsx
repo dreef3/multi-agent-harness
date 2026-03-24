@@ -236,7 +236,9 @@ export default function Execution() {
 
   // Auto-scroll
   useEffect(() => {
-    if (atBottom) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (atBottom && typeof bottomRef.current?.scrollIntoView === "function") {
+      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
   }, [events, atBottom, selectedAgent]);
 
   const handleScroll = useCallback(() => {
@@ -253,23 +255,8 @@ export default function Execution() {
     <div className="h-[calc(100vh-8rem)] flex flex-col gap-3">
       <h1 className="text-2xl font-bold">Execution</h1>
 
-      {/* Agent selector pills */}
-      <div className="flex flex-wrap gap-2">
-        {agents.map((agent) => (
-          <button
-            key={agent.id}
-            onClick={() => setSelectedAgent(agent.id)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm border transition-colors ${
-              selectedAgent === agent.id
-                ? "border-blue-500 bg-blue-900/30 text-white"
-                : "border-gray-700 bg-gray-900 text-gray-400 hover:text-white"
-            }`}
-          >
-            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_DOT[agent.status] ?? "bg-gray-600"}`} />
-            {agent.label}
-          </button>
-        ))}
-      </div>
+      {/* Agent picker */}
+      <AgentPicker agents={agents} selected={selectedAgent} onSelect={setSelectedAgent} />
 
       {/* Stuck indicator banner */}
       {selectedAgent_?.status === "stuck" && (
@@ -300,6 +287,73 @@ export default function Execution() {
         >
           ↓ Jump to bottom
         </button>
+      )}
+    </div>
+  );
+}
+
+function AgentPicker({
+  agents,
+  selected,
+  onSelect,
+}: {
+  agents: AgentInfo[];
+  selected: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const selectedAgent = agents.find((a) => a.id === selected);
+
+  return (
+    <div ref={wrapperRef} className="relative inline-block">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-700 bg-gray-900 text-sm text-white hover:border-gray-500 min-w-[200px]"
+      >
+        <span
+          className={`w-2 h-2 rounded-full flex-shrink-0 ${
+            STATUS_DOT[selectedAgent?.status ?? "idle"] ?? "bg-gray-600"
+          }`}
+        />
+        <span className="flex-1 truncate text-left">
+          {selectedAgent?.label ?? "Select agent"}
+        </span>
+        <span className="text-gray-500 ml-1 flex-shrink-0">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-10 bg-gray-900 border border-gray-700 rounded-lg shadow-lg min-w-[240px] max-h-64 overflow-y-auto">
+          {agents.map((agent) => (
+            <button
+              key={agent.id}
+              onClick={() => {
+                onSelect(agent.id);
+                setOpen(false);
+              }}
+              className={`flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-gray-800 ${
+                agent.id === selected ? "bg-gray-800 text-white" : "text-gray-300"
+              }`}
+            >
+              <span
+                className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                  STATUS_DOT[agent.status] ?? "bg-gray-600"
+                }`}
+              />
+              <span className="truncate">{agent.label}</span>
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
