@@ -89,6 +89,16 @@ function migrate(database: Database.Database): void {
       name TEXT PRIMARY KEY,
       applied_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS agent_events (
+      session_id  TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      payload     TEXT NOT NULL,
+      timestamp   TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_events_session
+      ON agent_events (session_id);
   `);
 
   // Run idempotent ALTER TABLE migrations

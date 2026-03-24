@@ -114,6 +114,46 @@ export default function Execution() {
     return () => controller.abort();
   }, [id]);
 
+  // Replay planning agent events on mount
+  useEffect(() => {
+    if (!id) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    fetch(`/api/projects/${id}/master-events`, { signal })
+      .then((r) => {
+        if (!r.ok) return null;
+        return r.json() as Promise<
+          Array<{ type: string; payload: Record<string, unknown>; timestamp: string }>
+        >;
+      })
+      .then((evts) => {
+        if (!evts || signal.aborted || evts.length === 0) return;
+        const mapped: ActivityEvent[] = evts.map((e, i) => ({
+          id: `master-replay-${i}`,
+          agentId: "master",
+          type: e.type,
+          toolName: e.payload.toolName as string | undefined,
+          args: e.payload.args as Record<string, unknown> | undefined,
+          result: e.payload.result,
+          isError: e.payload.isError as boolean | undefined,
+          text: (e.payload.text ?? e.payload.delta) as string | undefined,
+          timestamp: e.timestamp,
+        }));
+        setEvents((prev) => {
+          const m = new Map(prev);
+          m.set("master", mapped);
+          return m;
+        });
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === "AbortError") return;
+        console.error("[Execution] Error fetching master events:", err);
+      });
+
+    return () => controller.abort();
+  }, [id]);
+
   // WebSocket handler
   useEffect(() => {
     if (!id) return;

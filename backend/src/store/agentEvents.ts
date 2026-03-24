@@ -1,21 +1,34 @@
+import { getDb } from "./db.js";
+
 export interface AgentEvent {
   type: string;
   payload: Record<string, unknown>;
   timestamp: string;
 }
 
-const store = new Map<string, AgentEvent[]>();
-
 export function appendEvent(sessionId: string, event: AgentEvent): void {
-  const events = store.get(sessionId) ?? [];
-  events.push(event);
-  store.set(sessionId, events);
+  getDb()
+    .prepare(
+      "INSERT INTO agent_events (session_id, type, payload, timestamp) VALUES (?, ?, ?, ?)"
+    )
+    .run(sessionId, event.type, JSON.stringify(event.payload), event.timestamp);
 }
 
 export function getEvents(sessionId: string): AgentEvent[] {
-  return store.get(sessionId) ?? [];
+  const rows = getDb()
+    .prepare(
+      "SELECT type, payload, timestamp FROM agent_events WHERE session_id = ? ORDER BY rowid"
+    )
+    .all(sessionId) as Array<{ type: string; payload: string; timestamp: string }>;
+  return rows.map((r) => ({
+    type: r.type,
+    payload: JSON.parse(r.payload) as Record<string, unknown>,
+    timestamp: r.timestamp,
+  }));
 }
 
 export function clearEvents(sessionId: string): void {
-  store.delete(sessionId);
+  getDb()
+    .prepare("DELETE FROM agent_events WHERE session_id = ?")
+    .run(sessionId);
 }

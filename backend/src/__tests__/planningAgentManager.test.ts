@@ -260,3 +260,141 @@ describe("PlanningAgentManager - injectMessage", () => {
     warnSpy.mockRestore();
   });
 });
+
+// ── commitSessionLog tests ─────────────────────────────────────────────────────
+
+describe("PlanningAgentManager - commitSessionLog", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("commits session log to GitHub on stopContainer", async () => {
+    const mockCommitFile = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockResolvedValue("line1\nline2\n"),
+    }));
+    vi.doMock("../store/projects.js", () => ({
+      getProject: vi.fn().mockReturnValue({
+        id: "proj-1",
+        primaryRepositoryId: "repo-1",
+      }),
+    }));
+    vi.doMock("../store/repositories.js", () => ({
+      getRepository: vi.fn().mockReturnValue({
+        id: "repo-1",
+        name: "my-repo",
+        provider: "github",
+        cloneUrl: "https://github.com/org/my-repo.git",
+        defaultBranch: "main",
+        providerConfig: { owner: "org", repo: "my-repo" },
+      }),
+    }));
+    vi.doMock("../connectors/github.js", () => ({
+      GitHubConnector: vi.fn().mockImplementation(function () {
+        return { commitFile: mockCommitFile };
+      }),
+    }));
+
+    const { docker, mockContainer } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    await mgr.stopContainer("proj-1");
+
+    expect(mockCommitFile).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "github" }),
+      "main",
+      ".harness/logs/planning-agent/proj-1.jsonl",
+      "line1\nline2\n",
+      "chore: save planning agent session log [proj-1]"
+    );
+    expect(mockContainer.stop).toHaveBeenCalled();
+  });
+
+  it("skips commit when session file does not exist (ENOENT)", async () => {
+    const enoent = Object.assign(new Error("no such file"), { code: "ENOENT" });
+    const mockCommitFile = vi.fn();
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockRejectedValue(enoent),
+    }));
+    vi.doMock("../store/projects.js", () => ({
+      getProject: vi.fn().mockReturnValue({ id: "proj-1", primaryRepositoryId: "repo-1" }),
+    }));
+    vi.doMock("../store/repositories.js", () => ({
+      getRepository: vi.fn().mockReturnValue({
+        id: "repo-1", provider: "github", defaultBranch: "main",
+        providerConfig: { owner: "org", repo: "r" },
+      }),
+    }));
+    vi.doMock("../connectors/github.js", () => ({
+      GitHubConnector: vi.fn().mockImplementation(function () {
+        return { commitFile: mockCommitFile };
+      }),
+    }));
+
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    await mgr.stopContainer("proj-1");
+
+    expect(mockCommitFile).not.toHaveBeenCalled();
+  });
+
+  it("skips commit when primary repo is not GitHub", async () => {
+    const mockCommitFile = vi.fn();
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockResolvedValue("content"),
+    }));
+    vi.doMock("../store/projects.js", () => ({
+      getProject: vi.fn().mockReturnValue({ id: "proj-1", primaryRepositoryId: "repo-1" }),
+    }));
+    vi.doMock("../store/repositories.js", () => ({
+      getRepository: vi.fn().mockReturnValue({
+        id: "repo-1", provider: "bitbucket-server", defaultBranch: "main",
+        providerConfig: {},
+      }),
+    }));
+    vi.doMock("../connectors/github.js", () => ({
+      GitHubConnector: vi.fn().mockImplementation(function () {
+        return { commitFile: mockCommitFile };
+      }),
+    }));
+
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    await mgr.stopContainer("proj-1");
+
+    expect(mockCommitFile).not.toHaveBeenCalled();
+  });
+
+  it("does not throw when commitFile fails — logs warning only", async () => {
+    vi.doMock("node:fs/promises", () => ({
+      readFile: vi.fn().mockResolvedValue("content"),
+    }));
+    vi.doMock("../store/projects.js", () => ({
+      getProject: vi.fn().mockReturnValue({ id: "proj-1", primaryRepositoryId: "repo-1" }),
+    }));
+    vi.doMock("../store/repositories.js", () => ({
+      getRepository: vi.fn().mockReturnValue({
+        id: "repo-1", provider: "github", defaultBranch: "main",
+        providerConfig: { owner: "org", repo: "r" },
+      }),
+    }));
+    vi.doMock("../connectors/github.js", () => ({
+      GitHubConnector: vi.fn().mockImplementation(function () {
+        return { commitFile: vi.fn().mockRejectedValue(new Error("API rate limit")) };
+      }),
+    }));
+
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-1", []);
+    // Should not throw
+    await expect(mgr.stopContainer("proj-1")).resolves.toBeUndefined();
+  });
+});

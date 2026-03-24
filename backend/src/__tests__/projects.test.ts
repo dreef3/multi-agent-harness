@@ -10,6 +10,7 @@ import type { Project, Plan } from "../models/types.js";
 import request from "supertest";
 import express from "express";
 import { createProjectsRouter } from "../api/projects.js";
+import { appendEvent } from "../store/agentEvents.js";
 
 vi.mock("../api/websocket.js", () => ({
   preInitAgent: vi.fn(),
@@ -439,5 +440,33 @@ describe("GET /projects/:id/tasks", () => {
     const res = await request(app).get(`/projects/${project.id}/tasks`);
     expect(res.status).toBe(200);
     expect(res.body.tasks[0].errorMessage).toBe("timeout");
+  });
+});
+
+describe("GET /projects/:id/master-events", () => {
+  it("returns 404 for unknown project", async () => {
+    const res = await request(app).get("/projects/nonexistent/master-events");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns empty array when no events recorded", async () => {
+    const project = createTestProject();
+    const res = await request(app).get(`/projects/${project.id}/master-events`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
+  });
+
+  it("returns stored planning agent events", async () => {
+    const project = createTestProject();
+    appendEvent(`master-${project.id}`, {
+      type: "tool_call",
+      payload: { toolName: "dispatch_tasks" },
+      timestamp: "2026-01-01T00:00:00.000Z",
+    });
+    const res = await request(app).get(`/projects/${project.id}/master-events`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(1);
+    expect(res.body[0].type).toBe("tool_call");
+    expect(res.body[0].payload.toolName).toBe("dispatch_tasks");
   });
 });
