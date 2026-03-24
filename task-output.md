@@ -40,35 +40,69 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-## Task: Update Render Logic for Loading Indicator
+**Task: Update Polling to Use Approvals Instead of LGTM Comments**
 
-**Repository:** multi-agent-harness
-**Files to modify:** `frontend/src/pages/Chat.tsx`
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task updates the polling logic and removes the old LGTM detection.
 
-### Objective
-Update the render logic to show loading indicator conditionally without blocking content.
+**File to modify:** `backend/src/polling.ts`
 
-### Changes Required
+**Steps:**
 
-1. **Remove the early return on loading:**
-   Delete the line: `if (isLoadingMessages) return <div className="text-gray-400">Loading...</div>;`
+1. Open `backend/src/polling.ts`
 
-2. **Add conditional loading indicator inside the message list:**
-   After the `{/* Streaming text */}` section, add:
-   ```typescript
-   {isLoadingMessages && messages.length > 0 && (
-     <div className="text-gray-400">Loading...</div>
-   )}
-   ```
-
-3. **Add optional chaining to scrollIntoView:**
-   Change: `messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });`
-   To: `messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });`
-
-### Verification
-```bash
-cd frontend && npx tsc --noEmit
+2. Remove the `detectLgtm` function (around lines 62-64):
+```typescript
+// DELETE THIS ENTIRE FUNCTION:
+export function detectLgtm(body: string): boolean {
+  return /\bLGTM\b/i.test(body);
+}
 ```
 
+3. Remove the `lgtmPollStates` map (around line 67):
+```typescript
+// DELETE THIS LINE:
+const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+```
+
+4. In the `pollPlanningPrs` function, find the section that fetches comments and checks for LGTM. Replace the comment-based detection with approval polling:
+
+**Find this code block:**
+```typescript
+      const since = lgtmPollStates.get(project.id);
+      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
+
+      // Update last seen timestamp
+      if (comments.length > 0) {
+        const latest = comments[comments.length - 1].createdAt;
+        lgtmPollStates.set(project.id, latest);
+      }
+
+      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
+      const hasLgtm = comments.some(c => detectLgtm(c.body));
+      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
+      if (!hasLgtm) continue;
+```
+
+**Replace with:**
+```typescript
+      const approvals = await connector.getApprovals(repo, String(project.planningPr.number));
+      console.log(`[polling] project ${project.id}: ${approvals.length} approval(s) detected`);
+      if (approvals.length === 0) continue;
+
+      console.log(`[polling] Approval detected on planning PR for project ${project.id} (status: ${project.status})`);
+```
+
+5. Update the system messages to reflect approval instead of LGTM:
+- Change `"[SYSTEM] The spec has been approved (LGTM received on the PR)."` to `"[SYSTEM] The spec has been approved (approval received on the PR)."`
+- Change `"[SYSTEM] The implementation plan has been approved (LGTM received on the PR)."` to `"[SYSTEM] The implementation plan has been approved (approval received on the PR)."`
+
+6. Remove any remaining `lgtmPollStates.delete(project.id)` calls (they were used to track comment timestamps for incremental polling, but approvals don't need this).
+
+7. Verify TypeScript compiles: `cd backend && bun run build`
+
+8. Run tests: `cd backend && bun run test`
+
+**Expected Result:** TypeScript compiles without errors. The polling now uses approval detection instead of LGTM comment matching.
+
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-23T21:32:53.304Z
+Completed at: 2026-03-24T08:09:37.616Z
