@@ -40,143 +40,41 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Add Tests for GitHub getApprovals**
+**Task: Remove detectLgtm Tests**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the GitHub `getApprovals` method.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. The `detectLgtm` function has been removed from `polling.ts`, so we need to remove its corresponding tests.
 
-**File to modify:** `backend/src/__tests__/connectors.test.ts`
-
-**Prerequisites:** The GitHub connector should have the `getApprovals` method implemented.
+**File to modify:** `backend/src/__tests__/polling.test.ts`
 
 **Steps:**
 
-1. Open `backend/src/__tests__/connectors.test.ts`
+1. Open `backend/src/__tests__/polling.test.ts`
 
-2. Add a new mock variable at the top with the other mocks:
-```typescript
-const mockListReviews = vi.fn();
-```
-
-3. Update the Octokit mock to include `listReviews` in the `pulls` object:
-```typescript
-    pulls: {
-      create: mockCreatePR,
-      get: mockGetPR,
-      listReviewComments: mockListReviewComments,
-      listReviews: mockListReviews,  // Add this line
-    },
-```
-
-4. Add a new test suite for `GitHub getApprovals` after the existing GitHub tests (before the BitbucketConnector describe block):
+2. Find and remove the entire `detectLgtm` test suite:
 
 ```typescript
-describe("GitHub getApprovals", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    process.env.GITHUB_TOKEN = "test-token";
-  });
-
-  it("returns empty array when no reviews exist", async () => {
-    mockListReviews.mockResolvedValue({ data: [] });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toEqual([]);
-    expect(mockListReviews).toHaveBeenCalledWith({
-      owner: "test-org",
-      repo: "test-repo",
-      pull_number: 123,
-    });
-  });
-
-  it("returns users with APPROVED state only", async () => {
-    mockListReviews.mockResolvedValue({
-      data: [
-        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: "bob" }, state: "COMMENTED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: "carol" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
-        { user: { login: "dave" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
-      ],
-    });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(2);
-    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
-  });
-
-  it("uses latest review state when user has multiple reviews", async () => {
-    mockListReviews.mockResolvedValue({
-      data: [
-        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-02T00:00:00Z" },
-      ],
-    });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].author).toBe("alice");
-    expect(approvals[0].createdAt).toBe("2024-01-02T00:00:00Z");
-  });
-
-  it("uses latest rejected state even when preceded by approval", async () => {
-    mockListReviews.mockResolvedValue({
-      data: [
-        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: "alice" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-02T00:00:00Z" },
-      ],
-    });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(0);
-  });
-
-  it("handles missing submitted_at gracefully", async () => {
-    mockListReviews.mockResolvedValue({
-      data: [{ user: { login: "alice" }, state: "APPROVED", submitted_at: null }],
-    });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].author).toBe("alice");
-    expect(approvals[0].createdAt).toBeDefined();
-  });
-
-  it("handles users with null login", async () => {
-    mockListReviews.mockResolvedValue({
-      data: [
-        { user: null, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: null }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
-        { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
-      ],
-    });
-
-    const approvals = await connector.getApprovals(repo, "123");
-
-    expect(approvals).toHaveLength(1);
-    expect(approvals[0].author).toBe("alice");
-  });
-
-  it("throws ConnectorError on API failure", async () => {
-    mockListReviews.mockRejectedValue(new Error("API error"));
-
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-  });
-
-  it("throws when GITHUB_TOKEN is not set", async () => {
-    delete process.env.GITHUB_TOKEN;
-    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
-    process.env.GITHUB_TOKEN = "test-token";
+// DELETE THIS ENTIRE BLOCK:
+describe("detectLgtm", () => {
+  it("detects standalone LGTM (case-insensitive)", async () => {
+    const { detectLgtm } = await import("../polling.js");
+    expect(detectLgtm("LGTM")).toBe(true);
+    expect(detectLgtm("lgtm")).toBe(true);
+    expect(detectLgtm("Looks good! LGTM")).toBe(true);
+    expect(detectLgtm("LGTM!")).toBe(true);
+    expect(detectLgtm("Great work")).toBe(false);
+    expect(detectLgtm("LGTMs")).toBe(false); // not a standalone word
   });
 });
 ```
 
-5. Run tests: `cd backend && bun run test connectors.test.ts`
+3. Run tests: `cd backend && bun run test polling.test.ts`
 
-**Expected Result:** All tests pass including the new `GitHub getApprovals` tests.
+4. Run all tests to verify nothing else is broken: `cd backend && bun run test`
+
+**Expected Result:**
+- Test file compiles without errors
+- All remaining tests pass
+- The test suite no longer references `detectLgtm`
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:11:53.208Z
+Completed at: 2026-03-24T08:15:08.683Z
