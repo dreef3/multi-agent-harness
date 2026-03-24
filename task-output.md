@@ -40,6 +40,8 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
+Note: this is retry attempt 1. The branch for this task may contain partial work from a previous attempt — start from its current remote state.
+
 **Task: Implement getApprovals in BitBucket Connector**
 
 **Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for BitBucket Server using its REST API.
@@ -101,4 +103,4 @@ import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 **Expected Result:** TypeScript compiles without errors. All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:24:08.987Z
+Completed at: 2026-03-24T08:38:22.237Z
