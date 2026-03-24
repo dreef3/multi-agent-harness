@@ -40,54 +40,46 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Implement getApprovals in GitHub Connector**
+**Task: Implement getApprovals in BitBucket Connector**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for GitHub using the Reviews API.
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for BitBucket Server using its REST API.
 
-**File to modify:** `backend/src/connectors/github.ts`
+**File to modify:** `backend/src/connectors/bitbucket.ts`
 
 **Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
 
 **Steps:**
 
-1. Open `backend/src/connectors/github.ts`
+1. Open `backend/src/connectors/bitbucket.ts`
 
 2. Update the import to include `VcsApproval`:
 ```typescript
 import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 ```
 
-3. Add the `getApprovals` method to the `GitHubConnector` class, after the `commitFile` method:
+3. Add the `getApprovals` method to the `BitbucketConnector` class, after the `commitFile` method:
 
 ```typescript
   async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
-    const octokit = this.getOctokit();
-    const { owner, repoName } = this.getOwnerRepo(repo);
+    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
 
     try {
-      const { data: reviews } = await octokit.pulls.listReviews({
-        owner,
-        repo: repoName,
-        pull_number: parseInt(prId, 10),
-      });
+      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/pull-requests/${prId}`;
+      const pr = await this.fetchJson<{
+        reviewers: Array<{
+          user: { name: string; displayName?: string };
+          approved: boolean;
+          lastUpdated?: string;
+        }>;
+      }>(url);
 
-      // Build map of latest review state per user
-      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
-      for (const review of reviews) {
-        const login = review.user?.login;
-        if (!login) continue;
-        const submittedAt = review.submitted_at ?? new Date().toISOString();
-        const existing = latestByUser.get(login);
-        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
-          latestByUser.set(login, { state: review.state, submittedAt });
-        }
-      }
-
-      // Filter to only APPROVED states
       const approvals: VcsApproval[] = [];
-      for (const [author, data] of latestByUser) {
-        if (data.state === "APPROVED") {
-          approvals.push({ author, createdAt: data.submittedAt });
+      for (const reviewer of pr.reviewers ?? []) {
+        if (reviewer.approved && reviewer.user?.name) {
+          approvals.push({
+            author: reviewer.user.name,
+            createdAt: reviewer.lastUpdated ?? new Date().toISOString(),
+          });
         }
       }
 
@@ -95,7 +87,7 @@ import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
     } catch (error) {
       throw new ConnectorError(
         `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
-        "github",
+        "bitbucket-server",
         error
       );
     }
@@ -109,4 +101,4 @@ import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
 **Expected Result:** TypeScript compiles without errors. All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:21:50.036Z
+Completed at: 2026-03-24T08:24:08.987Z
