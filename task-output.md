@@ -40,73 +40,135 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Implement getApprovals in GitHub Connector**
+Note: this is retry attempt 1. The branch for this task may contain partial work from a previous attempt — start from its current remote state.
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. This task implements the `getApprovals` method for GitHub using the Reviews API.
+**Task: Add Tests for BitBucket getApprovals**
 
-**File to modify:** `backend/src/connectors/github.ts`
+**Context:** We are replacing LGTM comment polling with native PR approval polling. This task adds unit tests for the BitBucket `getApprovals` method.
 
-**Prerequisites:** The `VcsApproval` type and `getApprovals` method signature should already be added to the interface.
+**File to modify:** `backend/src/__tests__/connectors.test.ts`
+
+**Prerequisites:** The BitBucket connector should have the `getApprovals` method implemented.
 
 **Steps:**
 
-1. Open `backend/src/connectors/github.ts`
+1. Open `backend/src/__tests__/connectors.test.ts`
 
-2. Update the import to include `VcsApproval`:
-```typescript
-import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
-```
-
-3. Add the `getApprovals` method to the `GitHubConnector` class, after the `commitFile` method:
+2. Add a new test suite for `Bitbucket getApprovals` after the existing Bitbucket tests (at the end of the file, before the final `getConnector` describe block):
 
 ```typescript
-  async getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]> {
-    const octokit = this.getOctokit();
-    const { owner, repoName } = this.getOwnerRepo(repo);
+describe("Bitbucket getApprovals", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.BITBUCKET_TOKEN = "test-token";
+  });
 
-    try {
-      const { data: reviews } = await octokit.pulls.listReviews({
-        owner,
-        repo: repoName,
-        pull_number: parseInt(prId, 10),
-      });
+  it("returns empty array when no reviewers have approved", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        reviewers: [{ user: { name: "alice" }, approved: false }],
+      }),
+    } as unknown as Response);
 
-      // Build map of latest review state per user
-      const latestByUser = new Map<string, { state: string; submittedAt: string }>();
-      for (const review of reviews) {
-        const login = review.user?.login;
-        if (!login) continue;
-        const submittedAt = review.submitted_at ?? new Date().toISOString();
-        const existing = latestByUser.get(login);
-        if (!existing || new Date(submittedAt) > new Date(existing.submittedAt)) {
-          latestByUser.set(login, { state: review.state, submittedAt });
-        }
-      }
+    const approvals = await connector.getApprovals(repo, "123");
 
-      // Filter to only APPROVED states
-      const approvals: VcsApproval[] = [];
-      for (const [author, data] of latestByUser) {
-        if (data.state === "APPROVED") {
-          approvals.push({ author, createdAt: data.submittedAt });
-        }
-      }
+    expect(approvals).toEqual([]);
+  });
 
-      return approvals;
-    } catch (error) {
-      throw new ConnectorError(
-        `Failed to get approvals: ${error instanceof Error ? error.message : String(error)}`,
-        "github",
-        error
-      );
-    }
-  }
+  it("returns empty array when reviewers array is empty", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ reviewers: [] }),
+    } as unknown as Response);
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toEqual([]);
+  });
+
+  it("returns users with approved: true", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        reviewers: [
+          { user: { name: "alice" }, approved: true, lastUpdated: "2024-01-01T00:00:00Z" },
+          { user: { name: "bob" }, approved: false },
+          { user: { name: "carol" }, approved: true, lastUpdated: "2024-01-02T00:00:00Z" },
+        ],
+      }),
+    } as unknown as Response);
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(2);
+    expect(approvals.map((a) => a.author).sort()).toEqual(["alice", "carol"]);
+  });
+
+  it("includes createdAt from lastUpdated timestamp", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        reviewers: [{ user: { name: "alice" }, approved: true, lastUpdated: "2024-03-15T10:30:00Z" }],
+      }),
+    } as unknown as Response);
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals[0].createdAt).toBe("2024-03-15T10:30:00Z");
+  });
+
+  it("uses current timestamp when lastUpdated is missing", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        reviewers: [{ user: { name: "alice" }, approved: true }],
+      }),
+    } as unknown as Response);
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].createdAt).toBeDefined();
+    // Should be a valid ISO date string
+    expect(new Date(approvals[0].createdAt).toISOString()).toBe(approvals[0].createdAt);
+  });
+
+  it("handles missing user name gracefully", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        reviewers: [
+          { user: null, approved: true },
+          { user: { name: null }, approved: true },
+          { user: { name: "alice" }, approved: true },
+        ],
+      }),
+    } as unknown as Response);
+
+    const approvals = await connector.getApprovals(repo, "123");
+
+    expect(approvals).toHaveLength(1);
+    expect(approvals[0].author).toBe("alice");
+  });
+
+  it("throws ConnectorError on API failure", async () => {
+    mockFetch.mockRejectedValue(new Error("API error"));
+
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+  });
+
+  it("throws when BITBUCKET_TOKEN is not set", async () => {
+    delete process.env.BITBUCKET_TOKEN;
+    await expect(connector.getApprovals(repo, "123")).rejects.toThrow(ConnectorError);
+    process.env.BITBUCKET_TOKEN = "test-token";
+  });
+});
 ```
 
-4. Verify TypeScript compiles: `cd backend && bun run build`
+3. Run tests: `cd backend && bun run test connectors.test.ts`
 
-5. Run tests: `cd backend && bun run test`
-
-**Expected Result:** TypeScript compiles without errors. All existing tests pass.
+**Expected Result:** All tests pass including the new `Bitbucket getApprovals` tests.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T22:53:14.900Z
+Completed at: 2026-03-24T23:02:51.021Z
