@@ -40,41 +40,50 @@ Stage and commit all changes. The harness will open the pull request automatical
 
 ## Your Task
 
-**Task: Remove detectLgtm Tests**
+**Task: Add VcsApproval Type and Update VcsConnector Interface**
 
-**Context:** We are replacing LGTM comment polling with native PR approval polling. The `detectLgtm` function has been removed from `polling.ts`, so we need to remove its corresponding tests.
+**Context:** We are replacing LGTM comment polling with native PR approval polling for both GitHub and BitBucket Server.
 
-**File to modify:** `backend/src/__tests__/polling.test.ts`
+**Files to modify:**
+1. `backend/src/models/types.ts`
+2. `backend/src/connectors/types.ts`
 
 **Steps:**
 
-1. Open `backend/src/__tests__/polling.test.ts`
-
-2. Find and remove the entire `detectLgtm` test suite:
+1. Open `backend/src/models/types.ts` and add the following interface after the existing `VcsComment` interface (around line 100):
 
 ```typescript
-// DELETE THIS ENTIRE BLOCK:
-describe("detectLgtm", () => {
-  it("detects standalone LGTM (case-insensitive)", async () => {
-    const { detectLgtm } = await import("../polling.js");
-    expect(detectLgtm("LGTM")).toBe(true);
-    expect(detectLgtm("lgtm")).toBe(true);
-    expect(detectLgtm("Looks good! LGTM")).toBe(true);
-    expect(detectLgtm("LGTM!")).toBe(true);
-    expect(detectLgtm("Great work")).toBe(false);
-    expect(detectLgtm("LGTMs")).toBe(false); // not a standalone word
-  });
-});
+export interface VcsApproval {
+  /** User identifier (login/username) */
+  author: string;
+  /** ISO timestamp of when approval was submitted */
+  createdAt: string;
+}
 ```
 
-3. Run tests: `cd backend && bun run test polling.test.ts`
+2. Open `backend/src/connectors/types.ts` and update the import at the top to include `VcsApproval`:
 
-4. Run all tests to verify nothing else is broken: `cd backend && bun run test`
+```typescript
+import type { Repository, VcsComment, VcsApproval } from "../models/types.js";
+```
 
-**Expected Result:**
-- Test file compiles without errors
-- All remaining tests pass
-- The test suite no longer references `detectLgtm`
+3. In the same file, add the `getApprovals` method to the `VcsConnector` interface, after the `commitFile` method:
+
+```typescript
+  /**
+   * Get approvals on a pull request.
+   * Returns list of users who have approved the PR (latest review state per user).
+   * For GitHub: reviews with state 'APPROVED'
+   * For BitBucket: reviewers with approved: true
+   */
+  getApprovals(repo: Repository, prId: string): Promise<VcsApproval[]>;
+```
+
+4. Verify TypeScript compiles: `cd backend && bun run build`
+
+5. Run tests: `cd backend && bun run test`
+
+**Expected Result:** TypeScript compiles (will show errors in gitHub.ts and bitbucket.ts about missing method - that's expected for now). All existing tests pass.
 
 Note: AI agent completed but made no file changes.
-Completed at: 2026-03-24T08:15:08.683Z
+Completed at: 2026-03-24T08:17:16.627Z
