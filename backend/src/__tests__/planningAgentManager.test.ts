@@ -245,20 +245,27 @@ describe("PlanningAgentManager - injectMessage", () => {
     await mgr.ensureRunning("proj-inject", []);
     const socket = netState.lastSocket!;
     socket.write.mockClear();
-    mgr.injectMessage("proj-inject", "[Sub-agent: Task A] asks: Is this right?");
+    await mgr.injectMessage("proj-inject", "[Sub-agent: Task A] asks: Is this right?");
     expect(socket.write).toHaveBeenCalledOnce();
     const written = JSON.parse((socket.write.mock.calls[0][0] as string).trim());
     expect(written).toMatchObject({ type: "prompt", message: "[Sub-agent: Task A] asks: Is this right?" });
   });
 
-  it("injectMessage is a no-op and warns when project has no running container", async () => {
+  it("injectMessage restarts container when project has no running container", async () => {
     const { docker } = makeMockDocker();
     const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
     const mgr = new PlanningAgentManager(docker as never);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    mgr.injectMessage("nonexistent", "hello");
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+    
+    // Mock getProject and listRepositories for the restart logic
+    vi.doMock("../store/projects.js", () => ({
+      getProject: vi.fn().mockReturnValue({ id: "proj-1", repositoryIds: [] }),
+    }));
+    vi.doMock("../store/repositories.js", () => ({
+      listRepositories: vi.fn().mockReturnValue([]),
+    }));
+
+    await mgr.injectMessage("proj-1", "hello");
+    expect(docker.createContainer).toHaveBeenCalled();
   });
 });
 

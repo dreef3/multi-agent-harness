@@ -401,12 +401,33 @@ export class PlanningAgentManager extends EventEmitter {
     state.tcpSocket.write(cmd);
   }
 
-  injectMessage(projectId: string, text: string): void {
-    const state = this.projects.get(projectId);
-    if (!state) {
-      console.warn(`[PlanningAgentManager] injectMessage: no container for ${projectId}, dropping message`);
-      return;
+  async injectMessage(projectId: string, text: string): Promise<void> {
+    if (!this.projects.has(projectId)) {
+      console.log(`[PlanningAgentManager] injectMessage: no container for ${projectId}, restarting...`);
+      try {
+        const { getProject } = await import("../store/projects.js");
+        const { listRepositories } = await import("../store/repositories.js");
+        const project = getProject(projectId);
+        if (!project) {
+          console.warn(`[PlanningAgentManager] injectMessage: project ${projectId} not found, cannot restart`);
+          return;
+        }
+        const ghToken = process.env.GITHUB_TOKEN;
+        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const repoUrls = allRepos.map((r) => ({
+          id: r.id,
+          name: r.name,
+          url: ghToken && r.cloneUrl.startsWith("https://github.com/")
+            ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+            : r.cloneUrl
+        }));
+        await this.ensureRunning(projectId, repoUrls);
+      } catch (err) {
+        console.error(`[PlanningAgentManager] injectMessage: failed to restart container for ${projectId}:`, err);
+        return;
+      }
     }
+    const state = this.projects.get(projectId)!;
     state.tcpSocket.write(JSON.stringify({ type: "prompt", message: text }) + "\n");
   }
 
