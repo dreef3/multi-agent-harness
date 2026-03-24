@@ -63,14 +63,18 @@ export class PlanningAgentManager extends EventEmitter {
       try {
         const info = await this.docker.getContainer(containerId).inspect();
         if (!info.State.Running) {
+          console.log(`[PlanningAgentManager] starting existing stopped container ${containerId} for project ${projectId}`);
           await this.docker.getContainer(containerId).start();
-          console.log(`[PlanningAgentManager] restarted stopped container ${containerId} for project ${projectId}`);
+          console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
         } else {
           console.log(`[PlanningAgentManager] reusing running container ${containerId} for project ${projectId}`);
         }
       } catch {
         console.log(`[PlanningAgentManager] could not inspect ${containerId}, attempting start`);
-        try { await this.docker.getContainer(containerId).start(); } catch { /* ignore */ }
+        try {
+          await this.docker.getContainer(containerId).start();
+          console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
+        } catch { /* ignore */ }
       }
     } else {
       containerId = await this.createContainer(projectId, containerName, repos);
@@ -116,14 +120,16 @@ export class PlanningAgentManager extends EventEmitter {
     state.tcpSocket.destroy();
     await this.commitSessionLog(projectId);
     try {
+      console.log(`[PlanningAgentManager] stopping container ${state.containerId} for project ${projectId}`);
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
-      console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
+      console.log(`[PlanningAgentManager] stopped container ${state.containerId} for project ${projectId}`);
     } catch (err) {
       console.warn(`[PlanningAgentManager] stop failed (may already be stopped):`, err);
     }
     try {
+      console.log(`[PlanningAgentManager] removing container ${state.containerId} for project ${projectId}`);
       await this.docker.getContainer(state.containerId).remove();
-      console.log(`[PlanningAgentManager] removed container ${state.containerId}`);
+      console.log(`[PlanningAgentManager] removed container ${state.containerId} for project ${projectId}`);
     } catch (removeErr) {
       console.warn(`[PlanningAgentManager] remove failed (non-fatal):`, removeErr);
     }

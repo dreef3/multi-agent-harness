@@ -74,6 +74,7 @@ export class RecoveryService {
 
     for (const project of projects) {
       if (!project.plan) continue;
+      console.log(`[recoveryService] Checking executing project ${project.id} (${project.name})`);
       const sessions = listAgentSessions(project.id).filter(
         s => s.type === "sub" && (s.status === "starting" || s.status === "running")
       );
@@ -81,6 +82,7 @@ export class RecoveryService {
       for (const session of sessions) {
         // Skip if not yet old enough to be considered stale
         const ageMs = now - new Date(session.updatedAt).getTime();
+        console.log(`[recoveryService]   Checking session ${session.id} (status=${session.status}, age=${ageMs}ms)`);
         if (ageMs < thresholdMs) continue;
 
         // Skip if already being dispatched
@@ -309,6 +311,7 @@ export class RecoveryService {
    *   3. Non-terminal tasks → re-dispatch them
    */
   private async recoverOrphanedProject(project: Project): Promise<void> {
+    console.log(`[recoveryService] Checking orphaned project ${project.id}`);
     if (!project.plan?.tasks?.length) {
       console.warn(`[recoveryService] Project ${project.id} is stuck in "executing" with no tasks — reverting to "awaiting_plan_approval"`);
       updateProject(project.id, { status: "awaiting_plan_approval" });
@@ -325,6 +328,7 @@ export class RecoveryService {
     const nonTerminal = project.plan.tasks.filter(t => !terminal.has(t.status));
 
     if (nonTerminal.length === 0) {
+      console.log(`[recoveryService] Project ${project.id} has no non-terminal tasks, all are terminal`);
       // All tasks are already done — checkAllTerminal will update project status
       await this.checkAllTerminal(project.id);
       return;

@@ -176,6 +176,12 @@ export function setupWebSocket(server: Server) {
     if (!projectBroadcasters.has(projectId)) {
       projectBroadcasters.add(projectId);
       manager.on(projectId, (event: PlanningAgentEvent) => {
+        let logMsg = `[ws] Broadcasting agent event to project ${projectId}: type=${event.type}`;
+        if (event.type === "delta") {
+          logMsg += ` text="${event.text.slice(0, 50)}..."`;
+        }
+        console.log(logMsg);
+
         // Broadcaster handles: delta, tool_call, tool_result, thinking, message_complete, conversation_complete
         broadcastToProject(projectId, {
           ...event,
@@ -189,10 +195,12 @@ export function setupWebSocket(server: Server) {
       try {
         const msg = JSON.parse(data.toString()) as WsClientMessage;
         if (msg.type === "prompt" && msg.text) {
+          console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
           // Master agent prompt
           const context = buildMasterAgentContext(project, allRepos);
           await manager.sendPrompt(projectId, msg.text, context);
         } else if (msg.type === "steer" && msg.text) {
+          console.log(`[ws] Received steer for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
           // Mid-stream steering
           await manager.sendPrompt(projectId, msg.text);
         } else if (msg.type === "resume" && msg.lastSeqId !== undefined) {

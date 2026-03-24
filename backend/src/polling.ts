@@ -129,6 +129,7 @@ const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenComme
 
 async function pollPlanningPrs(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
+  console.log(`[polling] Checking projects for LGTM...`);
 
   let projects: Awaited<ReturnType<typeof import("./store/projects.js").listProjectsAwaitingLgtm>>;
   try {
@@ -267,6 +268,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
  */
 async function pollAllPullRequests(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
+  console.log(`[polling] Starting poll cycle`);
 
   try {
     // Recover any stale sub-agent sessions
