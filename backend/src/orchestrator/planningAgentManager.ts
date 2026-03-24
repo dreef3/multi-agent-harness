@@ -101,6 +101,7 @@ export class PlanningAgentManager {
     if (!state) return;
     this.projects.delete(projectId);
     state.tcpSocket.destroy();
+    await this.commitSessionLog(projectId);
     try {
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
       console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
@@ -289,6 +290,7 @@ export class PlanningAgentManager {
       state.isStreaming = false;
       state.promptPending = false;
       this.emit(state, { type: "conversation_complete" });
+      void this.commitSessionLog(projectId);
       // Note: do NOT call checkStop here. The container lifecycle is driven by WS
       // connection count — it stops when the last client disconnects (decrementConnections).
       // Calling checkStop on agent_end races with incrementConnections and would stop
@@ -383,5 +385,47 @@ export class PlanningAgentManager {
     const state = this.projects.get(projectId);
     if (!state) return;
     this.checkStop(projectId, state);
+  }
+
+  private async commitSessionLog(projectId: string): Promise<void> {
+    const sessionPath = `/pi-agent/sessions/planning-${projectId}.jsonl`;
+    let content: string;
+    try {
+      const { readFile } = await import("node:fs/promises");
+      content = await readFile(sessionPath, "utf-8");
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      console.warn(`[PlanningAgentManager] could not read session log for ${projectId}:`, err);
+      return;
+    }
+
+    const { getProject } = await import("../store/projects.js");
+    const project = getProject(projectId);
+    if (!project?.primaryRepositoryId) {
+      console.warn(`[PlanningAgentManager] no primary repository for ${projectId}, skipping session log commit`);
+      return;
+    }
+
+    const { getRepository } = await import("../store/repositories.js");
+    const repo = getRepository(project.primaryRepositoryId);
+    if (!repo || repo.provider !== "github") {
+      console.warn(`[PlanningAgentManager] primary repo for ${projectId} is not GitHub, skipping`);
+      return;
+    }
+
+    try {
+      const { GitHubConnector } = await import("../connectors/github.js");
+      const connector = new GitHubConnector();
+      await connector.commitFile(
+        repo,
+        repo.defaultBranch,
+        `.harness/logs/planning-agent/${projectId}.jsonl`,
+        content,
+        `chore: save planning agent session log [${projectId}]`
+      );
+      console.log(`[PlanningAgentManager] session log committed for ${projectId}`);
+    } catch (err) {
+      console.warn(`[PlanningAgentManager] failed to commit session log for ${projectId}:`, err);
+    }
   }
 }
