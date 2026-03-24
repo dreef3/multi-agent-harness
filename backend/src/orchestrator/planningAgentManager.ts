@@ -20,7 +20,7 @@ interface ProjectState {
   promptPending: boolean;
   wsConnectionCount: number;
   outputHandlers: Set<(event: PlanningAgentEvent) => void>;
-  lifecycleState: "starting" | "running" | "idle" | "stopping" | "crashed";
+  lifecycleState: "running" | "idle" | "stopping" | "crashed";
   stopTimer: ReturnType<typeof setTimeout> | null;
 }
 
@@ -115,14 +115,14 @@ export class PlanningAgentManager {
     try {
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
       console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
-      try {
-        await this.docker.getContainer(state.containerId).remove();
-        console.log(`[PlanningAgentManager] removed container ${state.containerId}`);
-      } catch (removeErr) {
-        console.warn(`[PlanningAgentManager] remove failed (non-fatal):`, removeErr);
-      }
     } catch (err) {
       console.warn(`[PlanningAgentManager] stop failed (may already be stopped):`, err);
+    }
+    try {
+      await this.docker.getContainer(state.containerId).remove();
+      console.log(`[PlanningAgentManager] removed container ${state.containerId}`);
+    } catch (removeErr) {
+      console.warn(`[PlanningAgentManager] remove failed (non-fatal):`, removeErr);
     }
   }
 
