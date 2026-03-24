@@ -56,14 +56,14 @@ async function createPlanningPr(suffix: string): Promise<{ branch: string; prNum
   return { branch, prNumber: pr.number, prUrl: pr.html_url };
 }
 
-/** Post a LGTM comment on a GitHub PR to trigger the harness polling flow. */
-async function postLgtmComment(prNumber: number): Promise<void> {
+/** Post a PR approval on a GitHub PR to trigger the harness polling flow. */
+async function postPrApproval(prNumber: number): Promise<void> {
   await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/${prNumber}/comments`,
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls/${prNumber}/reviews`,
     {
       method: 'POST',
       headers: GH_HEADERS,
-      body: JSON.stringify({ body: 'LGTM' }),
+      body: JSON.stringify({ event: 'APPROVE', body: 'Approved via E2E test' }),
     }
   );
 }
@@ -171,10 +171,10 @@ test.describe('Review Comment Fix-Run Flow', () => {
       },
     });
 
-    // ── 4. Post LGTM — triggers polling to detect plan approval and dispatch ──
-    await postLgtmComment(prNumber);
+    // ── 4. Post PR approval — triggers polling to detect plan approval and dispatch ──
+    await postPrApproval(prNumber);
 
-    // ── 5. Wait for polling to detect LGTM and transition to executing ────────
+    // ──5. Wait for polling to detect approval and transition to executing ────────
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
