@@ -283,6 +283,77 @@ describe('Chat Component State Management', () => {
     });
   });
 
+  describe('assistant message persistence', () => {
+    it('shows assistant message from DB after agent completes (not just streaming)', async () => {
+      // This test catches the regression where message_complete wiped streamingContent
+      // but DB had no assistant message saved — leaving an empty chat.
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+
+      // First call (initial load) returns empty, second call (after message_complete) returns saved assistant message
+      mockList
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: '1', projectId: 'test', role: 'assistant' as const, content: 'Done!', timestamp: '2024-01-01', seqId: 1 },
+        ]);
+
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      // Simulate streaming response then message_complete
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'Do' });
+        handlerStorage.handler?.({ type: 'delta', text: 'ne!' });
+      });
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'message_complete' });
+      });
+
+      // Assistant message should be shown from DB (not just streaming)
+      await waitFor(() => {
+        expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
+        expect(screen.getByText('Done!')).toBeInTheDocument();
+      });
+    });
+
+    it('clears streaming text on message_complete and shows DB message instead', async () => {
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+      mockList
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: '1', projectId: 'test', role: 'assistant' as const, content: 'Final answer', timestamp: '2024-01-01', seqId: 1 },
+        ]);
+
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'Final answer' });
+      });
+      // Streaming text visible
+      expect(screen.getByTestId('assistant-streaming')).toBeInTheDocument();
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'message_complete' });
+      });
+
+      // Streaming element gone, DB message shown
+      await waitFor(() => {
+        expect(screen.queryByTestId('assistant-streaming')).not.toBeInTheDocument();
+        expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
+      });
+    });
+  });
+
   describe('message deduplication', () => {
     it('does not duplicate user message after loadMessages', async () => {
       const { api } = await import('../lib/api');

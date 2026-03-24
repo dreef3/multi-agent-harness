@@ -240,12 +240,15 @@ export function createProjectsRouter(dataDir: string): Router {
 
   // Retry a failed/errored project — resets failed tasks and restarts the planning agent
   router.post("/:id/retry", async (req, res) => {
+    console.log(`[projects] Received retry request for project ${req.params.id}`);
     const project = getProject(req.params.id);
     if (!project) {
+      console.warn(`[projects] retry: project ${req.params.id} not found`);
       res.status(404).json({ error: "Project not found" });
       return;
     }
     if (project.status !== "failed" && project.status !== "error") {
+      console.warn(`[projects] retry: project ${req.params.id} has status ${project.status}, skipping retry`);
       res.status(400).json({ error: "Project is not in a failed or error state" });
       return;
     }
@@ -256,6 +259,7 @@ export function createProjectsRouter(dataDir: string): Router {
     try {
       const result = await getRecoveryService().dispatchFailedTasks(req.params.id);
       dispatched = result.count;
+      console.log(`[projects] retry: ${dispatched} tasks re-dispatched`);
     } catch (err) {
       console.error(`[projects] retry: dispatchFailedTasks error:`, err);
     }
@@ -265,6 +269,7 @@ export function createProjectsRouter(dataDir: string): Router {
       const { getPlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
       const manager = getPlanningAgentManager();
       if (!manager.isRunning(req.params.id)) {
+        console.log(`[projects] retry: planning agent not running, ensuring start...`);
         const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
         const ghToken = process.env.GITHUB_TOKEN;
         const repoUrls = allRepos.map((r) => ({
@@ -277,11 +282,15 @@ export function createProjectsRouter(dataDir: string): Router {
         }));
         await manager.ensureRunning(req.params.id, repoUrls);
         agentRestarted = true;
+        console.log(`[projects] retry: planning agent restarted`);
+      } else {
+        console.log(`[projects] retry: planning agent is already running`);
       }
     } catch (err) {
       console.warn(`[projects] retry: failed to restart planning agent:`, err);
     }
 
+    console.log(`[projects] retry complete for ${req.params.id}: dispatched=${dispatched}, agentRestarted=${agentRestarted}`);
     res.json({ dispatched, agentRestarted });
   });
 

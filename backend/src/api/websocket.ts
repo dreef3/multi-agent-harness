@@ -3,7 +3,7 @@ import { IncomingMessage, Server } from "http";
 import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
 import type { PlanningAgentEvent } from "../orchestrator/planningAgentManager.js";
 import { getProject, updateProject } from "../store/projects.js";
-import { listMessagesSince } from "../store/messages.js";
+import { appendMessage, listMessagesSince } from "../store/messages.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 
@@ -18,6 +18,8 @@ function send(ws: WebSocket, msg: WsServerMessage) {
 const projectConnections = new Map<string, Set<WebSocket>>();
 // Track which projects already have an output broadcaster registered (one per project)
 const projectBroadcasters = new Set<string>();
+// Accumulates streaming delta text per project so we can persist on message_complete
+const projectMessageBuffers = new Map<string, string>();
 
 export function broadcastToProject(projectId: string, msg: WsServerMessage) {
   const connections = projectConnections.get(projectId);
@@ -163,7 +165,15 @@ export function setupWebSocket(server: Server) {
         : r.cloneUrl
     }));
 
+    // Buffer messages that arrive while the container is starting up, so we
+    // don't lose the initial prompt on new projects (container can take 5-120s).
+    const earlyMessages: Buffer[] = [];
+    const earlyMessageHandler = (data: Buffer) => earlyMessages.push(data);
+    ws.on("message", earlyMessageHandler);
+
     const started = await ensureRunningWithRetry(manager, projectId, repoUrls, ws);
+    ws.off("message", earlyMessageHandler);
+
     if (!started) {
       projectConnections.get(projectId)?.delete(ws);
       return;
@@ -182,6 +192,21 @@ export function setupWebSocket(server: Server) {
         }
         console.log(logMsg);
 
+        // Accumulate text for persistence
+        if (event.type === "delta") {
+          projectMessageBuffers.set(projectId, (projectMessageBuffers.get(projectId) ?? "") + event.text);
+        } else if (event.type === "message_complete") {
+          const buffer = projectMessageBuffers.get(projectId) ?? "";
+          if (buffer) {
+            try {
+              appendMessage(projectId, "assistant", buffer);
+            } catch (err) {
+              console.error(`[ws] Failed to persist assistant message for ${projectId}:`, err);
+            }
+          }
+          projectMessageBuffers.delete(projectId);
+        }
+
         // Broadcaster handles: delta, tool_call, tool_result, thinking, message_complete, conversation_complete
         broadcastToProject(projectId, {
           ...event,
@@ -196,6 +221,11 @@ export function setupWebSocket(server: Server) {
         const msg = JSON.parse(data.toString()) as WsClientMessage;
         if (msg.type === "prompt" && msg.text) {
           console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
+          try {
+            appendMessage(projectId, "user", msg.text);
+          } catch (err) {
+            console.error(`[ws] Failed to persist user message for ${projectId}:`, err);
+          }
           // Master agent prompt
           const context = buildMasterAgentContext(project, allRepos);
           console.log(`[ws] Dispatching message to planning agent for project ${projectId}`);
@@ -224,6 +254,12 @@ export function setupWebSocket(server: Server) {
       }
       manager.decrementConnections(projectId);
     });
+
+    // Replay any messages that arrived before the container was ready
+    if (earlyMessages.length > 0) {
+      console.log(`[ws] Replaying ${earlyMessages.length} early message(s) for project ${projectId}`);
+      for (const data of earlyMessages) ws.emit("message", data);
+    }
   });
 
   return wss;

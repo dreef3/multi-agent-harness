@@ -223,6 +223,49 @@ describe("RecoveryService", () => {
     });
   });
 
+  describe("dispatchTasksForProject", () => {
+    it("only dispatches pending tasks — does not re-run completed or failed tasks", async () => {
+      // This is a regression test for the bug where adding new tasks via POST /tasks
+      // would re-dispatch all existing tasks (including already-completed ones).
+      const proj = makeProject("proj-dtfp");
+      proj.plan!.tasks = [
+        { id: "old-completed", repositoryId: "repo-1", description: "Old task", status: "completed" },
+        { id: "old-failed",    repositoryId: "repo-1", description: "Failed task", status: "failed" },
+        { id: "new-pending",   repositoryId: "repo-1", description: "New E2E fix", status: "pending" },
+      ];
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      await svc.dispatchTasksForProject("proj-dtfp");
+
+      expect(dispatchSpy).toHaveBeenCalledTimes(1);
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ id: "new-pending" })
+      );
+    });
+
+    it("skips when there are no pending tasks", async () => {
+      const proj = makeProject("proj-dtfp-2");
+      proj.plan!.tasks = [
+        { id: "done-1", repositoryId: "repo-1", description: "Done", status: "completed" },
+        { id: "done-2", repositoryId: "repo-1", description: "Also done", status: "completed" },
+      ];
+      insertProject(proj);
+
+      const { RecoveryService } = await import("../orchestrator/recoveryService.js");
+      const svc = new RecoveryService({} as never);
+      const dispatchSpy = vi.spyOn(svc, "dispatchWithRetry").mockResolvedValue(undefined);
+
+      await svc.dispatchTasksForProject("proj-dtfp-2");
+
+      expect(dispatchSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("recoverOnBoot", () => {
     it("registers taskIds synchronously before async container checks", async () => {
       insertProject(makeProject("proj-9"));

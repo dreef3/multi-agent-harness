@@ -105,8 +105,10 @@ export class RecoveryService {
   async dispatchTasksForProject(projectId: string): Promise<void> {
     const project = getProject(projectId);
     if (!project?.plan?.tasks?.length) return;
+    const pendingTasks = project.plan.tasks.filter(t => t.status === "pending");
+    if (!pendingTasks.length) return;
     await Promise.all(
-      project.plan.tasks.map(task => this.dispatchWithRetry(project, task))
+      pendingTasks.map(task => this.dispatchWithRetry(project, task))
     );
   }
 
