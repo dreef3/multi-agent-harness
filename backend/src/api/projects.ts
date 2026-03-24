@@ -238,5 +238,53 @@ export function createProjectsRouter(dataDir: string): Router {
     }
   });
 
+  // Retry a failed/errored project — resets failed tasks and restarts the planning agent
+  router.post("/:id/retry", async (req, res) => {
+    const project = getProject(req.params.id);
+    if (!project) {
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.status !== "failed" && project.status !== "error") {
+      res.status(400).json({ error: "Project is not in a failed or error state" });
+      return;
+    }
+
+    updateProject(req.params.id, { lastError: undefined, status: "executing" });
+
+    let dispatched = 0;
+    try {
+      const result = await getRecoveryService().dispatchFailedTasks(req.params.id);
+      dispatched = result.count;
+    } catch (err) {
+      console.error(`[projects] retry: dispatchFailedTasks error:`, err);
+    }
+
+    let agentRestarted = false;
+    try {
+      const { getPlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+      const manager = getPlanningAgentManager();
+      if (!manager.isRunning(req.params.id)) {
+        const { listRepositories } = await import("../store/repositories.js");
+        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const ghToken = process.env.GITHUB_TOKEN;
+        const repoUrls = allRepos.map((r) => ({
+          id: r.id,
+          name: r.name,
+          url:
+            ghToken && r.cloneUrl.startsWith("https://github.com/")
+              ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+              : r.cloneUrl,
+        }));
+        await manager.ensureRunning(req.params.id, repoUrls);
+        agentRestarted = true;
+      }
+    } catch (err) {
+      console.warn(`[projects] retry: failed to restart planning agent:`, err);
+    }
+
+    res.json({ dispatched, agentRestarted });
+  });
+
   return router;
 }

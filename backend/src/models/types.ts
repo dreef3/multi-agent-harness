@@ -29,6 +29,7 @@ export interface Project {
     planApprovedAt?: string;
   };
   plan?: Plan;
+  lastError?: string;
   masterSessionPath: string;
   createdAt: string;
   updatedAt: string;
