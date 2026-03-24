@@ -4,6 +4,7 @@ import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js
 import type { PlanningAgentEvent } from "../orchestrator/planningAgentManager.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
+import { appendEvent } from "../store/agentEvents.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 
@@ -295,11 +296,21 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
           case "message_complete":
             if (messageBuffer) {
               appendMessage(projectId, "assistant", messageBuffer);
+              appendEvent(`master-${projectId}`, {
+                type: "text",
+                payload: { text: messageBuffer },
+                timestamp: new Date().toISOString(),
+              });
               messageBuffer = "";
             }
             broadcastToProject(projectId, { type: "message_complete" });
             break;
           case "tool_call":
+            appendEvent(`master-${projectId}`, {
+              type: "tool_call",
+              payload: { toolName: event.toolName, args: event.args ?? {} },
+              timestamp: new Date().toISOString(),
+            });
             broadcastToProject(projectId, {
               type: "tool_call",
               toolName: event.toolName,
@@ -308,6 +319,15 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
             });
             break;
           case "tool_result":
+            appendEvent(`master-${projectId}`, {
+              type: "tool_result",
+              payload: {
+                toolName: event.toolName,
+                result: event.result,
+                isError: event.isError,
+              },
+              timestamp: new Date().toISOString(),
+            });
             broadcastToProject(projectId, {
               type: "tool_result",
               toolName: event.toolName,
@@ -317,6 +337,11 @@ export function setupWebSocket(server: Server, _dataDir: string): void {
             });
             break;
           case "thinking":
+            appendEvent(`master-${projectId}`, {
+              type: "thinking",
+              payload: { text: event.text },
+              timestamp: new Date().toISOString(),
+            });
             broadcastToProject(projectId, {
               type: "thinking",
               text: event.text,
