@@ -280,7 +280,7 @@ export class PlanningAgentManager extends EventEmitter {
       }
       return;
     }
-    if (!["agent_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
+    if (!["agent_start", "message_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
          "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end"].includes(type)) {
       console.log(`[PlanningAgentManager] unhandled event type="${type}" for ${projectId}: ${line.slice(0, 200)}`);
     }
