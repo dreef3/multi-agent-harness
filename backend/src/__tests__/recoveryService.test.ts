@@ -550,6 +550,45 @@ describe("RecoveryService", () => {
     });
   });
 
+  describe("session ID retention on retry", () => {
+    it("creates exactly one session record across multiple retry attempts", async () => {
+      (config as any).subAgentMaxRetries = 2;
+      (config as any).maxConcurrentSubAgents = 10;
+      (config as any).maxImplAgentsPerProject = 10;
+
+      let attempt = 0;
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }, existingSessionId?: string) => {
+        attempt++;
+        if (attempt < 3) return { taskId: task.id, success: false, error: "container failed" };
+        return { taskId: task.id, success: true };
+      });
+
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      const project = makeProject("p-retry");
+      project.plan = {
+        id: "plan-retry", projectId: "p-retry", content: "",
+        tasks: [{ id: "t-retry", repositoryId: "r1", description: "retry task", status: "pending" }],
+      };
+      insertProject(project);
+
+      await svc.dispatchTasksForProject("p-retry");
+
+      // runTask called 3 times (2 failures + 1 success)
+      expect(mockRunTask).toHaveBeenCalledTimes(3);
+      // First call: no existingSessionId
+      expect(mockRunTask.mock.calls[0][3]).toBeUndefined();
+      // Subsequent calls: same non-undefined sessionId
+      const sessionId = mockRunTask.mock.calls[1][3];
+      expect(sessionId).toBeDefined();
+      expect(mockRunTask.mock.calls[2][3]).toBe(sessionId);
+    });
+  });
+
   describe("errorMessage population", () => {
     it("sets errorMessage on task when permanently failed via dispatchWithRetry", async () => {
       insertProject(makeProject("proj-err"));

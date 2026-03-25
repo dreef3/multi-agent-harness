@@ -1,4 +1,5 @@
 import type Dockerode from "dockerode";
+import { randomUUID } from "crypto";
 import { getProject, updateProject, listExecutingProjects, updateTaskInPlan } from "../store/projects.js";
 import { listAgentSessions, updateAgentSession, listStaleAgentSessions } from "../store/agents.js";
 import { getContainerStatus } from "./containerManager.js";
@@ -182,6 +183,8 @@ export class RecoveryService {
 
     let localRetryCount = task.retryCount ?? 0;
     let lastError: string | undefined;
+    const retrySessionId = randomUUID();
+    let isFirstAttempt = true;
 
     try {
       while (localRetryCount <= config.subAgentMaxRetries) {
@@ -203,8 +206,13 @@ export class RecoveryService {
         console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
         let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
         try {
-          result = await this.dispatcher.runTask(this.docker, freshProject, taskForRun);
+          result = await this.dispatcher.runTask(
+            this.docker, freshProject, taskForRun,
+            isFirstAttempt ? undefined : retrySessionId,
+          );
+          isFirstAttempt = false;
         } catch (err) {
+          isFirstAttempt = false;
           this.releaseSlot();
           throw err;
         }

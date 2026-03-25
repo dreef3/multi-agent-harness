@@ -128,8 +128,14 @@ Stage and commit all changes. The harness will open the pull request automatical
 
   /**
    * Run a single task: create container, run sub-agent, wait for completion.
+   * On retry, pass `existingSessionId` to reuse the session record instead of creating a new one.
    */
-  public async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
+  public async runTask(
+    docker: Dockerode,
+    project: Project,
+    task: PlanTask,
+    existingSessionId?: string,
+  ): Promise<TaskResult> {
     const repository = getRepository(task.repositoryId);
     if (!repository) {
       return {
@@ -139,14 +145,15 @@ Stage and commit all changes. The harness will open the pull request automatical
       };
     }
 
-    const sessionId = randomUUID();
+    const sessionId = existingSessionId ?? randomUUID();
+    const isRetry = !!existingSessionId;
     const isPrimaryRepo = repository.id === project.primaryRepositoryId;
     const branchName = isPrimaryRepo && project.planningBranch
       ? project.planningBranch
       : `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
     console.log(`[taskDispatcher] Starting task ${task.id} for project ${project.id}, repo ${repository.id}, branch ${branchName}`);
 
-    // Create agent session record
+    // Create or reset the agent session record
     const agentSession: AgentSession = {
       id: sessionId,
       projectId: project.id,
@@ -157,7 +164,15 @@ Stage and commit all changes. The harness will open the pull request automatical
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    insertAgentSession(agentSession);
+    if (isRetry) {
+      updateAgentSession(sessionId, {
+        status: "starting",
+        containerId: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      insertAgentSession(agentSession);
+    }
 
     let containerId: string | undefined;
 
