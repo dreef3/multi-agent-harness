@@ -9,8 +9,8 @@
 
 The agent calling workflow has four concrete pain points:
 
-1. **Token waste** — pi-coding-agent sessions accumulate large tool results (verbose bash output, big file reads) in the model's active context, burning tokens and triggering compaction unnecessarily.
-2. **No per-project concurrency limit** — the global semaphore (`MAX_CONCURRENT_SUB_AGENTS`) limits total containers, but a single project can monopolize all slots, starving others. There is no guard preventing multiple implementation agents from running concurrently for the same project.
+1. **Token waste** — pi-coding-agent sessions accumulate large tool results (verbose bash output, big file reads) in the model's active context, burning tokens and triggering compaction unnecessarily. This affects both sub-agents and the planning agent.
+2. **No per-project concurrency limit** — the global semaphore (`MAX_CONCURRENT_SUB_AGENTS`) limits total containers, but a single project can monopolize all slots, starving others. There is no guard preventing multiple implementation agents from running concurrently for the same project. Additionally, each retry attempt creates a new agent session record, producing dozens of failed-session entries in the Execution tab for a single task.
 3. **Duplicate task dispatch** — the planning agent's `dispatch_tasks` tool creates a new task entry with a fresh UUID on every call, regardless of whether identical tasks already exist. Re-calling `dispatch_tasks` (e.g., after a network hiccup or model confusion) accumulates duplicates that all get dispatched.
 4. **No observability** — the harness has no metrics or distributed tracing. Diagnosing performance, token budgets, or task failure patterns requires manual log-grepping.
 
@@ -18,8 +18,8 @@ The agent calling workflow has four concrete pain points:
 
 ## Goals
 
-- Reduce token usage in pi sub-agent sessions by filtering large tool results before they enter the model context.
-- Enforce two-tier concurrency: global cap + per-project cap (default: 1 impl agent at a time per project).
+- Reduce token usage in both sub-agent and planning-agent sessions by (a) routing bash commands through RTK's intelligent filters and (b) truncating oversized non-bash tool results via a pi extension.
+- Enforce two-tier concurrency: global cap + per-project cap (default: 1 impl agent at a time per project). Retries reuse the same agent session ID so the Execution tab shows one record per task.
 - Guarantee idempotent task dispatch: repeated `dispatch_tasks` calls for the same task are safe upserts, not accumulating duplicates.
 - Emit OpenTelemetry traces and metrics from the backend; export via OTLP HTTP to an OTEL Collector on the host, which forwards to Grafana Cloud.
 
@@ -27,19 +27,84 @@ The agent calling workflow has four concrete pain points:
 
 ## Non-Goals
 
-- Token filtering inside the planning agent's bash execution. The planning agent is long-running and conversational; aggressive truncation of its tool results would lose important context.
 - Modifying the `@mariozechner/pi-coding-agent` library itself.
 - Adding any metric collection inside sub-agent containers.
 
 ---
 
-## Feature 1: Tool Output Token Filter (Pi Extension)
+## Feature 1: Tool Output Token Filter (RTK + Pi Extension)
 
 ### Overview
 
-A pi extension hooks the `tool_result` event and truncates oversized results before they are added to the model's active context. It is applied to sub-agents only (not the planning agent; see Non-Goals).
+Token reduction uses two complementary mechanisms applied to **both** sub-agents and the planning agent:
 
-### Extension API
+1. **RTK binary** (bash tool) — the RTK static binary is installed in both container images. The existing `spawnHook` in each runner prepends `rtk` to bash commands, so `git status` becomes `rtk git status`, `vitest run` becomes `rtk vitest run`, etc. RTK applies 40+ command-specific intelligent filters (not just truncation) with 45–97% token savings on common operations.
+
+2. **Pi extension** (non-bash tools) — a `tool_result` extension handles `read` and `find` results, which RTK cannot intercept via command wrapping.
+
+### RTK Binary Distribution
+
+RTK (`/home/ae/.local/bin/rtk`) is a statically linked 9 MB ELF **linux/amd64** binary with no external runtime dependencies. It is committed to the repo under `shared/bin/rtk` and copied into both images.
+
+**Architecture note:** This binary targets `linux/amd64`. Docker builds on ARM64 hosts (e.g., Apple Silicon) will copy a non-executable binary. The spawnHook's `existsSync` check will return `true`, but the first RTK invocation will fail with an exec-format error. Mitigation: the Dockerfile should validate the binary is executable after copy:
+
+```dockerfile
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch; commands will run unfiltered"
+```
+
+If `rtk --version` fails, the warning is logged but the build succeeds. The spawnHook's `existsSync` check is insufficient on ARM64 — instead, `isRtkAvailable` should be set by running `rtk --version` at module load and caching the success/failure, not just checking file existence.
+
+A `.gitattributes` entry marks it as binary to prevent line-ending corruption:
+```
+shared/bin/rtk binary
+```
+
+Both Dockerfiles add:
+```dockerfile
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk
+```
+
+### RTK Telemetry
+
+RTK collects command usage history by default (`tracking = true` in its config). This must be disabled inside containers — agents must not contribute to host-side telemetry, and the history has no value in ephemeral containers.
+
+A pre-baked config file is committed to `shared/config/rtk-config.toml`. RTK has two distinct opt-out sections — both are disabled:
+
+```toml
+[tracking]
+enabled = false
+
+[telemetry]
+enabled = false
+```
+
+`[tracking]` disables the local 90-day command history log. `[telemetry]` disables any external reporting.
+
+Both Dockerfiles copy it to the RTK config location:
+
+```dockerfile
+COPY shared/config/rtk-config.toml /root/.config/rtk/config.toml
+```
+
+This is applied at image build time and requires no runtime configuration.
+
+### SpawnHook Enhancement
+
+Both `createGuardHook()` (`sub-agent/tools.mjs`) and `createPlanningAgentGuardHook()` (`planning-agent/tools.mjs`) are extended. After the existing block-list check passes, the hook prepends `rtk` to the command if the `rtk` binary is present:
+
+```javascript
+// After block-list check passes:
+if (isRtkAvailable) {
+  return { ...context, command: 'rtk ' + context.command };
+}
+return context;
+```
+
+`isRtkAvailable` is determined once at module load by running `rtk --version` via `spawnSync` and caching the exit code. `existsSync` alone is insufficient — on ARM64 the binary is present but not executable. If the probe fails (non-zero exit or ENOENT), `isRtkAvailable` is `false` and commands run unfiltered — no agent startup failure.
+
+### Pi Extension for Non-Bash Tools
 
 Pi extensions are registered via the `extensionFactories` option in `DefaultResourceLoader`. Each factory is a function `(session: AgentSession) => Extension`. The `Extension` interface includes a `tool_result` handler:
 
@@ -51,33 +116,31 @@ toolResult?: (event: ToolResultEvent) => ToolResultEventResult | undefined;
 - Returning `{ content: ContentPart[] }` replaces the result's content with the new array.
 - The handler must never throw — any exception must be caught and `undefined` returned (passthrough).
 
-### Truncation Logic
-
-The handler concatenates all `TextContent` parts from `event.content` into a single string (non-text content is preserved unmodified). If total length exceeds the threshold for the tool, it truncates and appends a notice:
+The extension only acts on `read` and `find` tools (bash output is already handled by RTK). It concatenates all `TextContent` parts and truncates if over threshold, appending:
 
 ```
 [truncated: N chars removed]
 ```
 
-**Per-tool thresholds:**
+**Thresholds:**
 
 | Tool | Threshold | Strategy |
 |------|-----------|----------|
-| `bash` | 8 000 chars | Keep first 6 000 + last 2 000 (preserves error tail) |
 | `read` | 12 000 chars | Keep first 12 000 |
 | `find` | 4 000 chars | Keep first 4 000 |
-| All others | 4 000 chars | Keep first 4 000 |
 
-Error results (`event.isError === true`) are also truncated — stack traces are large and the threshold is generous enough to preserve the full error message in most cases.
-
-Non-text content parts (images, etc.) are passed through unmodified regardless of size.
+Error results are also truncated. Non-text content parts (images, etc.) pass through unmodified.
 
 ### File Location and Build Context Strategy
 
-The extension source lives in a new top-level `shared/` directory:
+The shared directory layout:
 
 ```
 shared/
+  bin/
+    rtk                    ← statically linked binary (committed to repo)
+  config/
+    rtk-config.toml        ← disables RTK telemetry in containers
   extensions/
     output-filter.mjs
     output-filter.test.mjs
@@ -101,13 +164,16 @@ docker build -t multi-agent-harness/sub-agent:latest -f sub-agent/Dockerfile .
 
 Update the error message in `backend/src/orchestrator/imageBuilder.ts` to reflect the new command.
 
-With repo-root context, both Dockerfiles add:
+With repo-root context, both Dockerfiles copy the shared directory:
 
 ```dockerfile
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk
+COPY shared/config/rtk-config.toml /root/.config/rtk/config.toml
 COPY shared/extensions/ /app/shared/extensions/
 ```
 
-`sub-agent/runner.mjs` imports the extension and passes it to `DefaultResourceLoader`:
+**Both** runners drop `noExtensions: true` and use `extensionFactories`:
 
 ```javascript
 import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
@@ -118,28 +184,32 @@ const resourceLoader = new DefaultResourceLoader({
   noSkills: true,
   noPromptTemplates: true,
   noThemes: true,
-  // noExtensions removed
 });
 ```
 
-The planning agent runner is **not** changed — it retains `noExtensions: true` and does not use this extension (see Non-Goals).
-
 ### Error Handling
 
-- All truncation logic is wrapped in `try/catch`. On any exception, the handler returns `undefined` (original result passes through). The extension never blocks agent execution.
-- If the `extensionFactories` option is not recognised by an older version of the SDK, the runner startup will fail — this is acceptable (fail-fast is preferable to silent token blowup). The SDK version must be ≥ the version that introduced `extensionFactories`.
+- RTK not runnable (binary absent or wrong architecture): `isRtkAvailable` is `false`; bash commands run without filtering. **Known limitation:** in this fallback path, bash results are also not covered by the pi extension (the extension only handles `read`/`find`). Large bash outputs will reach the model unfiltered. This is an acceptable degraded mode — the agent still functions correctly.
+- All extension truncation logic is wrapped in `try/catch`. On any exception, the handler returns `undefined` (passthrough). The extension never blocks agent execution.
+- If `extensionFactories` is not recognised by an older SDK version, the runner startup will fail — this is acceptable. The SDK version must support `extensionFactories`.
 
 ### Test Cases
 
-`shared/extensions/output-filter.test.mjs` (using Node.js built-in test runner or vitest):
+`shared/extensions/output-filter.test.mjs`:
 
-1. Bash result with 10 000 chars → output is ≤ 8 001 chars (threshold + notice); first 6 000 and last 2 000 chars are preserved; notice is appended.
-2. Bash result with 5 000 chars → output is unchanged.
-3. Read result with 20 000 chars → truncated to ≤ 12 001 chars; first 12 000 chars preserved.
-4. Unknown tool result with 6 000 chars → truncated at 4 000.
-5. Result with `isError: true` and 10 000-char bash output → truncated (error results are not exempt).
+1. Read result with 20 000 chars → truncated to ≤ 12 001 chars; first 12 000 chars preserved; notice appended.
+2. Read result with 5 000 chars → unchanged.
+3. Find result with 6 000 chars → truncated at 4 000.
+4. Bash result (any size) → passed through unchanged (RTK handles bash; extension does not act on it).
+5. Result with `isError: true` and oversized read output → truncated.
 6. Result with no text content parts (e.g., image only) → returned unchanged.
-7. Exception thrown during truncation (e.g., malformed content) → handler returns `undefined` (passthrough); no exception propagates.
+7. Exception thrown during truncation → handler returns `undefined`; no exception propagates.
+
+`sub-agent/tools.test.mjs` / `planning-agent/tools.test.mjs` (spawnHook):
+
+8. RTK available + command not blocked → hook returns `'rtk ' + originalCommand`.
+9. RTK available + command is in block list → hook returns blocked command (RTK not prepended; block takes priority).
+10. RTK absent → hook returns original command unchanged.
 
 ---
 
@@ -197,6 +267,24 @@ The ordering — **project slot first, then global slot** — prevents deadlock.
 
 `releaseProjectSlot` is called in the outermost `finally` block of `dispatchWithRetry`. No slot can be leaked regardless of whether the task succeeds, fails, times out, or throws.
 
+### Session ID Retention on Retry
+
+**Problem:** `TaskDispatcher.runTask` calls `insertAgentSession` with a fresh `randomUUID()` on every invocation. Since `dispatchWithRetry` calls `runTask` in a loop, each retry inserts a new session record, producing N failed-session entries per task on the Execution tab.
+
+**Fix:** `dispatchWithRetry` generates one `sessionId = randomUUID()` **before** the retry loop and passes it to `runTask`. `runTask` gains an optional `existingSessionId?: string` parameter:
+
+- If `existingSessionId` is absent (first call): insert a new session record as today (no change).
+- If `existingSessionId` is present (retry): call `updateAgentSession(existingSessionId, { status: 'starting', containerId: undefined, updatedAt: now })` instead of inserting. The existing record is reused; its history of failures is reflected in the `retryCount` field on the task, not in duplicate session rows. `sessionPath` is intentionally not reset: `taskDispatcher.ts` never writes `sessionPath` after insert, so it remains `null` and requires no clearing.
+
+The session ID is passed through the retry loop:
+
+```
+sessionId = randomUUID()
+[retry loop]
+  runTask(docker, project, task, sessionId)
+[end loop]
+```
+
 ### Test Cases
 
 `backend/src/__tests__/recoveryService.test.ts` additions:
@@ -205,6 +293,7 @@ The ordering — **project slot first, then global slot** — prevents deadlock.
 2. Dispatch 2 tasks each for 2 different projects with `MAX_IMPL_AGENTS_PER_PROJECT=1` and `MAX_CONCURRENT_SUB_AGENTS=4`: assert both projects' first tasks start before either first task finishes (parallel across projects).
 3. Set `MAX_IMPL_AGENTS_PER_PROJECT=2`, dispatch 3 tasks for same project: assert 2 run in parallel, 3rd queues.
 4. Global semaphore still limits total: set `MAX_CONCURRENT_SUB_AGENTS=2`, `MAX_IMPL_AGENTS_PER_PROJECT=3`, dispatch 5 tasks across 2 projects; assert at most 2 containers run simultaneously.
+5. Task that fails and retries: assert exactly 1 agent session record exists for the task after 2 attempts; session `id` is unchanged between attempts; `retryCount` on the task record reflects the number of attempts.
 
 ---
 
