@@ -281,7 +281,7 @@ export default function Chat() {
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto space-y-3 bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <div className="flex-1 overflow-y-auto space-y-3 bg-gray-900 border border-gray-800 rounded-lg py-4 px-0 sm:px-4">
         {messages.length === 0 && !streamingContent && !isThinking ? (
           <div className="text-gray-500 text-center py-8">
             No messages yet. Start the conversation!
