@@ -10,7 +10,8 @@ export type PlanningAgentEvent =
   | { type: "tool_result"; toolName: string; result?: unknown; isError?: boolean }
   | { type: "thinking"; text: string }
   | { type: "message_complete" }
-  | { type: "conversation_complete" };
+  | { type: "conversation_complete" }
+  | { type: "agent_error"; message: string };
 
 interface ProjectState {
   containerId: string;
@@ -321,6 +322,15 @@ export class PlanningAgentManager extends EventEmitter {
     }
 
     if (type === "message_end") {
+      const msg = obj.message as { stopReason?: string; content?: Array<{ type: string; text?: string }> } | undefined;
+      if (msg?.stopReason === "error") {
+        const errorText = (msg.content ?? [])
+          .filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text)
+          .join("") || "The planning agent encountered an API error. Check your model provider configuration (AGENT_PROVIDER/AGENT_MODEL).";
+        console.error(`[PlanningAgentManager] agent API error for ${projectId}: ${errorText}`);
+        this.emitAgentEvent(projectId, state, { type: "agent_error", message: errorText });
+      }
       this.emitAgentEvent(projectId, state, { type: "message_complete" });
       return;
     }

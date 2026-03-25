@@ -207,6 +207,12 @@ export function setupWebSocket(server: Server) {
           projectMessageBuffers.delete(projectId);
         }
 
+        // agent_error → send as WS error type so the frontend shows it in the banner
+        if (event.type === "agent_error") {
+          broadcastToProject(projectId, { type: "error", message: event.message });
+          return;
+        }
+
         // Broadcaster handles: delta, tool_call, tool_result, thinking, message_complete, conversation_complete
         broadcastToProject(projectId, {
           ...event,
