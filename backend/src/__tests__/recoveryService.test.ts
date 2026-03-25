@@ -6,6 +6,7 @@ import { initDb } from "../store/db.js";
 import { insertProject, getProject } from "../store/projects.js";
 import { insertAgentSession, getAgentSession, updateAgentSession } from "../store/agents.js";
 import { config } from "../config.js";
+import { getRecoveryService, setRecoveryService, RecoveryService } from "../orchestrator/recoveryService.js";
 import type { Project, AgentSession } from "../models/types.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -467,6 +468,85 @@ describe("RecoveryService", () => {
       await svc.recoverExecutingProjects();
 
       expect(orphanSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("per-project concurrency", () => {
+    it("serialises tasks within a project when MAX_IMPL_AGENTS_PER_PROJECT=1", async () => {
+      // Override config
+      (config as any).maxImplAgentsPerProject = 1;
+      (config as any).maxConcurrentSubAgents = 10;
+
+      const running: string[] = [];
+      let maxConcurrent = 0;
+
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }) => {
+        running.push(task.id);
+        maxConcurrent = Math.max(maxConcurrent, running.length);
+        await new Promise(r => setTimeout(r, 50));
+        running.splice(running.indexOf(task.id), 1);
+        return { taskId: task.id, success: true };
+      });
+
+      // Wire mock dispatcher
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      const project = makeProject("p1");
+      project.plan = {
+        id: "plan-1", projectId: "p1", content: "",
+        tasks: [
+          { id: "t1", repositoryId: "r1", description: "task 1", status: "pending" },
+          { id: "t2", repositoryId: "r1", description: "task 2", status: "pending" },
+          { id: "t3", repositoryId: "r1", description: "task 3", status: "pending" },
+        ],
+      };
+      insertProject(project);
+
+      await svc.dispatchTasksForProject("p1");
+      expect(maxConcurrent).toBe(1);
+    });
+
+    it("runs tasks from different projects in parallel", async () => {
+      (config as any).maxImplAgentsPerProject = 1;
+      (config as any).maxConcurrentSubAgents = 10;
+
+      const startTimes: Record<string, number> = {};
+      const endTimes: Record<string, number> = {};
+
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: { id: string }, task: { id: string }) => {
+        startTimes[task.id] = Date.now();
+        await new Promise(r => setTimeout(r, 60));
+        endTimes[task.id] = Date.now();
+        return { taskId: task.id, success: true };
+      });
+
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      for (const pid of ["proj-a", "proj-b"]) {
+        const p = makeProject(pid);
+        p.plan = {
+          id: `plan-${pid}`, projectId: pid, content: "",
+          tasks: [{ id: `${pid}-t1`, repositoryId: "r1", description: "task", status: "pending" }],
+        };
+        insertProject(p);
+      }
+
+      await Promise.all([
+        svc.dispatchTasksForProject("proj-a"),
+        svc.dispatchTasksForProject("proj-b"),
+      ]);
+
+      // Both started before either ended
+      expect(startTimes["proj-a-t1"]).toBeLessThan(endTimes["proj-b-t1"]);
+      expect(startTimes["proj-b-t1"]).toBeLessThan(endTimes["proj-a-t1"]);
     });
   });
 

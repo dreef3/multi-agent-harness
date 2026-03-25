@@ -60,6 +60,8 @@ export const config = {
   subAgentMaxRetries: parseInt(process.env.SUB_AGENT_MAX_RETRIES ?? "1", 10),
   // Maximum number of sub-agent containers allowed to run simultaneously (across all projects)
   maxConcurrentSubAgents: parseInt(process.env.MAX_CONCURRENT_SUB_AGENTS ?? "3", 10),
+  // Maximum number of impl agents allowed to run simultaneously for a single project
+  maxImplAgentsPerProject: parseInt(process.env.MAX_IMPL_AGENTS_PER_PROJECT ?? "1", 10),
   anthropicApiKeyPath:
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
   // Named Docker volume shared between backend and sub-agents for pi agent auth (OAuth tokens)

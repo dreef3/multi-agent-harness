@@ -27,6 +27,7 @@ export class RecoveryService {
   // Global concurrency semaphore — limits total simultaneous sub-agent containers
   private slots: number = config.maxConcurrentSubAgents;
   private waiters: Array<() => void> = [];
+  private projectSlots = new Map<string, { slots: number; waiters: Array<() => void> }>();
 
   constructor(private readonly docker: Dockerode) {
     this.dispatcher = new TaskDispatcher();
@@ -40,6 +41,33 @@ export class RecoveryService {
   private releaseSlot(): void {
     const next = this.waiters.shift();
     if (next) { next(); } else { this.slots++; }
+  }
+
+  private acquireProjectSlot(projectId: string): Promise<void> {
+    let entry = this.projectSlots.get(projectId);
+    if (!entry) {
+      entry = { slots: config.maxImplAgentsPerProject, waiters: [] };
+      this.projectSlots.set(projectId, entry);
+    }
+    if (entry.slots > 0) {
+      entry.slots--;
+      return Promise.resolve();
+    }
+    return new Promise(resolve => entry!.waiters.push(resolve));
+  }
+
+  private releaseProjectSlot(projectId: string): void {
+    const entry = this.projectSlots.get(projectId);
+    if (!entry) return;
+    const next = entry.waiters.shift();
+    if (next) {
+      next();
+    } else {
+      entry.slots++;
+      if (entry.slots === config.maxImplAgentsPerProject && entry.waiters.length === 0) {
+        this.projectSlots.delete(projectId);
+      }
+    }
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -150,6 +178,8 @@ export class RecoveryService {
     if (this.activeTaskIds.has(task.id)) return; // concurrency guard
     this.activeTaskIds.add(task.id);
 
+    await this.acquireProjectSlot(project.id);
+
     let localRetryCount = task.retryCount ?? 0;
     let lastError: string | undefined;
 
@@ -205,6 +235,7 @@ export class RecoveryService {
       await this.checkAllTerminal(project.id);
     } finally {
       this.activeTaskIds.delete(task.id);
+      this.releaseProjectSlot(project.id);
     }
   }
 
