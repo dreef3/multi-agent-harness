@@ -74,4 +74,7 @@ export const config = {
   harnessApiUrl: process.env.HARNESS_API_URL ?? "http://backend:3000",
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
+  otelEnabled: process.env.OTEL_ENABLED !== "false",
+  otelEndpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT ?? "http://host.docker.internal:4318",
+  otelServiceName: process.env.OTEL_SERVICE_NAME ?? "multi-agent-harness",
 };

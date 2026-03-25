@@ -6,6 +6,18 @@ import { getContainerStatus } from "./containerManager.js";
 import { TaskDispatcher } from "./taskDispatcher.js";
 import { config } from "../config.js";
 import type { Project, PlanTask } from "../models/types.js";
+import { tracer, meter } from "../telemetry.js";
+import { SpanStatusCode } from "@opentelemetry/api";
+
+const taskCounter = meter.createCounter("harness.tasks.dispatched", {
+  description: "Number of tasks dispatched",
+});
+const activeAgents = meter.createUpDownCounter("harness.agents.active", {
+  description: "Currently running sub-agent containers",
+});
+const activeAgentsPerProject = meter.createUpDownCounter("harness.agents.active_per_project", {
+  description: "Running sub-agent containers per project",
+});
 
 // ── Singleton accessor (same pattern as DebounceEngine) ──────────────────────
 
@@ -35,11 +47,14 @@ export class RecoveryService {
   }
 
   private acquireSlot(): Promise<void> {
-    if (this.slots > 0) { this.slots--; return Promise.resolve(); }
-    return new Promise((resolve) => { this.waiters.push(resolve); });
+    if (this.slots > 0) { this.slots--; activeAgents.add(1); return Promise.resolve(); }
+    return new Promise((resolve) => {
+      this.waiters.push(() => { activeAgents.add(1); resolve(); });
+    });
   }
 
   private releaseSlot(): void {
+    activeAgents.add(-1);
     const next = this.waiters.shift();
     if (next) { next(); } else { this.slots++; }
   }
@@ -52,12 +67,17 @@ export class RecoveryService {
     }
     if (entry.slots > 0) {
       entry.slots--;
+      activeAgentsPerProject.add(1, { "project.id": projectId });
       return Promise.resolve();
     }
-    return new Promise(resolve => entry!.waiters.push(resolve));
+    return new Promise(resolve => entry!.waiters.push(() => {
+      activeAgentsPerProject.add(1, { "project.id": projectId });
+      resolve();
+    }));
   }
 
   private releaseProjectSlot(projectId: string): void {
+    activeAgentsPerProject.add(-1, { "project.id": projectId });
     const entry = this.projectSlots.get(projectId);
     if (!entry) return;
     const next = entry.waiters.shift();
@@ -181,70 +201,89 @@ export class RecoveryService {
 
     await this.acquireProjectSlot(project.id);
 
-    let localRetryCount = task.retryCount ?? 0;
-    let lastError: string | undefined;
-    const retrySessionId = randomUUID();
-    let isFirstAttempt = true;
-
-    try {
-      while (localRetryCount <= config.subAgentMaxRetries) {
-        const isRetry = localRetryCount > 0;
-        updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
-        console.log(`[recoveryService] task ${task.id} attempt ${localRetryCount + 1}/${config.subAgentMaxRetries + 1}`);
-
-        // On retry, inject a resume note into the task description
-        const taskForRun = isRetry
-          ? {
-              ...task,
-              description: `Note: this is retry attempt ${localRetryCount}. The branch for this task may contain partial work from a previous attempt — start from its current remote state.\n\n${task.description}`,
-            }
-          : task;
-
-        const freshProject = getProject(project.id)!;
-        // Acquire a concurrency slot before starting a container
-        await this.acquireSlot();
-        console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
-        let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
-        try {
-          result = await this.dispatcher.runTask(
-            this.docker, freshProject, taskForRun,
-            isFirstAttempt ? undefined : retrySessionId,
-          );
-          isFirstAttempt = false;
-        } catch (err) {
-          isFirstAttempt = false;
-          this.releaseSlot();
-          throw err;
-        }
-        this.releaseSlot();
-        console.log(`[recoveryService] slot released for task ${task.id}`);
-
-        if (result.success) {
-          updateTaskInPlan(project.id, task.id, { status: "completed" });
-          console.log(`[recoveryService] task ${task.id} completed successfully`);
-          await this.checkAllTerminal(project.id);
-          return;
-        }
-
-        lastError = result.error;
-        localRetryCount++;
-        updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
-        console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
-      }
-
-      // All attempts exhausted
-      console.error(`[recoveryService] task ${task.id} permanently failed after ${localRetryCount} attempt(s)`);
-      updateTaskInPlan(project.id, task.id, {
-        status: "failed",
-        retryCount: localRetryCount,
-        errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
+    await tracer.startActiveSpan("task.dispatch", async (span) => {
+      span.setAttributes({
+        "project.id": project.id,
+        "task.id": task.id,
+        "task.attempt": 1,
       });
-      await this.notifyMasterPartialFailure(project.id, task, localRetryCount);
-      await this.checkAllTerminal(project.id);
-    } finally {
-      this.activeTaskIds.delete(task.id);
-      this.releaseProjectSlot(project.id);
-    }
+
+      let localRetryCount = task.retryCount ?? 0;
+      let lastError: string | undefined;
+      const retrySessionId = randomUUID();
+      let isFirstAttempt = true;
+
+      try {
+        while (localRetryCount <= config.subAgentMaxRetries) {
+          span.setAttribute("task.attempt", localRetryCount + 1);
+          const isRetry = localRetryCount > 0;
+          updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
+          console.log(`[recoveryService] task ${task.id} attempt ${localRetryCount + 1}/${config.subAgentMaxRetries + 1}`);
+
+          // On retry, inject a resume note into the task description
+          const taskForRun = isRetry
+            ? {
+                ...task,
+                description: `Note: this is retry attempt ${localRetryCount}. The branch for this task may contain partial work from a previous attempt — start from its current remote state.\n\n${task.description}`,
+              }
+            : task;
+
+          const freshProject = getProject(project.id)!;
+          // Acquire a concurrency slot before starting a container
+          await this.acquireSlot();
+          console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
+          let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
+          try {
+            result = await this.dispatcher.runTask(
+              this.docker, freshProject, taskForRun,
+              isFirstAttempt ? undefined : retrySessionId,
+            );
+            isFirstAttempt = false;
+          } catch (err) {
+            isFirstAttempt = false;
+            this.releaseSlot();
+            throw err;
+          }
+          this.releaseSlot();
+          console.log(`[recoveryService] slot released for task ${task.id}`);
+
+          if (result.success) {
+            updateTaskInPlan(project.id, task.id, { status: "completed" });
+            console.log(`[recoveryService] task ${task.id} completed successfully`);
+            taskCounter.add(1, { "project.id": project.id, status: "success" });
+            span.setAttributes({ "task.status": "success" });
+            await this.checkAllTerminal(project.id);
+            return;
+          }
+
+          lastError = result.error;
+          localRetryCount++;
+          updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
+          console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
+        }
+
+        // All attempts exhausted
+        console.error(`[recoveryService] task ${task.id} permanently failed after ${localRetryCount} attempt(s)`);
+        updateTaskInPlan(project.id, task.id, {
+          status: "failed",
+          retryCount: localRetryCount,
+          errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
+        });
+        taskCounter.add(1, { "project.id": project.id, status: "failed" });
+        span.setAttributes({ "task.status": "failed" });
+        span.setStatus({ code: SpanStatusCode.ERROR, message: lastError });
+        await this.notifyMasterPartialFailure(project.id, task, localRetryCount);
+        await this.checkAllTerminal(project.id);
+      } catch (err) {
+        span.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+        span.setAttributes({ "task.status": "error" });
+        throw err;
+      } finally {
+        span.end();
+        this.activeTaskIds.delete(task.id);
+        this.releaseProjectSlot(project.id);
+      }
+    });
   }
 
   // ── Private helpers ─────────────────────────────────────────────────────────
