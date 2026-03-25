@@ -482,6 +482,62 @@ describe("GET /projects/:id/master-events", () => {
   });
 });
 
+describe("POST /:id/tasks dedup", () => {
+  it("does not create duplicate tasks when same tasks posted twice", async () => {
+    // set up project with plan
+    const project = createTestProject();
+    updateProject(project.id, {
+      plan: { id: "plan-1", projectId: project.id, content: "", tasks: [] },
+    });
+
+    const tasks = [{ repositoryId: "repo-1", description: "fix the bug" }];
+
+    const res1 = await request(app).post(`/projects/${project.id}/tasks`).send({ tasks });
+    expect(res1.status).toBe(200);
+    expect(res1.body.dispatched).toBe(1);
+
+    const res2 = await request(app).post(`/projects/${project.id}/tasks`).send({ tasks });
+    expect(res2.status).toBe(200);
+    expect(res2.body.dispatched).toBe(0);
+
+    const updated = getProject(project.id)!;
+    expect(updated.plan!.tasks).toHaveLength(1);
+  });
+
+  it("treats same description with different repositoryId as distinct tasks", async () => {
+    const project = createTestProject();
+    updateProject(project.id, {
+      plan: { id: "plan-1", projectId: project.id, content: "", tasks: [] },
+    });
+
+    await request(app).post(`/projects/${project.id}/tasks`).send({
+      tasks: [{ repositoryId: "repo-1", description: "fix bug" }],
+    });
+    const res = await request(app).post(`/projects/${project.id}/tasks`).send({
+      tasks: [{ repositoryId: "repo-2", description: "fix bug" }],
+    });
+
+    expect(res.body.dispatched).toBe(1);
+    expect(getProject(project.id)!.plan!.tasks).toHaveLength(2);
+  });
+
+  it("allows re-posting a completed task (terminal tasks not blocked)", async () => {
+    const project = createTestProject();
+    updateProject(project.id, {
+      plan: {
+        id: "plan-1", projectId: project.id, content: "",
+        tasks: [{ id: "t1", repositoryId: "repo-1", description: "done task", status: "completed" }],
+      },
+    });
+
+    const res = await request(app).post(`/projects/${project.id}/tasks`).send({
+      tasks: [{ repositoryId: "repo-1", description: "done task" }],
+    });
+    expect(res.body.dispatched).toBe(1);
+    expect(getProject(project.id)!.plan!.tasks).toHaveLength(2);
+  });
+});
+
 describe("POST /api/projects/:id/retry", () => {
   it("returns 404 for unknown project", async () => {
     const res = await request(app).post("/projects/nonexistent/retry");

@@ -180,6 +180,7 @@ export function createProjectsRouter(dataDir: string): Router {
     const existingTasks = project.plan?.tasks ?? [];
 
     const updatedTasks = [...existingTasks];
+    const terminal = new Set(["completed", "failed", "cancelled"]);
     for (const incoming of tasks) {
       const existingIdx = incoming.id ? updatedTasks.findIndex(t => t.id === incoming.id) : -1;
       if (existingIdx >= 0) {
@@ -193,6 +194,15 @@ export function createProjectsRouter(dataDir: string): Router {
           errorMessage: undefined,
         };
       } else {
+        // Content-key dedup: skip if a non-terminal task with the same repositoryId+description exists
+        const contentKey = `${incoming.repositoryId}:${incoming.description.trim()}`;
+        const isDuplicate = updatedTasks.some(
+          t => !terminal.has(t.status) && `${t.repositoryId}:${t.description.trim()}` === contentKey
+        );
+        if (isDuplicate) {
+          console.warn(`[projects] Skipping duplicate task (non-terminal match): ${incoming.description.slice(0, 60)}`);
+          continue;
+        }
         // New task
         updatedTasks.push({
           id: incoming.id ?? randomUUID(),
@@ -215,7 +225,9 @@ export function createProjectsRouter(dataDir: string): Router {
       console.error(`[projects] dispatchTasksForProject error:`, err);
     }
 
-    res.json({ dispatched: tasks.length });
+    const netNew = updatedTasks.length - existingTasks.length;
+    const reset = tasks.filter(t => t.id && existingTasks.some(e => e.id === t.id)).length;
+    res.json({ dispatched: netNew + reset });
   });
 
   // Write planning document (spec or plan) — called by the planning agent container
