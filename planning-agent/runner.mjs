@@ -20,7 +20,19 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createServer } from "node:net";
 import { PassThrough } from "node:stream";
+import { createHash } from "node:crypto";
 import { createPlanningAgentGuardHook, createWebFetchTool } from "./tools.mjs";
+
+function stableTaskId(repositoryId, description) {
+  try {
+    return createHash('sha256')
+      .update(repositoryId + ':' + description.trim())
+      .digest('hex')
+      .slice(0, 32);
+  } catch {
+    return null; // null means server will assign randomUUID (fallback)
+  }
+}
 
 const PROJECT_ID = process.env.PROJECT_ID ?? "unknown";
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://backend:3000";
@@ -91,7 +103,7 @@ const availableReposDesc = repos.length > 0
 const dispatchTasksTool = {
   name: "dispatch_tasks",
   label: "Dispatch Tasks",
-  description: `Submit new tasks or re-dispatch failed tasks for implementation sub-agents. Provide \`id\` to re-submit an existing task (resets it to pending), or omit \`id\` for new tasks. ${availableReposDesc}`,
+  description: `Submit new tasks or re-dispatch failed tasks for implementation sub-agents. Provide \`id\` to re-submit an existing task (resets it to pending), or omit \`id\` for new tasks. When re-dispatching a failed task, pass the original id to ensure idempotent dispatch. ${availableReposDesc}`,
   parameters: Type.Object({
     tasks: Type.Array(Type.Object({
       id: Type.Optional(Type.String({ description: "Omit for new tasks; provide to re-dispatch a failed task" })),
@@ -100,10 +112,14 @@ const dispatchTasksTool = {
     })),
   }),
   execute: async (_toolCallId, params) => {
+    const tasksWithIds = params.tasks.map(t => ({
+      ...t,
+      id: t.id ?? stableTaskId(t.repositoryId, t.description) ?? undefined,
+    }));
     const res = await fetch(`${BACKEND_URL}/api/projects/${PROJECT_ID}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tasks: params.tasks }),
+      body: JSON.stringify({ tasks: tasksWithIds }),
     });
     if (!res.ok) {
       return { content: [{ type: "text", text: `Error: backend returned ${res.status} ${res.statusText}` }], details: {} };
