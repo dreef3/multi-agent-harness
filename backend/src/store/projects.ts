@@ -8,6 +8,7 @@ interface ProjectRow {
   primary_repository_id: string | null;
   planning_branch: string | null;
   planning_pr_json: string | null;
+  last_error: string | null;
 }
 
 function fromRow(row: ProjectRow): Project {
@@ -19,6 +20,7 @@ function fromRow(row: ProjectRow): Project {
     planningBranch: row.planning_branch ?? undefined,
     planningPr: row.planning_pr_json ? JSON.parse(row.planning_pr_json) : undefined,
     plan: row.plan_json ? (JSON.parse(row.plan_json) as Plan) : undefined,
+    lastError: row.last_error ?? undefined,
     masterSessionPath: row.master_session_path,
     createdAt: row.created_at, updatedAt: row.updated_at,
   };
@@ -29,11 +31,11 @@ export function insertProject(project: Project): void {
     INSERT INTO projects
       (id, name, status, source_type, source_json, repository_ids, plan_json,
        master_session_path, primary_repository_id, planning_branch, planning_pr_json,
-       created_at, updated_at)
+       last_error, created_at, updated_at)
     VALUES
       (@id, @name, @status, @sourceType, @sourceJson, @repositoryIds, @planJson,
        @masterSessionPath, @primaryRepositoryId, @planningBranch, @planningPrJson,
-       @createdAt, @updatedAt)
+       @lastError, @createdAt, @updatedAt)
   `).run({
     id: project.id, name: project.name, status: project.status,
     sourceType: project.source.type, sourceJson: JSON.stringify(project.source),
@@ -43,6 +45,7 @@ export function insertProject(project: Project): void {
     primaryRepositoryId: project.primaryRepositoryId ?? null,
     planningBranch: project.planningBranch ?? null,
     planningPrJson: project.planningPr ? JSON.stringify(project.planningPr) : null,
+    lastError: project.lastError ?? null,
     createdAt: project.createdAt, updatedAt: project.updatedAt,
   });
 }
@@ -105,6 +108,7 @@ export function updateProject(id: string, updates: Partial<Omit<Project, "id">>)
         primary_repository_id=@primaryRepositoryId,
         planning_branch=@planningBranch,
         planning_pr_json=@planningPrJson,
+        last_error=@lastError,
         updated_at=@updatedAt
     WHERE id=@id
   `).run({
@@ -116,6 +120,7 @@ export function updateProject(id: string, updates: Partial<Omit<Project, "id">>)
     primaryRepositoryId: merged.primaryRepositoryId ?? null,
     planningBranch: merged.planningBranch ?? null,
     planningPrJson: merged.planningPr ? JSON.stringify(merged.planningPr) : null,
+    lastError: merged.lastError ?? null,
     updatedAt: merged.updatedAt,
   });
 }

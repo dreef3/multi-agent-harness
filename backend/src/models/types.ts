@@ -12,6 +12,7 @@ export interface Project {
     | "executing"
     | "completed"
     | "failed"
+    | "error"
     | "cancelled";
   source: {
     type: "jira" | "freeform" | "github";
@@ -29,6 +30,7 @@ export interface Project {
     planApprovedAt?: string;
   };
   plan?: Plan;
+  lastError?: string;
   masterSessionPath: string;
   createdAt: string;
   updatedAt: string;

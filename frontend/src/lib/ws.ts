@@ -26,7 +26,7 @@ class WebSocketClient {
   private getUrl(): string {
     if (this.projectId) {
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      return `${protocol}://${window.location.host}/ws/projects/${this.projectId}/chat`;
+      return `${protocol}://${window.location.host}/ws?projectId=${this.projectId}`;
     }
     return this.baseUrl;
   }

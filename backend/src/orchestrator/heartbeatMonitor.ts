@@ -12,10 +12,10 @@ export function resetHeartbeat(
   const existing = timers.get(sessionId);
   if (existing) clearTimeout(existing);
 
-  const timer = setTimeout(() => {
+  const timer = setTimeout(async () => {
     timers.delete(sessionId);
     try {
-      getPlanningAgentManager().injectMessage(
+      await getPlanningAgentManager().injectMessage(
         projectId,
         `[Sub-agent: ${taskDescription}] has had no activity for 4 minutes — it may be stuck.`
       );

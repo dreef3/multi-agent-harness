@@ -28,6 +28,7 @@ export interface Project {
     | "cancelled"
     | "error";
   plan?: Plan;
+  lastError?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -162,6 +163,11 @@ export const api = {
         method: "POST",
       }),
     agents: (projectId: string) => fetchJson<AgentSession[]>(`${API_BASE}/projects/${projectId}/agents`),
+    retry: (id: string) =>
+      fetchJson<{ dispatched: number; agentRestarted: boolean }>(
+        `${API_BASE}/projects/${id}/retry`,
+        { method: "POST" }
+      ),
   },
   repositories: {
     list: () => fetchJson<Repository[]>(`${API_BASE}/repositories`),

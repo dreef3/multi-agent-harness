@@ -1,6 +1,7 @@
 import type Dockerode from "dockerode";
 import { PassThrough } from "stream";
 import { Socket } from "net";
+import { EventEmitter } from "node:events";
 import { config } from "../config.js";
 
 export type PlanningAgentEvent =
@@ -9,7 +10,8 @@ export type PlanningAgentEvent =
   | { type: "tool_result"; toolName: string; result?: unknown; isError?: boolean }
   | { type: "thinking"; text: string }
   | { type: "message_complete" }
-  | { type: "conversation_complete" };
+  | { type: "conversation_complete" }
+  | { type: "agent_error"; message: string };
 
 interface ProjectState {
   containerId: string;
@@ -20,6 +22,8 @@ interface ProjectState {
   promptPending: boolean;
   wsConnectionCount: number;
   outputHandlers: Set<(event: PlanningAgentEvent) => void>;
+  lifecycleState: "running" | "idle" | "stopping" | "crashed";
+  stopTimer: ReturnType<typeof setTimeout> | null;
 }
 
 let instance: PlanningAgentManager | null = null;
@@ -33,11 +37,13 @@ export function getPlanningAgentManager(): PlanningAgentManager {
   return instance;
 }
 
-export class PlanningAgentManager {
+export class PlanningAgentManager extends EventEmitter {
   private projects = new Map<string, ProjectState>();
   private readonly commitInProgress = new Set<string>();
 
-  constructor(private readonly docker: Dockerode) {}
+  constructor(private readonly docker: Dockerode) {
+    super();
+  }
 
   isRunning(projectId: string): boolean {
     return this.projects.has(projectId);
@@ -58,16 +64,21 @@ export class PlanningAgentManager {
       try {
         const info = await this.docker.getContainer(containerId).inspect();
         if (!info.State.Running) {
+          console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — starting existing stopped container ${containerId}`);
           await this.docker.getContainer(containerId).start();
-          console.log(`[PlanningAgentManager] restarted stopped container ${containerId} for project ${projectId}`);
+          console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
         } else {
           console.log(`[PlanningAgentManager] reusing running container ${containerId} for project ${projectId}`);
         }
       } catch {
-        console.log(`[PlanningAgentManager] could not inspect ${containerId}, attempting start`);
-        try { await this.docker.getContainer(containerId).start(); } catch { /* ignore */ }
+        console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — could not inspect ${containerId}, attempting start`);
+        try {
+          await this.docker.getContainer(containerId).start();
+          console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
+        } catch { /* ignore */ }
       }
     } else {
+      console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — creating new container`);
       containerId = await this.createContainer(projectId, containerName, repos);
       await this.docker.getContainer(containerId).start();
       console.log(`[PlanningAgentManager] started container ${containerId} for project ${projectId}`);
@@ -92,6 +103,8 @@ export class PlanningAgentManager {
       promptPending: false,
       wsConnectionCount: 0,
       outputHandlers: new Set(),
+      lifecycleState: "running",
+      stopTimer: null,
     };
     this.projects.set(projectId, state);
     this.listenTcp(projectId, state);
@@ -100,14 +113,27 @@ export class PlanningAgentManager {
   async stopContainer(projectId: string): Promise<void> {
     const state = this.projects.get(projectId);
     if (!state) return;
+    state.lifecycleState = "stopping";
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+    }
     this.projects.delete(projectId);
     state.tcpSocket.destroy();
     await this.commitSessionLog(projectId);
     try {
+      console.log(`[PlanningAgentManager] stopping container ${state.containerId} for project ${projectId}`);
       await this.docker.getContainer(state.containerId).stop({ t: 10 });
-      console.log(`[PlanningAgentManager] stopped container ${state.containerId}`);
+      console.log(`[PlanningAgentManager] stopped container ${state.containerId} for project ${projectId}`);
     } catch (err) {
       console.warn(`[PlanningAgentManager] stop failed (may already be stopped):`, err);
+    }
+    try {
+      console.log(`[PlanningAgentManager] removing container ${state.containerId} for project ${projectId}`);
+      await this.docker.getContainer(state.containerId).remove();
+      console.log(`[PlanningAgentManager] removed container ${state.containerId} for project ${projectId}`);
+    } catch (removeErr) {
+      console.warn(`[PlanningAgentManager] remove failed (non-fatal):`, removeErr);
     }
   }
 
@@ -220,7 +246,20 @@ export class PlanningAgentManager {
     });
 
     state.tcpSocket.on("close", () => {
-      console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
+      const currentState = this.projects.get(projectId);
+      if (currentState && currentState.lifecycleState !== "stopping") {
+        console.error(`[PlanningAgentManager] TCP socket closed unexpectedly for ${projectId} — marking as crashed`);
+        if (currentState.stopTimer) {
+          clearTimeout(currentState.stopTimer);
+          currentState.stopTimer = null;
+        }
+        currentState.lifecycleState = "crashed";
+        this.projects.delete(projectId);
+        // Unblock any WS clients waiting for a response
+        this.emitAgentEvent(projectId, currentState, { type: "conversation_complete" });
+      } else {
+        console.log(`[PlanningAgentManager] TCP RPC socket closed for ${projectId}`);
+      }
     });
 
     state.tcpSocket.on("error", (err) => {
@@ -243,7 +282,7 @@ export class PlanningAgentManager {
       }
       return;
     }
-    if (!["agent_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
+    if (!["agent_start", "message_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
          "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end"].includes(type)) {
       console.log(`[PlanningAgentManager] unhandled event type="${type}" for ${projectId}: ${line.slice(0, 200)}`);
     }
@@ -253,13 +292,13 @@ export class PlanningAgentManager {
     if (type === "message_update") {
       const evt = obj.assistantMessageEvent as Record<string, unknown> | undefined;
       if (evt?.type === "text_delta" && typeof evt.delta === "string") {
-        this.emit(state, { type: "delta", text: evt.delta });
+        this.emitAgentEvent(projectId, state, { type: "delta", text: evt.delta });
       }
       return;
     }
 
     if (type === "tool_execution_start") {
-      this.emit(state, {
+      this.emitAgentEvent(projectId, state, {
         type: "tool_call",
         toolName: obj.toolName as string,
         args: obj.args as Record<string, unknown> | undefined,
@@ -268,7 +307,7 @@ export class PlanningAgentManager {
     }
 
     if (type === "tool_execution_end") {
-      this.emit(state, {
+      this.emitAgentEvent(projectId, state, {
         type: "tool_result",
         toolName: obj.toolName as string,
         result: obj.result,
@@ -278,19 +317,28 @@ export class PlanningAgentManager {
     }
 
     if (type === "thinking_delta") {
-      this.emit(state, { type: "thinking", text: (obj.delta as string) ?? "" });
+      this.emitAgentEvent(projectId, state, { type: "thinking", text: (obj.delta as string) ?? "" });
       return;
     }
 
     if (type === "message_end") {
-      this.emit(state, { type: "message_complete" });
+      const msg = obj.message as { stopReason?: string; content?: Array<{ type: string; text?: string }> } | undefined;
+      if (msg?.stopReason === "error") {
+        const errorText = (msg.content ?? [])
+          .filter((c) => c.type === "text" && c.text)
+          .map((c) => c.text)
+          .join("") || "The planning agent encountered an API error. Check your model provider configuration (AGENT_PROVIDER/AGENT_MODEL).";
+        console.error(`[PlanningAgentManager] agent API error for ${projectId}: ${errorText}`);
+        this.emitAgentEvent(projectId, state, { type: "agent_error", message: errorText });
+      }
+      this.emitAgentEvent(projectId, state, { type: "message_complete" });
       return;
     }
 
     if (type === "agent_end") {
       state.isStreaming = false;
       state.promptPending = false;
-      this.emit(state, { type: "conversation_complete" });
+      this.emitAgentEvent(projectId, state, { type: "conversation_complete" });
       void this.commitSessionLog(projectId);
       // Note: do NOT call checkStop here. The container lifecycle is driven by WS
       // connection count — it stops when the last client disconnects (decrementConnections).
@@ -300,23 +348,31 @@ export class PlanningAgentManager {
     }
   }
 
-  private emit(state: ProjectState, event: PlanningAgentEvent): void {
+  private emitAgentEvent(projectId: string, state: ProjectState, event: PlanningAgentEvent): void {
     for (const handler of state.outputHandlers) {
       try { handler(event); } catch { /* ignore handler errors */ }
     }
+    this.emit(projectId, event);
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
-    if (state.wsConnectionCount === 0 && !state.isStreaming && !state.promptPending) {
-      console.log(`[PlanningAgentManager] no connections + idle — stopping container for ${projectId}`);
+    if (state.wsConnectionCount > 0 || state.isStreaming || state.promptPending) return;
+    if (state.lifecycleState !== "running") return;
+    if (state.stopTimer) return; // already counting down
+
+    state.lifecycleState = "idle";
+    state.stopTimer = setTimeout(() => {
+      state.stopTimer = null;
+      console.log(`[PlanningAgentManager] grace period expired for ${projectId}, stopping`);
       void this.stopContainer(projectId);
-    }
+    }, 120_000);
+    console.log(`[PlanningAgentManager] ${projectId} → idle (2-min grace timer started)`);
   }
 
-  async sendPrompt(projectId: string, message: string): Promise<void> {
+  async sendPrompt(projectId: string, message: string, context?: string): Promise<void> {
     if (!this.projects.has(projectId)) {
       // Container stopped (e.g. idle timeout). Restart it so the system message reaches the agent.
-      console.log(`[PlanningAgentManager] sendPrompt: no container for ${projectId}, restarting...`);
+      console.log(`[PlanningAgentManager] planning agent not running for project ${projectId} — restarting before sending prompt`);
       try {
         const { getProject } = await import("../store/projects.js");
         const { listRepositories } = await import("../store/repositories.js");
@@ -345,21 +401,50 @@ export class PlanningAgentManager {
       console.warn(`[PlanningAgentManager] sendPrompt: still no container for project ${projectId} after restart`);
       return;
     }
+    // Cancel any pending stop timer — a prompt means the agent is actively needed
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+      state.lifecycleState = "running";
+      console.log(`[PlanningAgentManager] ${projectId} → running (stop timer cancelled by sendPrompt)`);
+    }
     state.promptPending = true;
     const cmd = JSON.stringify({
       type: "prompt",
       message,
+      ...(context ? { context } : {}),
       ...(state.isStreaming ? { streamingBehavior: "followUp" } : {}),
     }) + "\n";
     state.tcpSocket.write(cmd);
   }
 
-  injectMessage(projectId: string, text: string): void {
-    const state = this.projects.get(projectId);
-    if (!state) {
-      console.warn(`[PlanningAgentManager] injectMessage: no container for ${projectId}, dropping message`);
-      return;
+  async injectMessage(projectId: string, text: string): Promise<void> {
+    if (!this.projects.has(projectId)) {
+      console.log(`[PlanningAgentManager] injectMessage: no container for ${projectId}, restarting...`);
+      try {
+        const { getProject } = await import("../store/projects.js");
+        const { listRepositories } = await import("../store/repositories.js");
+        const project = getProject(projectId);
+        if (!project) {
+          console.warn(`[PlanningAgentManager] injectMessage: project ${projectId} not found, cannot restart`);
+          return;
+        }
+        const ghToken = process.env.GITHUB_TOKEN;
+        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const repoUrls = allRepos.map((r) => ({
+          id: r.id,
+          name: r.name,
+          url: ghToken && r.cloneUrl.startsWith("https://github.com/")
+            ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+            : r.cloneUrl
+        }));
+        await this.ensureRunning(projectId, repoUrls);
+      } catch (err) {
+        console.error(`[PlanningAgentManager] injectMessage: failed to restart container for ${projectId}:`, err);
+        return;
+      }
     }
+    const state = this.projects.get(projectId)!;
     state.tcpSocket.write(JSON.stringify({ type: "prompt", message: text }) + "\n");
   }
 
@@ -372,7 +457,14 @@ export class PlanningAgentManager {
 
   incrementConnections(projectId: string): void {
     const state = this.projects.get(projectId);
-    if (state) state.wsConnectionCount++;
+    if (!state) return;
+    if (state.stopTimer) {
+      clearTimeout(state.stopTimer);
+      state.stopTimer = null;
+      state.lifecycleState = "running";
+      console.log(`[PlanningAgentManager] ${projectId} → running (stop timer cancelled by new connection)`);
+    }
+    state.wsConnectionCount++;
   }
 
   decrementConnections(projectId: string): void {
@@ -386,6 +478,29 @@ export class PlanningAgentManager {
     const state = this.projects.get(projectId);
     if (!state) return;
     this.checkStop(projectId, state);
+  }
+
+  async cleanupStaleContainers(): Promise<void> {
+    try {
+      const containers = await this.docker.listContainers({ all: true });
+      const stale = containers.filter((c) => {
+        const name = (c.Names?.[0] ?? "").replace(/^\//, "");
+        return (name.startsWith("planning-") || name.startsWith("task-")) && c.State !== "running";
+      });
+      for (const c of stale) {
+        try {
+          await this.docker.getContainer(c.Id).remove({ force: true });
+          console.log(`[PlanningAgentManager] cleaned up stale container ${c.Names?.[0]}`);
+        } catch (err) {
+          console.warn(`[PlanningAgentManager] cleanup failed for ${c.Id}:`, err);
+        }
+      }
+      if (stale.length > 0) {
+        console.log(`[PlanningAgentManager] cleaned up ${stale.length} stale container(s)`);
+      }
+    } catch (err) {
+      console.warn(`[PlanningAgentManager] container cleanup error:`, err);
+    }
   }
 
   private async commitSessionLog(projectId: string): Promise<void> {

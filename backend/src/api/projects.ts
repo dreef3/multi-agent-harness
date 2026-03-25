@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
-import { getRepository } from "../store/repositories.js";
+import { getRepository, listRepositories } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
@@ -236,6 +236,62 @@ export function createProjectsRouter(dataDir: string): Router {
     } else {
       res.json(result);
     }
+  });
+
+  // Retry a failed/errored project — resets failed tasks and restarts the planning agent
+  router.post("/:id/retry", async (req, res) => {
+    console.log(`[projects] Received retry request for project ${req.params.id}`);
+    const project = getProject(req.params.id);
+    if (!project) {
+      console.warn(`[projects] retry: project ${req.params.id} not found`);
+      res.status(404).json({ error: "Project not found" });
+      return;
+    }
+    if (project.status !== "failed" && project.status !== "error") {
+      console.warn(`[projects] retry: project ${req.params.id} has status ${project.status}, skipping retry`);
+      res.status(400).json({ error: "Project is not in a failed or error state" });
+      return;
+    }
+
+    updateProject(req.params.id, { lastError: undefined, status: "executing" });
+
+    let dispatched = 0;
+    try {
+      const result = await getRecoveryService().dispatchFailedTasks(req.params.id);
+      dispatched = result.count;
+      console.log(`[projects] retry: ${dispatched} tasks re-dispatched`);
+    } catch (err) {
+      console.error(`[projects] retry: dispatchFailedTasks error:`, err);
+    }
+
+    let agentRestarted = false;
+    try {
+      const { getPlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+      const manager = getPlanningAgentManager();
+      if (!manager.isRunning(req.params.id)) {
+        console.log(`[projects] retry: planning agent not running, ensuring start...`);
+        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const ghToken = process.env.GITHUB_TOKEN;
+        const repoUrls = allRepos.map((r) => ({
+          id: r.id,
+          name: r.name,
+          url:
+            ghToken && r.cloneUrl.startsWith("https://github.com/")
+              ? r.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+              : r.cloneUrl,
+        }));
+        await manager.ensureRunning(req.params.id, repoUrls);
+        agentRestarted = true;
+        console.log(`[projects] retry: planning agent restarted`);
+      } else {
+        console.log(`[projects] retry: planning agent is already running`);
+      }
+    } catch (err) {
+      console.warn(`[projects] retry: failed to restart planning agent:`, err);
+    }
+
+    console.log(`[projects] retry complete for ${req.params.id}: dispatched=${dispatched}, agentRestarted=${agentRestarted}`);
+    res.json({ dispatched, agentRestarted });
   });
 
   return router;

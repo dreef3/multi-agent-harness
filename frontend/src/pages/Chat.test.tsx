@@ -253,6 +253,195 @@ describe('Chat Component State Management', () => {
     });
   });
 
+  describe('project navigation', () => {
+    it('clears messages when project id changes', async () => {
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+
+      // Project A returns one message
+      mockList.mockResolvedValueOnce([
+        { id: '1', projectId: 'project-a', role: 'user' as const, content: 'Hello from A', timestamp: '2024-01-01', seqId: 1 },
+      ]);
+
+      const { rerender } = render(
+        <MemoryRouter key="project-a" initialEntries={['/project/project-a']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => expect(screen.getByText('Hello from A')).toBeInTheDocument());
+
+      // Navigate to project B (no messages)
+      mockList.mockResolvedValue([]);
+      rerender(
+        <MemoryRouter key="project-b" initialEntries={['/project/project-b']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => expect(screen.queryByText('Hello from A')).not.toBeInTheDocument());
+    });
+  });
+
+  describe('assistant message persistence', () => {
+    it('shows assistant message from DB after agent completes (not just streaming)', async () => {
+      // This test catches the regression where message_complete wiped streamingContent
+      // but DB had no assistant message saved — leaving an empty chat.
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+
+      // First call (initial load) returns empty, second call (after message_complete) returns saved assistant message
+      mockList
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: '1', projectId: 'test', role: 'assistant' as const, content: 'Done!', timestamp: '2024-01-01', seqId: 1 },
+        ]);
+
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      // Simulate streaming response then message_complete
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'Do' });
+        handlerStorage.handler?.({ type: 'delta', text: 'ne!' });
+      });
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'message_complete' });
+      });
+
+      // Assistant message should be shown from DB (not just streaming)
+      await waitFor(() => {
+        expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
+        expect(screen.getByText('Done!')).toBeInTheDocument();
+      });
+    });
+
+    it('clears streaming text on message_complete and shows DB message instead', async () => {
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+      mockList
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          { id: '1', projectId: 'test', role: 'assistant' as const, content: 'Final answer', timestamp: '2024-01-01', seqId: 1 },
+        ]);
+
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'Final answer' });
+      });
+      // Streaming text visible
+      expect(screen.getByTestId('assistant-streaming')).toBeInTheDocument();
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'message_complete' });
+      });
+
+      // Streaming element gone, DB message shown
+      await waitFor(() => {
+        expect(screen.queryByTestId('assistant-streaming')).not.toBeInTheDocument();
+        expect(screen.getByTestId('assistant-message')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('message deduplication', () => {
+    it('does not duplicate user message after loadMessages', async () => {
+      const { api } = await import('../lib/api');
+      const mockList = vi.mocked(api.projects.messages.list);
+
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      // loadMessages returns the DB version of the user's message
+      mockList.mockResolvedValueOnce([
+        { id: '10', projectId: 'test', role: 'user' as const, content: 'My message', timestamp: '2024-01-01', seqId: 1 },
+      ]);
+
+      // message_complete triggers loadMessages
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'message_complete' });
+      });
+
+      await waitFor(() => {
+        expect(screen.queryAllByText('My message')).toHaveLength(1);
+      });
+    });
+  });
+
+  describe('tool call display', () => {
+    it('shows tool call card when tool_call event received during processing', async () => {
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      await act(async () => {
+        // delta sets thinkingMode to "typing"
+        handlerStorage.handler?.({ type: 'delta', text: 'thinking...' });
+      });
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'tool_call', toolName: 'read_file', args: { path: '/foo.ts' }, agentType: 'master' });
+      });
+
+      await waitFor(() => expect(screen.getByText('read_file')).toBeInTheDocument());
+    });
+
+    it('shows +N more badge after multiple tool calls', async () => {
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'x' });
+        handlerStorage.handler?.({ type: 'tool_call', toolName: 'tool_1', args: {}, agentType: 'master' });
+        handlerStorage.handler?.({ type: 'tool_call', toolName: 'tool_2', args: {}, agentType: 'master' });
+        handlerStorage.handler?.({ type: 'tool_call', toolName: 'tool_3', args: {}, agentType: 'master' });
+      });
+
+      await waitFor(() => expect(screen.getByText('+2 more')).toBeInTheDocument());
+    });
+
+    it('clears tool call card on conversation_complete', async () => {
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes><Route path="/project/:id" element={<Chat />} /></Routes>
+        </MemoryRouter>
+      );
+      await waitFor(() => expect(handlerStorage.handler).toBeDefined());
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'delta', text: 'x' });
+        handlerStorage.handler?.({ type: 'tool_call', toolName: 'read_file', args: {}, agentType: 'master' });
+      });
+      await waitFor(() => expect(screen.getByText('read_file')).toBeInTheDocument());
+
+      await act(async () => {
+        handlerStorage.handler?.({ type: 'conversation_complete' });
+      });
+
+      await waitFor(() => expect(screen.queryByText('read_file')).not.toBeInTheDocument());
+    });
+  });
+
   describe('WebSocket lifecycle', () => {
     it('disconnects WebSocket when navigating away from a project', async () => {
       const { wsClient } = await import('../lib/ws');

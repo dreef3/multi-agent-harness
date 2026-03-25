@@ -167,11 +167,11 @@ export function createAgentsRouter(): Router {
     });
 
     try {
-      getPlanningAgentManager().injectMessage(
+      await getPlanningAgentManager().injectMessage(
         session.projectId,
         `[msgId: ${msgId}] [Sub-agent: ${taskDesc}] asks: ${question}`
       );
-    } catch {
+    } catch (err) {
       clearTimeout(timeoutHandle);
       pendingMessages.delete(msgId);
       res.status(503).json({ error: "Planning agent not available" });

@@ -36,6 +36,7 @@ async function main() {
   console.log("[startup] Initializing planning agent manager...");
   const planningAgentManager = new PlanningAgentManager(docker);
   setPlanningAgentManager(planningAgentManager);
+  void planningAgentManager.cleanupStaleContainers();
 
   console.log("[startup] Running boot recovery (stale session scan)...");
   await recoveryService.recoverOnBoot();
@@ -48,7 +49,7 @@ async function main() {
   app.use("/api", createRouter(config.dataDir, docker));
 
   const server = createServer(app);
-  setupWebSocket(server, config.dataDir);
+  setupWebSocket(server);
 
   server.listen(config.port, () => {
     console.log(`[startup] Backend listening on port ${config.port}`);

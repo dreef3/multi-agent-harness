@@ -108,11 +108,13 @@ export async function startContainer(docker: Dockerode, containerId: string): Pr
 export async function stopContainer(docker: Dockerode, containerId: string): Promise<void> {
   console.log(`[containerManager] Stopping container ${containerId}`);
   await docker.getContainer(containerId).stop({ t: 10 });
+  console.log(`[containerManager] Container ${containerId} stopped`);
 }
 
 export async function removeContainer(docker: Dockerode, containerId: string): Promise<void> {
   console.log(`[containerManager] Removing container ${containerId}`);
   await docker.getContainer(containerId).remove({ force: true });
+  console.log(`[containerManager] Container ${containerId} removed`);
 }
 
 export async function getContainerStatus(docker: Dockerode, containerId: string): Promise<"running" | "stopped" | "exited" | "unknown"> {

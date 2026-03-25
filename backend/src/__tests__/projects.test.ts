@@ -18,7 +18,17 @@ vi.mock("../api/websocket.js", () => ({
 }));
 
 vi.mock("../orchestrator/recoveryService.js", () => ({
-  getRecoveryService: () => ({ dispatchTasksForProject: vi.fn().mockResolvedValue(undefined) }),
+  getRecoveryService: () => ({
+    dispatchTasksForProject: vi.fn().mockResolvedValue(undefined),
+    dispatchFailedTasks: vi.fn().mockResolvedValue({ count: 1 }),
+  }),
+}));
+
+vi.mock("../orchestrator/planningAgentManager.js", () => ({
+  getPlanningAgentManager: () => ({
+    isRunning: vi.fn().mockReturnValue(true),
+    ensureRunning: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 describe("projects store", () => {
@@ -349,7 +359,7 @@ describe("buildClosingRefs", () => {
 let app: ReturnType<typeof express>;
 let tmpHttpDir: string;
 
-function createTestProject(): Project {
+function createTestProject(overrides: Partial<Omit<Project, "id">> = {}): Project {
   const now = new Date().toISOString();
   const project: Project = {
     id: `proj-${Math.random().toString(36).slice(2)}`,
@@ -360,6 +370,7 @@ function createTestProject(): Project {
     masterSessionPath: "",
     createdAt: now,
     updatedAt: now,
+    ...overrides,
   };
   insertProject(project);
   return project;
@@ -468,5 +479,44 @@ describe("GET /projects/:id/master-events", () => {
     expect(res.body).toHaveLength(1);
     expect(res.body[0].type).toBe("tool_call");
     expect(res.body[0].payload.toolName).toBe("dispatch_tasks");
+  });
+});
+
+describe("POST /api/projects/:id/retry", () => {
+  it("returns 404 for unknown project", async () => {
+    const res = await request(app).post("/projects/nonexistent/retry");
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 when project is not in failed state", async () => {
+    const project = createTestProject({ status: "executing" });
+    const res = await request(app).post(`/projects/${project.id}/retry`);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/not in a failed/i);
+  });
+
+  it("returns 200 and dispatched count for a failed project", async () => {
+    const project = createTestProject({
+      status: "failed",
+      plan: {
+        id: "plan-1",
+        projectId: "proj-1",
+        content: "",
+        tasks: [
+          { id: "t1", repositoryId: "repo-1", description: "Task 1", status: "failed" },
+          { id: "t2", repositoryId: "repo-1", description: "Task 2", status: "completed" },
+        ],
+      },
+    });
+    const res = await request(app).post(`/projects/${project.id}/retry`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("dispatched");
+  });
+
+  it("clears lastError on retry", async () => {
+    const project = createTestProject({ status: "failed", lastError: "disk full" });
+    await request(app).post(`/projects/${project.id}/retry`);
+    const updated = await request(app).get(`/projects/${project.id}`);
+    expect(updated.body.lastError).toBeFalsy();
   });
 });

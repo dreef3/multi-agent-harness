@@ -112,6 +112,7 @@ function migrate(database: Database.Database): void {
   addColumnIfMissing("projects", "primary_repository_id", "TEXT");
   addColumnIfMissing("projects", "planning_branch", "TEXT");
   addColumnIfMissing("projects", "planning_pr_json", "TEXT");
+  addColumnIfMissing("projects", "last_error", "TEXT");
 
   // Backfill primary_repository_id from first repositoryId
   database.exec(`
