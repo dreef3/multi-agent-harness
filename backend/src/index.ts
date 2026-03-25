@@ -1,3 +1,4 @@
+import "./telemetry.js"; // MUST be first — patches Node.js HTTP before any other import
 import express from "express";
 import { createServer } from "http";
 import Dockerode from "dockerode";
