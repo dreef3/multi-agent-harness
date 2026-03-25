@@ -1,3 +1,31 @@
+// Parse "providerId/modelId" — returns null if format is invalid
+function parseModelSpec(spec: string): { provider: string; model: string } | null {
+  const slash = spec.indexOf('/');
+  return slash > 0 ? { provider: spec.slice(0, slash), model: spec.slice(slash + 1) } : null;
+}
+
+// Default models per provider (used when AGENT_IMPLEMENTATION_MODEL is not set)
+const MODEL_DEFAULTS: Record<string, { planning: string; implementation: string }> = {
+  "pi":                 { planning: "claude-3-opus",     implementation: "claude-3-haiku" },
+  "opencode-go":        { planning: "minimax-m2.7",      implementation: "minimax-m2.7" },
+  "opencode-zen":       { planning: "opencode-zen",      implementation: "opencode-zen" },
+  "google-gemini-cli":  { planning: "gemini-2.5-pro",    implementation: "gemini-2.5-flash" },
+  "google-antigravity": { planning: "claude-sonnet-4-6", implementation: "gemini-3-flash" },
+  "openai-codex":       { planning: "gpt-5.1",           implementation: "gpt-5.1-codex-mini" },
+};
+
+const planningSpec = parseModelSpec(
+  process.env.AGENT_PLANNING_MODEL ?? "opencode-go/minimax-m2.7"
+);
+const agentProvider = planningSpec?.provider ?? "opencode-go";
+const planningModel  = planningSpec?.model ?? MODEL_DEFAULTS[agentProvider]?.planning ?? "minimax-m2.7";
+
+const implRaw = process.env.AGENT_IMPLEMENTATION_MODEL;
+const implSpec = implRaw ? parseModelSpec(implRaw) : null;
+const implementationModel = implSpec?.model
+  ?? MODEL_DEFAULTS[implSpec?.provider ?? agentProvider]?.implementation
+  ?? planningModel;
+
 export const config = {
   port: parseInt(process.env.PORT ?? "3000", 10),
   dataDir: process.env.DATA_DIR ?? "./data",
@@ -36,91 +64,12 @@ export const config = {
     process.env.ANTHROPIC_API_KEY_PATH ?? "/run/secrets/api-key",
   // Named Docker volume shared between backend and sub-agents for pi agent auth (OAuth tokens)
   piAgentVolume: process.env.PI_AGENT_VOLUME ?? "harness-pi-auth",
-  // Agent provider configuration
-  agentProvider: process.env.AGENT_PROVIDER ?? "opencode-go",
+  // Agent model configuration — set via AGENT_PLANNING_MODEL=<providerId>/<modelId>
+  // e.g. AGENT_PLANNING_MODEL=google-gemini-cli/gemini-2.5-pro
+  agentProvider,
+  planningModel,
+  implementationModel,
   harnessApiUrl: process.env.HARNESS_API_URL ?? "http://backend:3000",
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
-  
-  // Provider-specific model configuration
-  models: {
-    // Pi agent provider (uses Claude models via Anthropic)
-    pi: {
-      masterAgent: {
-        model: "claude-3-opus",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: "claude-3-haiku",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-    // OpenCode Go provider (uses OpenCode models)
-    "opencode-go": {
-      masterAgent: {
-        model: process.env.OPENCODE_PLANNING_MODEL ?? "minimax-m2.7",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: process.env.OPENCODE_IMPLEMENTATION_MODEL ?? "minimax-m2.7",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-    // OpenCode Zen provider (uses OpenCode models)
-    "opencode-zen": {
-      masterAgent: {
-        model: "opencode-zen",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: "opencode-zen",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-    // Google Gemini CLI provider (uses local OAuth via pi-agent volume)
-    "google-gemini-cli": {
-      masterAgent: {
-        model: process.env.GEMINI_PLANNING_MODEL ?? "gemini-2.5-pro",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: process.env.GEMINI_IMPLEMENTATION_MODEL ?? "gemini-2.5-flash",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-    // Google Antigravity provider (uses local OAuth via pi-agent volume)
-    "google-antigravity": {
-      masterAgent: {
-        model: process.env.ANTIGRAVITY_PLANNING_MODEL ?? "claude-sonnet-4-6",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: process.env.ANTIGRAVITY_IMPLEMENTATION_MODEL ?? "gemini-3-flash",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-    // OpenAI Codex provider
-    "openai-codex": {
-      masterAgent: {
-        model: process.env.CODEX_PLANNING_MODEL ?? "gpt-5.1",
-        temperature: 0.7,
-        maxTokens: 4096,
-      },
-      workerAgent: {
-        model: process.env.CODEX_IMPLEMENTATION_MODEL ?? "gpt-5.1-codex-mini",
-        temperature: 0.5,
-        maxTokens: 2048,
-      },
-    },
-  },
 };

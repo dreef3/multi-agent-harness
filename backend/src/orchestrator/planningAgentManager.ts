@@ -155,27 +155,19 @@ export class PlanningAgentManager extends EventEmitter {
     repos: Array<{ id?: string; name: string; url: string }>
   ): Promise<string> {
     // GITHUB_TOKEN is intentionally excluded — clone URLs are pre-authenticated in GIT_CLONE_URLS
+    // API keys passed through; AGENT_PROVIDER and AGENT_MODEL are derived from config below
     const providerEnvVars = [
-      // Provider selection
-      "AGENT_PROVIDER", "AGENT_MODEL",
-      // Anthropic / pi-coding-agent
       "ANTHROPIC_API_KEY",
-      // OpenAI / Codex
       "OPENAI_API_KEY",
-      // OpenCode Go
-      "OPENCODE_API_KEY", "OPENCODE_PLANNING_MODEL", "OPENCODE_IMPLEMENTATION_MODEL",
-      // OpenCode model-specific keys
+      "OPENCODE_API_KEY",
       "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
     ]
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 
-    // Ensure AGENT_MODEL is always set from config (env passthrough only works if the backend
-    // itself has AGENT_MODEL set; fall back to the configured master-agent model for the provider)
-    const configuredModel = config.models?.[config.agentProvider as keyof typeof config.models]?.masterAgent?.model;
-    if (configuredModel && !providerEnvVars.some(v => v.startsWith("AGENT_MODEL="))) {
-      providerEnvVars.push(`AGENT_MODEL=${configuredModel}`);
-    }
+    // Always set provider + model explicitly from parsed config (AGENT_PLANNING_MODEL)
+    providerEnvVars.push(`AGENT_PROVIDER=${config.agentProvider}`);
+    providerEnvVars.push(`AGENT_MODEL=${config.planningModel}`);
 
     const image = config.planningAgentImage;
 

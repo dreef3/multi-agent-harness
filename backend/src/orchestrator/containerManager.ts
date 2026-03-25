@@ -53,7 +53,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     .map(name => `${name}=${process.env[name]}`);
 
   const agentProvider = opts.agentProvider ?? config.agentProvider;
-  const agentModel = opts.agentModel ?? config.models[config.agentProvider as keyof typeof config.models]?.workerAgent?.model ?? "minimax-m2.7";
+  const agentModel = opts.agentModel ?? config.implementationModel;
 
   const taskEnv = [
     ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
