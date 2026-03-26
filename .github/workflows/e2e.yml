@@ -61,7 +61,8 @@ jobs:
       - name: Build sub-agent image
         uses: docker/build-push-action@v5
         with:
-          context: ./sub-agent
+          context: .
+          file: ./sub-agent/Dockerfile
           tags: multi-agent-harness/sub-agent:latest
           load: true
           cache-from: type=gha,scope=sub-agent
@@ -70,7 +71,8 @@ jobs:
       - name: Build planning-agent image
         uses: docker/build-push-action@v5
         with:
-          context: ./planning-agent
+          context: .
+          file: ./planning-agent/Dockerfile
           tags: multi-agent-harness/planning-agent:latest
           load: true
           cache-from: type=gha,scope=planning-agent
