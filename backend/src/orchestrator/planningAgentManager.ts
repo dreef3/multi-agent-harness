@@ -311,7 +311,7 @@ export class PlanningAgentManager extends EventEmitter {
 
     if (type === "tool_execution_start") {
       const toolName = obj.toolName as string;
-      const toolCallId = (obj.toolCallId as string | undefined) ?? toolName;
+      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? toolName);
       this.toolCallStartTimes.set(toolCallId, Date.now());
       toolCallCounter.add(1, { "tool.name": toolName, "project.id": projectId });
       this.emitAgentEvent(projectId, state, {
@@ -323,7 +323,7 @@ export class PlanningAgentManager extends EventEmitter {
     }
 
     if (type === "tool_execution_end") {
-      const toolCallId = (obj.toolCallId as string | undefined) ?? (obj.toolName as string);
+      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? (obj.toolName as string));
       const start = this.toolCallStartTimes.get(toolCallId);
       if (start !== undefined) {
         toolCallDuration.record(Date.now() - start, { "tool.name": obj.toolName as string, "project.id": projectId });
