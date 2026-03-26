@@ -1,145 +1,80 @@
-Feature spec: Hide / Archive completed projects
+Feature spec (UI-only): Hide completed projects
 
 Summary
 
-Add a soft-archive capability so completed (terminal) projects can be hidden from the default project list while still keeping all project data for retrieval and auditing. Provide UI controls to show archived projects and to archive/unarchive a project. Enforce archiving only for terminal projects; provide an API surface and DB migration. This is a non-destructive change (soft archive) and should not delete messages, agent sessions or PRs.
+This is a minimal, UI-only change to hide projects with status "completed" from the default Projects list to reduce visual clutter. No database, API, or orchestrator changes will be made: the filtering is performed client-side in the frontend. A toggle will allow users to reveal completed projects when desired.
 
-Goals
+Key decisions
 
-- Let users hide completed projects from the default projects view to reduce visual clutter.
-- Preserve all project data so archived projects can be unarchived and inspected later.
-- Prevent accidental archiving of active projects.
-- Provide a simple API for archiving/unarchiving and a straightforward UI control in the Projects list and Project detail view.
+- Scope: Frontend-only. No backend DB columns, API endpoints, or server-side behavior changes.
+- Which statuses are hidden: only projects with status === "completed". Projects with status "cancelled", "failed", or "error" remain visible.
+- Toggle label: "Show completed projects" (default: off). When enabled, the list shows completed projects as well.
+- Direct links / project detail: Completed projects remain accessible via URL; project detail view is unchanged except for a subtle status indicator.
 
-Non-Goals / Out of scope
+User-facing behavior
 
-- Permanently deleting old projects (hard-delete) or implementing retention/auto-delete policy.
-- Automatically archiving projects on a schedule (could be a follow-up enhancement).
+- Projects list (default): excludes completed projects.
+- Projects list (toggle on): includes completed projects, which are visually muted and display a "Completed" badge.
+- Project card actions: For completed projects, actions that would start new work or change status should be disabled or hidden (e.g., resume/retry). Delete remains available if already present.
+- Project detail page: If a user navigates directly to a completed project, they can view it normally. A banner or badge indicates the completed status. No unarchive controls exist because there is no archive state.
 
-Proposal
+Frontend implementation details
 
-1) Data model
+Files (example locations — adjust to actual paths):
+- frontend/src/pages/ProjectsList.tsx (or equivalent)
+- frontend/src/components/ProjectCard.tsx (or equivalent)
+- frontend/src/pages/ProjectDetail.tsx (or equivalent)
+- frontend/src/styles/ — add muted style rule for completed projects
 
-- Add column archived INTEGER NOT NULL DEFAULT 0 to projects table. Map to Project.archived: boolean in the backend model.
-- Rationale: boolean is simple and explicit. Avoid re-using the status field which is used across many orchestrator flows.
+Behavior changes (client-side):
+1) Fetch projects as before via GET /api/projects (no query params). This keeps backend unchanged.
+2) Filter results in the client to remove projects with project.status === "completed" when the toggle is off.
+3) Add a toggle control near the top of the Projects list with label "Show completed projects". Default is unchecked.
+4) When enabled, the toggle re-runs the display logic to include completed projects.
+5) Completed projects are rendered with:
+   - A muted/gray card style (reduced visual weight).
+   - A visible "Completed" badge.
+   - Disabled/hidden actions that would resume or dispatch agents; Keep read-only actions like "View" and destructive "Delete" if already allowed.
+6) Accessibility: ensure toggle is keyboard-focusable and has aria-label; the badge should have an aria-live-friendly label so screen readers announce status.
 
-DB migration steps (backend/src/store/db.ts):
-- addColumnIfMissing("projects", "archived", "INTEGER DEFAULT 0");
-- Ensure fromRow() maps archived (0/1) to Project.archived boolean with default false.
+Edge cases & tradeoffs
 
-2) Backend API
+- Performance: client-side filtering requires fetching all projects. If project lists grow large, consider server-side filtering in a follow-up.
+- Metrics / selectors: because there is no server-side archived flag, other services or clients that call the API (e.g., dropdowns, metrics endpoints) continue to see completed projects unless they also implement client-side filtering.
+- Consistency: UI-only approach means there is no persisted "archived" state; projects will appear/disappear solely based on their status value.
 
-New endpoints (backend/src/api/projects.ts):
-- POST /api/projects/:id/archive
-  - Behavior: Sets archived=true for the project if project.status is terminal (completed, cancelled, failed, error). If project is non-terminal (executing, brainstorming, awaiting_plan_approval etc.), return 400 with error "Cannot archive non-terminal project".
-  - Returns: { success: true, archived: true }
-- POST /api/projects/:id/unarchive
-  - Behavior: Sets archived=false regardless of status. Returns { success: true, archived: false }.
+Tests / QA
 
-List projects behavior change:
-- GET /api/projects (existing) should accept an optional query param includeArchived=true. By default the API will exclude archived projects from the returned list.
-- Also support GET /api/projects?includeArchived=true to return all projects (legacy behaviour preserved when explicitly requested).
+Frontend unit/e2e tests:
+- ProjectsList: default view filters out projects with status "completed".
+- ProjectsList: toggling "Show completed projects" shows completed projects and retains other projects.
+- ProjectCard: completed projects render muted style and "Completed" badge.
+- Actions: attempt to click disabled actions on completed project cards — ensure they are not actionable.
+- ProjectDetail: direct navigation to a completed project shows the page and status indicator.
 
-Patch project update behavior:
-- PATCH /api/projects/:id should accept an "archived" boolean to allow archiving/unarchiving through the patch endpoint as well (subject to the same validation: only allow archived=true for terminal projects).
+Acceptance criteria
 
-Server-side considerations:
-- updateProject() in store.projects.ts should continue to work; ensure callers that call updateProject({ status: ... }) are unaffected.
-- deleteProject remains destructive; archiving only toggles archived.
+- By default the Projects list does not show projects with status === "completed".
+- The "Show completed projects" toggle reveals completed projects when enabled.
+- Completed projects are visually distinguished and have an accessible badge.
+- No backend or DB changes are required for this behavior.
 
-3) Orchestrator / Recovery interactions
+Implementation tasks (frontend-only)
 
-- The recovery service uses listExecutingProjects() (status == 'executing') and other status-based queries. Because archiving only applies to terminal projects this should not affect recovery or agent management flows.
-- Ensure no code path enumerates projects by reading listProjects() and expecting archived projects to be present; default behavior change is only at the API level. Internal code that uses listProjects() directly in the backend should check project.archived when appropriate (we'll audit code locations that call listProjects()).
-
-Audit points:
-- Search for any logic that enumerates projects to start agents, dispatch tasks, or make decisions; ensure archived projects are ignored by UI-level listing only (we will not change behavior of status-driven internal flows). If any internal flows rely on listProjects() returning archived ones, we will either update the internal caller to explicitly include archived where needed or call listProjects() and filter locally.
-
-4) Frontend UX
-
-Changes required in frontend to hide archived by default and provide controls:
-- Projects list page (frontend):
-  - By default show only non-archived projects (call GET /api/projects without includeArchived).
-  - Add a toggle/switch labelled "Show archived projects" near the top of the list. When enabled, call GET /api/projects?includeArchived=true and render archived projects.
-  - Archived project card styling: display a muted/gray appearance and an "Archived" badge. Actions available: "Unarchive" and "Delete" (delete existing destructive endpoint). Disable actions that cannot be used (e.g., "Retry", "Retry" should not be shown for archived projects unless unarchived).
-  - Support bulk actions (optional): select multiple archived projects and unarchive or delete — mark as follow-up.
-- Project details page:
-  - Show an "Archived" banner for archived projects and an "Unarchive" button in the header.
-  - If project is archived, disable actions that would start agents or dispatch tasks and show guidance text like "This project is archived. Unarchive to resume or inspect the plan."
-
-Accessibility / design notes:
-- Ensure the toggle is keyboard accessible and has an ARIA label. Archived badge should be perceivable to screen readers.
-
-5) Authorization / Security
-
-- No new permission model required for this release: archiving will be available to any user that can update projects (same role that can call PATCH). Ensure server-side validation of status and input to prevent invalid state transitions.
-
-6) Tests and QA
-
-- Backend unit tests covering:
-  - DB migration added column default false.
-  - POST /api/projects/:id/archive: success when project is terminal; 400 when not terminal.
-  - POST /api/projects/:id/unarchive: unarchives a project.
-  - GET /api/projects default excludes archived; includeArchived=true returns archived.
-  - PATCH /api/projects/:id with archived field validates terminal status.
-- Frontend tests / e2e:
-  - Projects list hides archived by default and toggles with Show archived switch.
-  - Archive/unarchive flows show expected UI changes and call the correct endpoints.
-
-7) Backwards compatibility / migration
-
-- Migration adds the column with default 0 so existing projects remain unarchived.
-- No breaking API changes. Endpoints added and query param is optional.
-
-8) Acceptance criteria
-
-- Users can archive a completed project via API or UI; archived projects no longer appear in the projects list by default.
-- Users can toggle "Show archived projects" to reveal archived projects.
-- Archived projects can be unarchived and will reappear in the default list.
-- Attempting to archive a non-terminal project returns a 400 error and does not change the project.
-
-Implementation plan (high-level tasks)
-
-Backend (priority):
-- Add DB migration column and update fromRow() to map archived -> Project.archived.
-- Add POST /api/projects/:id/archive and POST /api/projects/:id/unarchive routes and validations.
-- Modify GET /api/projects to accept includeArchived query param and implement default filtering.
-- Allow PATCH /api/projects to set archived with same validations.
-- Add unit tests for new behavior.
-
-Frontend (priority):
-- Projects list: add Show archived toggle, different styling for archived projects, Unarchive action and integration with API.
-- Project detail: banner and Unarchive action, disable resume/agent actions while archived.
-- Add e2e tests.
-
-Docs
-
-- Update README or docs area describing archiving behavior and APIs.
-
-Rollout / Rollback
-
-- Feature flagged by default behaviour: since we change GET /api/projects default to hide archived, with default archived=false for all existing projects this is a no-op until someone archives a project.
-- Rollback: remove API endpoints and DB column (not required if non-destructive). No immediate risk.
-
-Open questions / decisions for maintainers
-
-1) Should we allow archiving of projects with status "failed" or only "completed" and "cancelled"? Proposal: allow any terminal status (completed, cancelled, failed, error) to be archived.
-2) Do we want auto-archiving on a configurable schedule? Propose follow-up.
-3) Bulk archive/unarchive UI? Follow-up.
-
-Files likely touched
-
-- backend/src/store/db.ts — migration addColumnIfMissing("archived")
-- backend/src/store/projects.ts — fromRow() mapping; updateProject/deleteProject unaffected
-- backend/src/api/projects.ts — add archive/unarchive endpoints; add includeArchived handling; patch validation
-- frontend/src/pages/ProjectsList.tsx (or similar) — UI changes
-- frontend/src/pages/ProjectDetail.tsx — banner + actions
-- docs — user-facing docs
+1. Add toggle to Projects list UI and wire state (boolean showCompleted default false).
+2. Fetch projects as before; filter client-side: visible = projects.filter(p => !(p.status === "completed") || showCompleted).
+3. Update ProjectCard to render muted style and badge for p.status === "completed".
+4. Disable or hide actions that would start or resume work on completed projects.
+5. Add unit and e2e tests.
+6. Update any UI docs or README sections describing the Projects list behaviour.
 
 Estimated effort
 
-- Backend: 1–2 engineer days (migration + API changes + tests)
-- Frontend: 1–2 engineer days (UI + e2e tests)
+- Frontend: 0.5–1 engineer days (small UI change + tests)
 
+Follow-up suggestions (not required now)
 
--- End of spec
+- If you later want true archiving (persisted flag, server-side filtering, RBAC, audit), we can follow the full spec that adds DB/API changes.
+- Consider server-side support if the projects list becomes large and client-side filtering becomes costly.
+
+-- End of spec (UI-only)
