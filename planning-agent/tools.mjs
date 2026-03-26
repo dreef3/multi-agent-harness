@@ -5,7 +5,22 @@
  * NOTE: web_fetch implementation is duplicated from sub-agent/tools.mjs
  * because these are separate Docker images with no shared file system.
  */
+import { spawnSync } from "node:child_process";
 import { Type } from "@sinclair/typebox";
+
+// Check once at module load whether RTK is runnable on this architecture
+const isRtkAvailable = (() => {
+  try {
+    const result = spawnSync("/usr/local/bin/rtk", ["--version"], { timeout: 3000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
+
+if (!isRtkAvailable) {
+  console.warn("[tools] RTK not available — bash output will not be filtered");
+}
 
 // ── Guard hook ────────────────────────────────────────────────────────────────
 
@@ -63,6 +78,10 @@ function makeGuardHook(patterns) {
       }
     } catch (err) {
       console.warn("[guard] hook error, allowing command through:", err?.message ?? err);
+    }
+    // No block matched — prepend rtk if available
+    if (isRtkAvailable) {
+      return { ...context, command: "rtk " + context.command };
     }
     return context;
   };
