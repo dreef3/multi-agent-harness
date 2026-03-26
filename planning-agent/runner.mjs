@@ -23,6 +23,7 @@ import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { createPlanningAgentGuardHook, createWebFetchTool } from "./tools.mjs";
 import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
+import { setupCopilotAuth } from '/app/shared/extensions/copilot-auth.mjs';
 
 function stableTaskId(repositoryId, description) {
   try {
@@ -250,6 +251,9 @@ process.on("unhandledRejection", (reason) => {
   console.error("[planning-agent] unhandledRejection:", reason instanceof Error ? reason.message : reason);
   process.exit(1);
 });
+
+// ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
+await setupCopilotAuth(PI_AGENT_DIR, "[planning-agent]");
 
 // ── Session setup ─────────────────────────────────────────────────────────────
 console.error(`[planning-agent] initialising session — provider=${AGENT_PROVIDER} model=${AGENT_MODEL ?? "(default)"}`);

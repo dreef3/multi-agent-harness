@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import type { Project, Repository, AgentSession, PlanTask, PullRequest } from "../models/types.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
-import { insertAgentSession, updateAgentSession } from "../store/agents.js";
+import { insertAgentSession, updateAgentSession, getAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector, ConnectorError } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
@@ -155,7 +155,7 @@ Stage and commit all changes. The harness will open the pull request automatical
       : `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
     console.log(`[taskDispatcher] Starting task ${task.id} for project ${project.id}, repo ${repository.id}, branch ${branchName}`);
 
-    // Create or reset the agent session record
+    // Create or reset the agent session record (upsert: insert on first run, update on retry)
     const agentSession: AgentSession = {
       id: sessionId,
       projectId: project.id,
@@ -166,7 +166,7 @@ Stage and commit all changes. The harness will open the pull request automatical
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    if (isRetry) {
+    if (isRetry && getAgentSession(sessionId)) {
       updateAgentSession(sessionId, {
         status: "starting",
         containerId: undefined,

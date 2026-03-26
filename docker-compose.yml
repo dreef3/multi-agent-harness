@@ -47,6 +47,14 @@ services:
     profiles:
       - build-only  # prevents this from being started by docker compose up
 
+  sub-agent:
+    build:
+      context: .
+      dockerfile: sub-agent/Dockerfile
+    image: multi-agent-harness/sub-agent:latest
+    profiles:
+      - build-only  # prevents this from being started by docker compose up
+
 networks:
   harness-agents:
     driver: bridge

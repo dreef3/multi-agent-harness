@@ -580,11 +580,10 @@ describe("RecoveryService", () => {
 
       // runTask called 3 times (2 failures + 1 success)
       expect(mockRunTask).toHaveBeenCalledTimes(3);
-      // First call: no existingSessionId
-      expect(mockRunTask.mock.calls[0][3]).toBeUndefined();
-      // Subsequent calls: same non-undefined sessionId
-      const sessionId = mockRunTask.mock.calls[1][3];
+      // All calls share the same stable session ID (first call inserts, retries update)
+      const sessionId = mockRunTask.mock.calls[0][3];
       expect(sessionId).toBeDefined();
+      expect(mockRunTask.mock.calls[1][3]).toBe(sessionId);
       expect(mockRunTask.mock.calls[2][3]).toBe(sessionId);
     });
   });

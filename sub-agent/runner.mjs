@@ -18,6 +18,9 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { createGuardHook, createWebFetchTool } from "./tools.mjs";
 import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
+import { setupCopilotAuth } from '/app/shared/extensions/copilot-auth.mjs';
+
+const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
 
 const REPO_CLONE_URL = process.env.REPO_CLONE_URL ?? "";
 const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
@@ -92,9 +95,12 @@ git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles a
 process.chdir("/workspace/repo");
 git("checkout", BRANCH_NAME);
 
+// ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
+await setupCopilotAuth(PI_AGENT_DIR, "[sub-agent]");
+
 // ── Run AI agent ─────────────────────────────────────────────────────────────
 console.log("[sub-agent] Running task:", TASK_DESCRIPTION);
-const sessionDir = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
+const sessionDir = PI_AGENT_DIR;
 let aiSucceeded = false;
 
 try {

@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "node:events";
 
+// Mock agentEvents so tests don't need a real DB
+vi.mock("../store/agentEvents.js", () => ({
+  appendEvent: vi.fn(),
+  getEvents: vi.fn().mockReturnValue([]),
+}));
+
 // Mock config before importing the module under test
 vi.mock("../config.js", () => ({
   config: {
@@ -481,8 +487,12 @@ describe("PlanningAgentManager - OTEL metrics", () => {
     const mockAdd = vi.fn();
     const mockRecord = vi.fn();
 
+    const mockSpan = { end: vi.fn(), setStatus: vi.fn(), setAttribute: vi.fn(), setAttributes: vi.fn() };
     vi.doMock("../telemetry.js", () => ({
-      tracer: { startActiveSpan: vi.fn((_n: string, fn: (s: { end: () => void }) => unknown) => fn({ end: vi.fn() })) },
+      tracer: {
+        startActiveSpan: vi.fn((_n: string, fn: (s: typeof mockSpan) => unknown) => fn(mockSpan)),
+        startSpan: vi.fn().mockReturnValue(mockSpan),
+      },
       meter: {
         createCounter: vi.fn().mockReturnValue({ add: mockAdd }),
         createHistogram: vi.fn().mockReturnValue({ record: mockRecord }),
@@ -564,5 +574,40 @@ describe("PlanningAgentManager - docker cleanup", () => {
 
     // Must not throw
     await expect(mgr.cleanupStaleContainers()).resolves.not.toThrow();
+  });
+});
+
+describe("PlanningAgentManager - event persistence", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("persists planning agent events to DB via appendEvent so history survives restart", async () => {
+    const { appendEvent } = await import("../store/agentEvents.js");
+    const mockAppend = vi.mocked(appendEvent);
+    mockAppend.mockClear();
+
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-persist", []);
+    const socket = netState.lastSocket!;
+
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "hello" } }) + "\n"
+    ));
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "tool_execution_start", toolName: "bash", toolCallId: "c1", args: {} }) + "\n"
+    ));
+
+    expect(mockAppend).toHaveBeenCalledWith(
+      "master-proj-persist",
+      expect.objectContaining({ type: "delta", payload: expect.objectContaining({ text: "hello" }) })
+    );
+    expect(mockAppend).toHaveBeenCalledWith(
+      "master-proj-persist",
+      expect.objectContaining({ type: "tool_call", payload: expect.objectContaining({ toolName: "bash" }) })
+    );
   });
 });

@@ -211,7 +211,6 @@ export class RecoveryService {
       let localRetryCount = task.retryCount ?? 0;
       let lastError: string | undefined;
       const retrySessionId = randomUUID();
-      let isFirstAttempt = true;
 
       try {
         while (localRetryCount <= config.subAgentMaxRetries) {
@@ -236,11 +235,9 @@ export class RecoveryService {
           try {
             result = await this.dispatcher.runTask(
               this.docker, freshProject, taskForRun,
-              isFirstAttempt ? undefined : retrySessionId,
+              retrySessionId,
             );
-            isFirstAttempt = false;
           } catch (err) {
-            isFirstAttempt = false;
             this.releaseSlot();
             throw err;
           }

@@ -19,6 +19,7 @@ const PROVIDER_ENV_VARS = [
   "KIMI_API_KEY",
   "MINIMAX_API_KEY",
   "MINIMAX_CN_API_KEY",
+  "COPILOT_GITHUB_TOKEN",
   // Git / VCS credentials intentionally excluded — sub-agent gets GIT_PUSH_URL instead
   // Cloud providers
   "AWS_ACCESS_KEY_ID",

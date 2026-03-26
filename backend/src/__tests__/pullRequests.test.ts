@@ -116,6 +116,17 @@ describe("reviewComments store", () => {
     expect(pending).toHaveLength(0);
   });
 
+  it("returns true when inserting a new comment", () => {
+    const isNew = upsertReviewComment(comment);
+    expect(isNew).toBe(true);
+  });
+
+  it("returns false when upserting an existing comment (same externalId)", () => {
+    upsertReviewComment(comment);
+    const isNew = upsertReviewComment({ ...comment, body: "Updated body" });
+    expect(isNew).toBe(false);
+  });
+
   it("updates existing comment by externalId", () => {
     upsertReviewComment(comment);
     const updatedComment: ReviewComment = {

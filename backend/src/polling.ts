@@ -1,10 +1,15 @@
 import type Dockerode from "dockerode";
-import { listPullRequestsByProject, upsertReviewComment } from "./store/pullRequests.js";
-import { getRepository } from "./store/repositories.js";
+import { listPullRequestsByProject, upsertReviewComment, updatePullRequest, getPullRequest, getPendingComments, markCommentsStatus } from "./store/pullRequests.js";
+import { getRepository, listRepositories } from "./store/repositories.js";
+import { listProjects, listProjectsAwaitingLgtm, updateProject, getProject } from "./store/projects.js";
 import { getConnector } from "./connectors/types.js";
 import { getDebounceEngine } from "./api/webhooks.js";
+import { getRecoveryService } from "./orchestrator/recoveryService.js";
+import { getPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
+import { TaskDispatcher } from "./orchestrator/taskDispatcher.js";
+import { slugify, buildPlanningFilePath } from "./agents/planningTool.js";
 import { randomUUID } from "crypto";
-import type { ReviewComment, PullRequest } from "./models/types.js";
+import type { ReviewComment, PullRequest, Project } from "./models/types.js";
 
 interface PollState {
   lastPollAt: string;
@@ -17,9 +22,10 @@ let isRunning = false;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Poll a single PR for new comments from Bitbucket Server
+ * Poll a single PR for new comments (works for GitHub and Bitbucket Server).
+ * Exported for unit testing.
  */
-async function pollPullRequest(
+export async function pollPullRequest(
   docker: Dockerode,
   pr: PullRequest
 ): Promise<number> {
@@ -29,16 +35,21 @@ async function pollPullRequest(
     return 0;
   }
 
-  // Only poll Bitbucket Server PRs
-  if (repository.provider !== "bitbucket-server") {
-    return 0;
-  }
-
   const state = pollStates.get(pr.id);
   const since = state?.lastPollAt;
 
   try {
     const connector = getConnector(repository.provider);
+
+    // Sync the live PR status — implementation PRs never get updated locally when merged.
+    const prInfo = await connector.getPullRequest(repository, pr.externalId);
+    if (prInfo.status !== "open") {
+      updatePullRequest(pr.id, { status: prInfo.status });
+      console.log(`[polling] PR ${pr.id} is ${prInfo.status} on remote — updated local status, skipping comment poll`);
+      pollStates.delete(pr.id);
+      return 0;
+    }
+
     const comments = await connector.getComments(repository, pr.externalId, since);
 
     let newComments = 0;
@@ -56,8 +67,8 @@ async function pollPullRequest(
         updatedAt: new Date().toISOString(),
       };
 
-      upsertReviewComment(reviewComment);
-      newComments++;
+      const isNew = upsertReviewComment(reviewComment);
+      if (isNew) newComments++;
     }
 
     // Update poll state
@@ -69,11 +80,7 @@ async function pollPullRequest(
       if (debounceEngine) {
         debounceEngine.notify(pr.id, async (prId) => {
           console.log(`[debounce] Timer fired for PR ${prId}, triggering fix run`);
-          
-          // Import here to avoid circular dependency
-          const { getPullRequest, getPendingComments, markCommentsStatus } = await import("./store/pullRequests.js");
-          const { TaskDispatcher } = await import("./orchestrator/taskDispatcher.js");
-          
+
           const prToFix = getPullRequest(prId);
           if (!prToFix) {
             console.warn(`[debounce] PR ${prId} not found for fix run`);
@@ -131,9 +138,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
   console.log(`[polling] Checking projects for LGTM...`);
 
-  let projects: Awaited<ReturnType<typeof import("./store/projects.js").listProjectsAwaitingLgtm>>;
+  let projects: Project[];
   try {
-    const { listProjectsAwaitingLgtm } = await import("./store/projects.js");
     projects = listProjectsAwaitingLgtm();
   } catch (error) {
     console.error("[polling] Failed to list projects awaiting LGTM:", error);
@@ -160,10 +166,8 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       const prInfo = await connector.getPullRequest(repo, String(project.planningPr.number));
       if (prInfo.status !== "open") {
         console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
-        const { updateProject } = await import("./store/projects.js");
         updateProject(project.id, { status: "failed" });
         lgtmPollStates.delete(project.id);
-        const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
         await getPlanningAgentManager().sendPrompt(
           project.id,
           "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
@@ -186,18 +190,14 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       if (!hasLgtm) continue;
 
       // Re-fetch to confirm status hasn't changed
-      const { getProject: getFreshStatus } = await import("./store/projects.js");
-      const currentProject = getFreshStatus(project.id);
+      const currentProject = getProject(project.id);
       if (!currentProject || currentProject.status !== project.status) continue;
 
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
 
-      // Import here to avoid circular dependency
-      const { getPlanningAgentManager } = await import("./orchestrator/planningAgentManager.js");
       const planningManager = getPlanningAgentManager();
 
       if (project.status === "awaiting_spec_approval") {
-        const { updateProject } = await import("./store/projects.js");
         updateProject(project.id, {
           planningPr: { ...project.planningPr, specApprovedAt: new Date().toISOString() },
           status: "plan_in_progress",
@@ -211,8 +211,6 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
         );
       } else if (project.status === "awaiting_plan_approval") {
-        const { updateProject, getProject: getFreshProject } = await import("./store/projects.js");
-
         updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
           status: "executing",
@@ -220,12 +218,10 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         lgtmPollStates.delete(project.id);
 
         // Commit plan file to non-primary repos (primary repo was committed by write_planning_document)
-        const freshProject = getFreshProject(project.id);
+        const freshProject = getProject(project.id);
         if (freshProject?.plan?.content && freshProject.planningBranch) {
-          const { listRepositories } = await import("./store/repositories.js");
           const allRepos = listRepositories();
           const date = freshProject.createdAt.slice(0, 10);
-          const { slugify, buildPlanningFilePath } = await import("./agents/planningTool.js");
           const slug = slugify(freshProject.name);
           const planFilePath = buildPlanningFilePath("plan", date, slug);
 
@@ -272,11 +268,8 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
 
   try {
     // Recover any stale sub-agent sessions
-    const { getRecoveryService } = await import("./orchestrator/recoveryService.js");
     await getRecoveryService().recoverExecutingProjects();
 
-    // Import here to avoid circular dependency issues
-    const { listProjects } = await import("./store/projects.js");
     const projects = listProjects();
 
     let totalNewComments = 0;
@@ -284,10 +277,10 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
 
     for (const project of projects) {
       const prs = listPullRequestsByProject(project.id);
-      
+
       // Only poll open PRs
       const openPrs = prs.filter(pr => pr.status === "open");
-      
+
       for (const pr of openPrs) {
         openPrIds.add(pr.id);
         try {
