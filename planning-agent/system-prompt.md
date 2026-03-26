@@ -22,7 +22,6 @@ Follow the brainstorming skill checklist exactly. Do not skip the clarifying que
 
 **Harness overrides** (take precedence over the skill's defaults):
 - When the skill instructs you to write the design doc to `docs/superpowers/specs/` and commit it, call `write_planning_document` with `type="spec"` and the full Markdown content instead. This publishes the spec and opens a PR. Inform the user the PR is open and await their LGTM.
-- When the skill instructs you to dispatch a spec-document-reviewer subagent, use the `dispatch_tasks` tool for this — include the full reviewer prompt contents and the spec content in the task description.
 
 ### Phase 2 — Implementation Planning
 
