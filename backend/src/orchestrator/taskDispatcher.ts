@@ -8,6 +8,8 @@ import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector, ConnectorError } from "../connectors/types.js";
 import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
 import { config } from "../config.js";
+import { tracer } from "../telemetry.js";
+import { SpanStatusCode } from "@opentelemetry/api";
 
 export interface TaskResult {
   taskId: string;
@@ -128,8 +130,14 @@ Stage and commit all changes. The harness will open the pull request automatical
 
   /**
    * Run a single task: create container, run sub-agent, wait for completion.
+   * On retry, pass `existingSessionId` to reuse the session record instead of creating a new one.
    */
-  public async runTask(docker: Dockerode, project: Project, task: PlanTask): Promise<TaskResult> {
+  public async runTask(
+    docker: Dockerode,
+    project: Project,
+    task: PlanTask,
+    existingSessionId?: string,
+  ): Promise<TaskResult> {
     const repository = getRepository(task.repositoryId);
     if (!repository) {
       return {
@@ -139,14 +147,15 @@ Stage and commit all changes. The harness will open the pull request automatical
       };
     }
 
-    const sessionId = randomUUID();
+    const sessionId = existingSessionId ?? randomUUID();
+    const isRetry = !!existingSessionId;
     const isPrimaryRepo = repository.id === project.primaryRepositoryId;
     const branchName = isPrimaryRepo && project.planningBranch
       ? project.planningBranch
       : `feature/${project.name.toLowerCase().replace(/\s+/g, "-")}-${task.id.slice(0, 8)}`;
     console.log(`[taskDispatcher] Starting task ${task.id} for project ${project.id}, repo ${repository.id}, branch ${branchName}`);
 
-    // Create agent session record
+    // Create or reset the agent session record
     const agentSession: AgentSession = {
       id: sessionId,
       projectId: project.id,
@@ -157,93 +166,112 @@ Stage and commit all changes. The harness will open the pull request automatical
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    insertAgentSession(agentSession);
-
-    let containerId: string | undefined;
-
-    try {
-      // Create branch via VCS connector
-      console.log(`[taskDispatcher] Creating branch ${branchName} in repo ${repository.id}`);
-      await this.createBranch(repository, branchName);
-      console.log(`[taskDispatcher] Branch created, spinning up container`);
-
-      // Create container
-      // Build authenticated push URL with token embedded; the sub-agent runner uses this
-      // for clone/push and deletes it from env before starting the AI session.
-      const ghToken = process.env.GITHUB_TOKEN;
-      const gitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
-        ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
-        : repository.cloneUrl;
-
-      containerId = await createSubAgentContainer(docker, {
-        sessionId,
-        repoCloneUrl: repository.cloneUrl,
-        gitPushUrl,
-        branchName,
-        taskDescription: this.buildTaskPrompt(task),
-        taskId: task.id,
+    if (isRetry) {
+      updateAgentSession(sessionId, {
+        status: "starting",
+        containerId: undefined,
+        updatedAt: new Date().toISOString(),
       });
+    } else {
+      insertAgentSession(agentSession);
+    }
 
-      // Update session with container ID
-      updateAgentSession(sessionId, { containerId, status: "running" });
+    return tracer.startActiveSpan("container.run", async (span) => {
+      let containerId: string | undefined;
 
-      // Start container
-      console.log(`[taskDispatcher] Starting container ${containerId}`);
-      await startContainer(docker, containerId);
-
-      // Stream container logs to backend stdout for observability
-      this.streamContainerLogs(docker, containerId, `task-${task.id.slice(0, 8)}`);
-
-      // Wait for completion
-      console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
-      const completed = await this.waitForCompletion(docker, sessionId, containerId);
-      console.log(`[taskDispatcher] Container completed: ${completed}`);
-
-      if (!completed) {
-        throw new Error("Task timed out or container failed");
-      }
-
-      // Update session status
-      updateAgentSession(sessionId, { status: "completed" });
-
-      // Try to create PR — non-fatal since the branch might have no new commits
       try {
-        const pr = await this.createPr(project, repository, agentSession, branchName, task.description);
-        return {
-          taskId: task.id,
-          success: true,
-          agentSessionId: sessionId,
-          pullRequestId: pr.id,
-        };
-      } catch (prErr) {
-        console.warn(`[taskDispatcher] PR creation failed for task ${task.id} (non-fatal):`, prErr instanceof Error ? prErr.message : String(prErr));
-        return {
-          taskId: task.id,
-          success: true,
-          agentSessionId: sessionId,
-        };
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[taskDispatcher] Task ${task.id} failed:`, errorMessage);
-      updateAgentSession(sessionId, { status: "failed" });
+        // Create branch via VCS connector
+        console.log(`[taskDispatcher] Creating branch ${branchName} in repo ${repository.id}`);
+        await this.createBranch(repository, branchName);
+        console.log(`[taskDispatcher] Branch created, spinning up container`);
 
-      return {
-        taskId: task.id,
-        success: false,
-        agentSessionId: sessionId,
-        error: errorMessage,
-      };
-    } finally {
-      // Cleanup container
-      if (containerId) {
+        // Create container
+        // Build authenticated push URL with token embedded; the sub-agent runner uses this
+        // for clone/push and deletes it from env before starting the AI session.
+        const ghToken = process.env.GITHUB_TOKEN;
+        const gitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")
+          ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
+          : repository.cloneUrl;
+
+        containerId = await createSubAgentContainer(docker, {
+          sessionId,
+          repoCloneUrl: repository.cloneUrl,
+          gitPushUrl,
+          branchName,
+          taskDescription: this.buildTaskPrompt(task),
+          taskId: task.id,
+        });
+
+        // Update session with container ID and record span attributes
+        updateAgentSession(sessionId, { containerId, status: "running" });
+        span.setAttributes({
+          "container.id": containerId,
+          "branch.name": branchName,
+          "session.id": sessionId,
+        });
+
+        // Start container
+        console.log(`[taskDispatcher] Starting container ${containerId}`);
+        await startContainer(docker, containerId);
+
+        // Stream container logs to backend stdout for observability
+        this.streamContainerLogs(docker, containerId, `task-${task.id.slice(0, 8)}`);
+
+        // Wait for completion
+        console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
+        const completed = await this.waitForCompletion(docker, sessionId, containerId);
+        console.log(`[taskDispatcher] Container completed: ${completed}`);
+
+        if (!completed) {
+          throw new Error("Task timed out or container failed");
+        }
+
+        // Update session status
+        updateAgentSession(sessionId, { status: "completed" });
+        span.setStatus({ code: SpanStatusCode.OK });
+
+        // Try to create PR — non-fatal since the branch might have no new commits
         try {
-          await removeContainer(docker, containerId);
-        } catch {
-          // Ignore cleanup errors
+          const pr = await this.createPr(project, repository, agentSession, branchName, task.description);
+          return {
+            taskId: task.id,
+            success: true,
+            agentSessionId: sessionId,
+            pullRequestId: pr.id,
+          };
+        } catch (prErr) {
+          console.warn(`[taskDispatcher] PR creation failed for task ${task.id} (non-fatal):`, prErr instanceof Error ? prErr.message : String(prErr));
+          return {
+            taskId: task.id,
+            success: true,
+            agentSessionId: sessionId,
+          };
+        }
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[taskDispatcher] Task ${task.id} failed:`, errorMessage);
+        updateAgentSession(sessionId, { status: "failed" });
+        span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
+        span.recordException(error instanceof Error ? error : new Error(errorMessage));
+
+        return {
+          taskId: task.id,
+          success: false,
+          agentSessionId: sessionId,
+          error: errorMessage,
+        };
+      } finally {
+        span.end();
+        // Cleanup container
+        if (containerId) {
+          try {
+            await removeContainer(docker, containerId);
+          } catch {
+            // Ignore cleanup errors
+          }
         }
       }
-    }
+    });
   }
 
   /**

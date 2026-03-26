@@ -19,12 +19,10 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
 
   // Configuration endpoint - exposes provider and model settings
   router.get("/config", (_req, res) => {
-    const provider = config.agentProvider;
-    const models = config.models[provider as keyof typeof config.models] ?? config.models["opencode-go"];
-    
     res.json({
-      provider,
-      models,
+      provider: config.agentProvider,
+      planningModel: config.planningModel,
+      implementationModel: config.implementationModel,
     });
   });
 

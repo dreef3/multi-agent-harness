@@ -6,6 +6,7 @@ import { initDb } from "../store/db.js";
 import { insertProject, getProject } from "../store/projects.js";
 import { insertAgentSession, getAgentSession, updateAgentSession } from "../store/agents.js";
 import { config } from "../config.js";
+import { getRecoveryService, setRecoveryService, RecoveryService } from "../orchestrator/recoveryService.js";
 import type { Project, AgentSession } from "../models/types.js";
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -467,6 +468,124 @@ describe("RecoveryService", () => {
       await svc.recoverExecutingProjects();
 
       expect(orphanSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("per-project concurrency", () => {
+    it("serialises tasks within a project when MAX_IMPL_AGENTS_PER_PROJECT=1", async () => {
+      // Override config
+      (config as any).maxImplAgentsPerProject = 1;
+      (config as any).maxConcurrentSubAgents = 10;
+
+      const running: string[] = [];
+      let maxConcurrent = 0;
+
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }) => {
+        running.push(task.id);
+        maxConcurrent = Math.max(maxConcurrent, running.length);
+        await new Promise(r => setTimeout(r, 50));
+        running.splice(running.indexOf(task.id), 1);
+        return { taskId: task.id, success: true };
+      });
+
+      // Wire mock dispatcher
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      const project = makeProject("p1");
+      project.plan = {
+        id: "plan-1", projectId: "p1", content: "",
+        tasks: [
+          { id: "t1", repositoryId: "r1", description: "task 1", status: "pending" },
+          { id: "t2", repositoryId: "r1", description: "task 2", status: "pending" },
+          { id: "t3", repositoryId: "r1", description: "task 3", status: "pending" },
+        ],
+      };
+      insertProject(project);
+
+      await svc.dispatchTasksForProject("p1");
+      expect(maxConcurrent).toBe(1);
+    });
+
+    it("runs tasks from different projects in parallel", async () => {
+      (config as any).maxImplAgentsPerProject = 1;
+      (config as any).maxConcurrentSubAgents = 10;
+
+      const startTimes: Record<string, number> = {};
+      const endTimes: Record<string, number> = {};
+
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: { id: string }, task: { id: string }) => {
+        startTimes[task.id] = Date.now();
+        await new Promise(r => setTimeout(r, 60));
+        endTimes[task.id] = Date.now();
+        return { taskId: task.id, success: true };
+      });
+
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      for (const pid of ["proj-a", "proj-b"]) {
+        const p = makeProject(pid);
+        p.plan = {
+          id: `plan-${pid}`, projectId: pid, content: "",
+          tasks: [{ id: `${pid}-t1`, repositoryId: "r1", description: "task", status: "pending" }],
+        };
+        insertProject(p);
+      }
+
+      await Promise.all([
+        svc.dispatchTasksForProject("proj-a"),
+        svc.dispatchTasksForProject("proj-b"),
+      ]);
+
+      // Both started before either ended
+      expect(startTimes["proj-a-t1"]).toBeLessThan(endTimes["proj-b-t1"]);
+      expect(startTimes["proj-b-t1"]).toBeLessThan(endTimes["proj-a-t1"]);
+    });
+  });
+
+  describe("session ID retention on retry", () => {
+    it("creates exactly one session record across multiple retry attempts", async () => {
+      (config as any).subAgentMaxRetries = 2;
+      (config as any).maxConcurrentSubAgents = 10;
+      (config as any).maxImplAgentsPerProject = 10;
+
+      let attempt = 0;
+      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }, existingSessionId?: string) => {
+        attempt++;
+        if (attempt < 3) return { taskId: task.id, success: false, error: "container failed" };
+        return { taskId: task.id, success: true };
+      });
+
+      const svc = new RecoveryService({} as never);
+      // @ts-expect-error accessing private for test
+      svc.notifyMaster = vi.fn().mockResolvedValue(undefined);
+      setRecoveryService(svc);
+      (svc as any).dispatcher.runTask = mockRunTask;
+
+      const project = makeProject("p-retry");
+      project.plan = {
+        id: "plan-retry", projectId: "p-retry", content: "",
+        tasks: [{ id: "t-retry", repositoryId: "r1", description: "retry task", status: "pending" }],
+      };
+      insertProject(project);
+
+      await svc.dispatchTasksForProject("p-retry");
+
+      // runTask called 3 times (2 failures + 1 success)
+      expect(mockRunTask).toHaveBeenCalledTimes(3);
+      // First call: no existingSessionId
+      expect(mockRunTask.mock.calls[0][3]).toBeUndefined();
+      // Subsequent calls: same non-undefined sessionId
+      const sessionId = mockRunTask.mock.calls[1][3];
+      expect(sessionId).toBeDefined();
+      expect(mockRunTask.mock.calls[2][3]).toBe(sessionId);
     });
   });
 

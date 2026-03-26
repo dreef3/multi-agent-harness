@@ -2,7 +2,22 @@
  * Shared agent tools: guard hook (BashSpawnHook) and web_fetch custom tool.
  * Imported by runner.mjs. Extracted for testability.
  */
+import { spawnSync } from "node:child_process";
 import { Type } from "@sinclair/typebox";
+
+// Check once at module load whether RTK is runnable on this architecture
+const isRtkAvailable = (() => {
+  try {
+    const result = spawnSync("/usr/local/bin/rtk", ["--version"], { timeout: 3000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
+
+if (!isRtkAvailable) {
+  console.warn("[tools] RTK not available — bash output will not be filtered");
+}
 
 // ── Guard hook ────────────────────────────────────────────────────────────────
 
@@ -68,6 +83,10 @@ export function createGuardHook(extraBlocked = []) {
       }
     } catch (err) {
       console.warn("[guard] hook error, allowing command through:", err?.message ?? err);
+    }
+    // No block matched — prepend rtk if available
+    if (isRtkAvailable) {
+      return { ...context, command: "rtk " + context.command };
     }
     return context;
   };

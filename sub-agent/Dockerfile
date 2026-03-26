@@ -20,15 +20,23 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Install pi-coding-agent as a local dependency so runner.mjs can import it
-COPY package.json .
+COPY sub-agent/package.json .
 RUN bun install
 
 RUN mkdir -p /workspace /pi-agent && chown bun:bun /workspace /pi-agent
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
 
-COPY --chown=bun:bun runner.mjs .
-COPY --chown=bun:bun tools.mjs .
+COPY --chown=bun:bun sub-agent/runner.mjs .
+COPY --chown=bun:bun sub-agent/tools.mjs .
+
+# shared/ is at repo root; build context must be repo root (see docker-compose / build docs)
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch; bash output unfiltered"
+COPY shared/extensions/ /app/shared/extensions/
+RUN mkdir -p /home/bun/.config/rtk
+COPY shared/config/rtk-config.toml /home/bun/.config/rtk/config.toml
 
 USER bun
 

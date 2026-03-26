@@ -3,6 +3,15 @@ import { PassThrough } from "stream";
 import { Socket } from "net";
 import { EventEmitter } from "node:events";
 import { config } from "../config.js";
+import { meter } from "../telemetry.js";
+
+const toolCallCounter = meter.createCounter("harness.tool_calls.total", {
+  description: "Total tool calls made by the planning agent",
+});
+const toolCallDuration = meter.createHistogram("harness.tool_calls.duration_ms", {
+  description: "Duration of planning agent tool calls in milliseconds",
+  unit: "ms",
+});
 
 export type PlanningAgentEvent =
   | { type: "delta"; text: string }
@@ -40,6 +49,7 @@ export function getPlanningAgentManager(): PlanningAgentManager {
 export class PlanningAgentManager extends EventEmitter {
   private projects = new Map<string, ProjectState>();
   private readonly commitInProgress = new Set<string>();
+  private toolCallStartTimes = new Map<string, number>(); // toolCallId → start timestamp
 
   constructor(private readonly docker: Dockerode) {
     super();
@@ -155,17 +165,19 @@ export class PlanningAgentManager extends EventEmitter {
     repos: Array<{ id?: string; name: string; url: string }>
   ): Promise<string> {
     // GITHUB_TOKEN is intentionally excluded — clone URLs are pre-authenticated in GIT_CLONE_URLS
-    const providerEnvVars = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENCODE_API_KEY",
-      "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY", "AGENT_PROVIDER", "AGENT_MODEL"]
+    // API keys passed through; AGENT_PROVIDER and AGENT_MODEL are derived from config below
+    const providerEnvVars = [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "OPENCODE_API_KEY",
+      "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
+    ]
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 
-    // Ensure AGENT_MODEL is always set from config (env passthrough only works if the backend
-    // itself has AGENT_MODEL set; fall back to the configured master-agent model for the provider)
-    const configuredModel = config.models?.[config.agentProvider as keyof typeof config.models]?.masterAgent?.model;
-    if (configuredModel && !providerEnvVars.some(v => v.startsWith("AGENT_MODEL="))) {
-      providerEnvVars.push(`AGENT_MODEL=${configuredModel}`);
-    }
+    // Always set provider + model explicitly from parsed config (AGENT_PLANNING_MODEL)
+    providerEnvVars.push(`AGENT_PROVIDER=${config.agentProvider}`);
+    providerEnvVars.push(`AGENT_MODEL=${config.planningModel}`);
 
     const image = config.planningAgentImage;
 
@@ -298,15 +310,25 @@ export class PlanningAgentManager extends EventEmitter {
     }
 
     if (type === "tool_execution_start") {
+      const toolName = obj.toolName as string;
+      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? toolName);
+      this.toolCallStartTimes.set(toolCallId, Date.now());
+      toolCallCounter.add(1, { "tool.name": toolName, "project.id": projectId });
       this.emitAgentEvent(projectId, state, {
         type: "tool_call",
-        toolName: obj.toolName as string,
+        toolName: toolName,
         args: obj.args as Record<string, unknown> | undefined,
       });
       return;
     }
 
     if (type === "tool_execution_end") {
+      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? (obj.toolName as string));
+      const start = this.toolCallStartTimes.get(toolCallId);
+      if (start !== undefined) {
+        toolCallDuration.record(Date.now() - start, { "tool.name": obj.toolName as string, "project.id": projectId });
+        this.toolCallStartTimes.delete(toolCallId);
+      }
       this.emitAgentEvent(projectId, state, {
         type: "tool_result",
         toolName: obj.toolName as string,
