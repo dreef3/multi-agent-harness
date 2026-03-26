@@ -481,8 +481,12 @@ describe("PlanningAgentManager - OTEL metrics", () => {
     const mockAdd = vi.fn();
     const mockRecord = vi.fn();
 
+    const mockSpan = { end: vi.fn(), setStatus: vi.fn(), setAttribute: vi.fn(), setAttributes: vi.fn() };
     vi.doMock("../telemetry.js", () => ({
-      tracer: { startActiveSpan: vi.fn((_n: string, fn: (s: { end: () => void }) => unknown) => fn({ end: vi.fn() })) },
+      tracer: {
+        startActiveSpan: vi.fn((_n: string, fn: (s: typeof mockSpan) => unknown) => fn(mockSpan)),
+        startSpan: vi.fn().mockReturnValue(mockSpan),
+      },
       meter: {
         createCounter: vi.fn().mockReturnValue({ add: mockAdd }),
         createHistogram: vi.fn().mockReturnValue({ record: mockRecord }),
