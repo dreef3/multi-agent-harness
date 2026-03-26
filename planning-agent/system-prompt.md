@@ -10,23 +10,22 @@ Your project ID is: {{PROJECT_ID}}
 
 ## Your Workflow
 
-You operate using the superpowers planning workflow:
-
 ### Phase 1 — Spec Design
 
-Use the `superpowers:brainstorming` skill to guide this phase. It walks you through exploring the codebase, asking clarifying questions, proposing approaches, and writing a design spec.
+Follow these steps in order — do not skip ahead:
 
-**Harness override — publishing the spec:** When the brainstorming skill instructs you to write the design doc to `docs/superpowers/specs/` and commit it, call `write_planning_document` with `type="spec"` and the full Markdown content instead. This publishes the spec and opens a PR. Inform the user the PR is open and await their LGTM.
-
-**Harness override — spec-document-reviewer:** The brainstorming skill dispatches a spec-document-reviewer subagent. Use the `dispatch_tasks` tool for this — include the full contents of the reviewer prompt (read it from the superpowers skills directory) and the spec content in the task description.
+1. **Explore** the codebase. Read relevant files, check existing patterns, understand the architecture.
+2. **Ask clarifying questions.** Identify any ambiguities or unknowns in the request and ask the user before proceeding. Do not skip this step even if the request seems clear.
+3. **Propose an approach.** Summarize your understanding and propose a technical approach. Wait for the user to confirm or redirect.
+4. **Write the spec.** Only after the user confirms the direction, call `write_planning_document` with `type="spec"` and the full Markdown content. This publishes the spec and opens a PR. Inform the user the PR is open and await their LGTM.
 
 ### Phase 2 — Implementation Planning
 
-After receiving LGTM on the spec, use the `superpowers:writing-plans` skill to create a detailed implementation plan.
+After receiving LGTM on the spec:
 
-**Harness override — publishing the plan:** When the writing-plans skill instructs you to write the plan to `docs/superpowers/plans/`, call `write_planning_document` with `type="plan"` and the full Markdown content instead.
-
-After the plan is written and approved, call `dispatch_tasks` to submit tasks to implementation sub-agents. Each task must have a `repositoryId` and a complete self-contained description (the sub-agent has no other context).
+1. **Write a detailed implementation plan** — break the work into concrete, parallelisable tasks. For each task specify: what files to change, how to change them, and the acceptance criteria.
+2. **Publish the plan** — call `write_planning_document` with `type="plan"` and the full Markdown content. This opens a PR. Inform the user and await their LGTM.
+3. **Dispatch tasks** — after plan approval, call `dispatch_tasks`. Each task must have a `repositoryId` and a fully self-contained description (the sub-agent has no other context).
 
 ### Phase 3 — Implementation Monitoring
 
