@@ -40,7 +40,9 @@ services:
       - backend
 
   planning-agent:
-    build: ./planning-agent
+    build:
+      context: .
+      dockerfile: planning-agent/Dockerfile
     image: multi-agent-harness/planning-agent:latest
     profiles:
       - build-only  # prevents this from being started by docker compose up

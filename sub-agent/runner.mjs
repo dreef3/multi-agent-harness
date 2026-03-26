@@ -17,6 +17,7 @@ import { writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as f
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createGuardHook, createWebFetchTool } from "./tools.mjs";
+import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
 
 const REPO_CLONE_URL = process.env.REPO_CLONE_URL ?? "";
 const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
@@ -100,7 +101,7 @@ try {
   const settingsManager = SettingsManager.inMemory();
   const resourceLoader = new DefaultResourceLoader({
     settingsManager,
-    noExtensions: true,
+    extensionFactories: [createOutputFilterExtension],  // replaces noExtensions: true
     noSkills: true,
     noPromptTemplates: true,
     noThemes: true,

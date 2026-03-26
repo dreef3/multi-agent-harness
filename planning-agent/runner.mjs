@@ -22,6 +22,7 @@ import { createServer } from "node:net";
 import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { createPlanningAgentGuardHook, createWebFetchTool } from "./tools.mjs";
+import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
 
 function stableTaskId(repositoryId, description) {
   try {
@@ -264,7 +265,7 @@ const systemPrompt = systemPromptTemplate.replace("{{PROJECT_ID}}", PROJECT_ID);
 
 const resourceLoader = new DefaultResourceLoader({
   settingsManager,
-  noExtensions: true,
+  extensionFactories: [createOutputFilterExtension],  // replaces noExtensions: true
   noPromptTemplates: true,
   noThemes: true,
   systemPrompt,

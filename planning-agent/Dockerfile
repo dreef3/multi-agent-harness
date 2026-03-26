@@ -13,16 +13,23 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-COPY package.json .
+COPY planning-agent/package.json .
 RUN npm install
 
 RUN mkdir -p /workspace /pi-agent && chown node:node /workspace /pi-agent
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
 
-COPY --chown=node:node runner.mjs .
-COPY --chown=node:node tools.mjs .
-COPY --chown=node:node system-prompt.md .
+COPY --chown=node:node planning-agent/runner.mjs .
+COPY --chown=node:node planning-agent/tools.mjs .
+COPY --chown=node:node planning-agent/system-prompt.md .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/node/.config/rtk
+COPY shared/config/rtk-config.toml /home/node/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
 
 USER node
 
