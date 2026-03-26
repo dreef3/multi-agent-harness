@@ -24,7 +24,7 @@ async function main() {
 
   console.log("[startup] Ensuring sub-agent image exists...");
   try { await ensureSubAgentImage(docker, config.subAgentImage); }
-  catch (err) { console.error("[startup] Failed to ensure sub-agent image:", err); process.exit(1); }
+  catch (err) { console.warn("[startup] Sub-agent image not found — task dispatch will fail until built:", (err as Error).message); }
 
   console.log("[startup] Initializing debounce engine...");
   const debounceEngine = new DebounceEngine({ delayMs: 10 * 60 * 1000 }); // 10 minutes
