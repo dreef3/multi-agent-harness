@@ -267,7 +267,7 @@ describe("WebSocket message persistence", () => {
     expect(vi.mocked(updateProject)).toHaveBeenCalledWith(projectId, { status: "executing" });
   });
 
-  it("does not reactivate a non-completed project on user prompt", async () => {
+  it("does not reactivate a project that is already executing on user prompt", async () => {
     const { projectId } = makeProject("executing");
     const ws = await connectWs(projectId);
 
