@@ -103,5 +103,7 @@ describe('Dashboard', () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(screen.getByText('Completed Project')).toBeInTheDocument());
     expect(screen.queryByText('Execute')).not.toBeInTheDocument();
+    // Completed projects should not have Retry actions available
+    expect(screen.queryByRole('button', { name: /^Retry$/i })).not.toBeInTheDocument();
   });
 });
