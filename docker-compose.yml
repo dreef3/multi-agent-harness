@@ -11,6 +11,10 @@ services:
       - .env
     environment:
       DOCKER_PROXY_URL: http://docker-proxy:2375
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_SERVICE_NAME: multi-agent-harness
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - docker-proxy
     networks:
