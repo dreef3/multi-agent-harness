@@ -69,4 +69,39 @@ describe('Dashboard', () => {
     fireEvent.click(retryBtn);
     await waitFor(() => expect(api.projects.retry).toHaveBeenCalledWith('proj-1'));
   });
+
+  it("does not show completed projects by default", async () => {
+    const { api } = await import('../lib/api');
+    vi.mocked(api.projects.list).mockResolvedValue([
+      makeProject({ id: 'c1', name: 'Completed Project', status: 'completed' }),
+      makeProject({ id: 'p2', name: 'Other Project', status: 'executing' }),
+    ]);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Other Project')).toBeInTheDocument());
+    expect(screen.queryByText('Completed Project')).not.toBeInTheDocument();
+  });
+
+  it('shows completed project when toggle is enabled', async () => {
+    const { api } = await import('../lib/api');
+    vi.mocked(api.projects.list).mockResolvedValue([
+      makeProject({ id: 'c1', name: 'Completed Project', status: 'completed' }),
+    ]);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const toggle = await screen.findByLabelText('Show completed projects');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByText('Completed Project')).toBeInTheDocument());
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  it('does not render Execute button for completed projects when visible', async () => {
+    const { api } = await import('../lib/api');
+    vi.mocked(api.projects.list).mockResolvedValue([
+      makeProject({ id: 'c1', name: 'Completed Project', status: 'completed' }),
+    ]);
+    render(<MemoryRouter><Dashboard /></MemoryRouter>);
+    const toggle = await screen.findByLabelText('Show completed projects');
+    fireEvent.click(toggle);
+    await waitFor(() => expect(screen.getByText('Completed Project')).toBeInTheDocument());
+    expect(screen.queryByText('Execute')).not.toBeInTheDocument();
+  });
 });
