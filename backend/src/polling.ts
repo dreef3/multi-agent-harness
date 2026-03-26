@@ -17,7 +17,7 @@ let isRunning = false;
 let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Poll a single PR for new comments from Bitbucket Server
+ * Poll a single PR for new comments (works for GitHub and Bitbucket Server).
  */
 async function pollPullRequest(
   docker: Dockerode,
@@ -26,11 +26,6 @@ async function pollPullRequest(
   const repository = getRepository(pr.repositoryId);
   if (!repository) {
     console.warn(`[polling] Repository not found for PR ${pr.id}`);
-    return 0;
-  }
-
-  // Only poll Bitbucket Server PRs
-  if (repository.provider !== "bitbucket-server") {
     return 0;
   }
 

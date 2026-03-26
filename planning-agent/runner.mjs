@@ -15,7 +15,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, appendFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createServer } from "node:net";
@@ -23,6 +23,7 @@ import { PassThrough } from "node:stream";
 import { createHash } from "node:crypto";
 import { createPlanningAgentGuardHook, createWebFetchTool } from "./tools.mjs";
 import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
+import { setupCopilotAuth } from '/app/shared/extensions/copilot-auth.mjs';
 
 function stableTaskId(repositoryId, description) {
   try {
@@ -45,49 +46,6 @@ const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
 
 function git(...args) {
   return execFileSync("git", args, { stdio: "inherit" });
-}
-
-/** Bootstrap Copilot auth from PAT if COPILOT_GITHUB_TOKEN is set. */
-async function setupCopilotAuth() {
-  const token = process.env.COPILOT_GITHUB_TOKEN;
-  if (!token) return;
-  delete process.env.COPILOT_GITHUB_TOKEN;
-
-  try {
-    const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
-      headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "User-Agent": "GitHubCopilotChat/0.35.0",
-        "Editor-Version": "vscode/1.107.0",
-        "Editor-Plugin-Version": "copilot-chat/0.35.0",
-        "Copilot-Integration-Id": "vscode-chat",
-      },
-    });
-    if (!res.ok) {
-      console.warn(`[planning-agent] Copilot token exchange failed: HTTP ${res.status}`);
-      return;
-    }
-    const ct = await res.json();
-    if (!ct.token) {
-      console.warn("[planning-agent] Copilot token exchange returned no token");
-      return;
-    }
-    const authPath = join(PI_AGENT_DIR, "auth.json");
-    let existing = {};
-    try { existing = JSON.parse(readFileSync(authPath, "utf8")); } catch { /* ok */ }
-    existing["github-copilot"] = {
-      type: "oauth",
-      refresh: token,
-      access: ct.token,
-      expires: ct.expires_at * 1000 - 5 * 60 * 1000,
-    };
-    mkdirSync(PI_AGENT_DIR, { recursive: true });
-    writeFileSync(authPath, JSON.stringify(existing, null, 2), { mode: 0o600 });
-    console.error("[planning-agent] Seeded Copilot auth from COPILOT_GITHUB_TOKEN");
-  } catch (err) {
-    console.warn("[planning-agent] Failed to bootstrap Copilot auth:", err.message);
-  }
 }
 
 /** Configure git credential store and gh auth using GITHUB_TOKEN. Deletes the env var. */
@@ -295,7 +253,7 @@ process.on("unhandledRejection", (reason) => {
 });
 
 // ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
-await setupCopilotAuth();
+await setupCopilotAuth(PI_AGENT_DIR, "[planning-agent]");
 
 // ── Session setup ─────────────────────────────────────────────────────────────
 console.error(`[planning-agent] initialising session — provider=${AGENT_PROVIDER} model=${AGENT_MODEL ?? "(default)"}`);
