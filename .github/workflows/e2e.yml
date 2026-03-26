@@ -78,11 +78,6 @@ jobs:
           cache-from: type=gha,scope=planning-agent
           cache-to: type=gha,scope=planning-agent,mode=max
 
-      - name: Seed Copilot auth into pi-agent volume
-        env:
-          COPILOT_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: bash scripts/copy-copilot-auth.sh
-
       - name: Start services
         run: |
           docker compose up -d --no-build

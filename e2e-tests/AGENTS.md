@@ -5,16 +5,16 @@
 GitHub Copilot is the default provider — unlimited quota, subscription-based.
 
 Configuration:
-- Run `./scripts/copy-copilot-auth.sh` once to seed the `harness-pi-auth` Docker volume
+- Set `COPILOT_GITHUB_TOKEN` in `.env` to a fine-grained PAT with "Copilot Requests" permission
 - Models are set via `AGENT_PLANNING_MODEL` / `AGENT_IMPLEMENTATION_MODEL` in `.env`
 - Default: `github-copilot/gpt-5-mini`
+- Auth is bootstrapped automatically by the agent runners on startup — no manual volume seeding needed
 
 ## GitHub Secrets Required
 
 Add these secrets to your GitHub repository:
 
-- `GITHUB_TOKEN` - GitHub personal access token for repository access
-- `COPILOT_AUTH_JSON` - Contents of the `harness-pi-auth` volume auth.json (from `copy-copilot-auth.sh`)
+- `GH_TOKEN` - Fine-grained PAT with "Copilot Requests" permission (used for both repo access and Copilot auth)
 
 ## Test Repository
 
