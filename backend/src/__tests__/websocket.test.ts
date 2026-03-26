@@ -12,7 +12,7 @@ import path from "path";
 import fs from "fs";
 import { randomUUID } from "crypto";
 import { initDb } from "../store/db.js";
-import { insertProject } from "../store/projects.js";
+import { insertProject, updateProject } from "../store/projects.js";
 import { listMessages } from "../store/messages.js";
 import { setupWebSocket } from "../api/websocket.js";
 import type { Project } from "../models/types.js";
@@ -36,6 +36,14 @@ vi.mock("../orchestrator/planningAgentManager.js", () => ({
 vi.mock("../store/repositories.js", () => ({
   listRepositories: () => [],
 }));
+
+vi.mock("../store/projects.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../store/projects.js")>();
+  return {
+    ...actual,
+    updateProject: vi.fn(),
+  };
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +79,7 @@ describe("WebSocket message persistence", () => {
 
   beforeEach(async () => {
     mockManager = new MockManager();
+    vi.mocked(updateProject).mockReset();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-ws-test-"));
     initDb(tmpDir);
 
@@ -87,12 +96,12 @@ describe("WebSocket message persistence", () => {
 
   // Each test uses its own unique projectId to avoid cross-test broadcaster contamination
   // (projectBroadcasters is module-level state)
-  function makeProject(): { projectId: string; project: Project } {
+  function makeProject(status: Project["status"] = "brainstorming"): { projectId: string; project: Project } {
     const projectId = randomUUID();
     const project: Project = {
       id: projectId,
       name: "WS Test Project",
-      status: "brainstorming",
+      status,
       source: { type: "freeform", freeformDescription: "test" },
       repositoryIds: [],
       masterSessionPath: "",
@@ -245,5 +254,39 @@ describe("WebSocket message persistence", () => {
     const msgs = listMessages(projectId);
     const assistant = msgs.filter((m) => m.role === "assistant");
     expect(assistant).toHaveLength(0);
+  });
+
+  it("reactivates a completed project to executing when user sends a prompt", async () => {
+    const { projectId } = makeProject("completed");
+    const ws = await connectWs(projectId);
+
+    ws.send(JSON.stringify({ type: "prompt", text: "What changed?" }));
+    await sleep(50);
+    ws.close();
+
+    expect(vi.mocked(updateProject)).toHaveBeenCalledWith(projectId, { status: "executing" });
+  });
+
+  it("does not reactivate a non-completed project on user prompt", async () => {
+    const { projectId } = makeProject("executing");
+    const ws = await connectWs(projectId);
+
+    ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
+    await sleep(50);
+    ws.close();
+
+    expect(vi.mocked(updateProject)).not.toHaveBeenCalled();
+  });
+
+  it("does not reactivate on steer or resume messages", async () => {
+    const { projectId } = makeProject("completed");
+    const ws = await connectWs(projectId);
+
+    ws.send(JSON.stringify({ type: "steer", text: "Actually, stop" }));
+    ws.send(JSON.stringify({ type: "resume", lastSeqId: 0 }));
+    await sleep(50);
+    ws.close();
+
+    expect(vi.mocked(updateProject)).not.toHaveBeenCalled();
   });
 });

@@ -227,6 +227,14 @@ export function setupWebSocket(server: Server) {
         const msg = JSON.parse(data.toString()) as WsClientMessage;
         if (msg.type === "prompt" && msg.text) {
           console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
+
+          // Reactivate completed projects when the user sends a new message
+          const currentProject = getProject(projectId);
+          if (currentProject?.status === "completed") {
+            updateProject(projectId, { status: "executing" });
+            console.log(`[ws] Reactivating completed project ${projectId} → executing on user prompt`);
+          }
+
           try {
             appendMessage(projectId, "user", msg.text);
           } catch (err) {
