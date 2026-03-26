@@ -3,6 +3,15 @@ import { PassThrough } from "stream";
 import { Socket } from "net";
 import { EventEmitter } from "node:events";
 import { config } from "../config.js";
+import { meter } from "../telemetry.js";
+
+const toolCallCounter = meter.createCounter("harness.tool_calls.total", {
+  description: "Total tool calls made by the planning agent",
+});
+const toolCallDuration = meter.createHistogram("harness.tool_calls.duration_ms", {
+  description: "Duration of planning agent tool calls in milliseconds",
+  unit: "ms",
+});
 
 export type PlanningAgentEvent =
   | { type: "delta"; text: string }
@@ -40,6 +49,7 @@ export function getPlanningAgentManager(): PlanningAgentManager {
 export class PlanningAgentManager extends EventEmitter {
   private projects = new Map<string, ProjectState>();
   private readonly commitInProgress = new Set<string>();
+  private toolCallStartTimes = new Map<string, number>(); // toolCallId → start timestamp
 
   constructor(private readonly docker: Dockerode) {
     super();
@@ -300,15 +310,25 @@ export class PlanningAgentManager extends EventEmitter {
     }
 
     if (type === "tool_execution_start") {
+      const toolName = obj.toolName as string;
+      const toolCallId = (obj.toolCallId as string | undefined) ?? toolName;
+      this.toolCallStartTimes.set(toolCallId, Date.now());
+      toolCallCounter.add(1, { "tool.name": toolName, "project.id": projectId });
       this.emitAgentEvent(projectId, state, {
         type: "tool_call",
-        toolName: obj.toolName as string,
+        toolName: toolName,
         args: obj.args as Record<string, unknown> | undefined,
       });
       return;
     }
 
     if (type === "tool_execution_end") {
+      const toolCallId = (obj.toolCallId as string | undefined) ?? (obj.toolName as string);
+      const start = this.toolCallStartTimes.get(toolCallId);
+      if (start !== undefined) {
+        toolCallDuration.record(Date.now() - start, { "tool.name": obj.toolName as string, "project.id": projectId });
+        this.toolCallStartTimes.delete(toolCallId);
+      }
       this.emitAgentEvent(projectId, state, {
         type: "tool_result",
         toolName: obj.toolName as string,

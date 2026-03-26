@@ -469,6 +469,51 @@ describe("PlanningAgentManager - lifecycle grace period", () => {
   });
 });
 
+// ── OTEL metrics tests ────────────────────────────────────────────────────────
+
+describe("PlanningAgentManager - OTEL metrics", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    netState.lastSocket = null;
+  });
+
+  it("calls toolCallCounter.add on tool_execution_start and toolCallDuration.record on tool_execution_end", async () => {
+    const mockAdd = vi.fn();
+    const mockRecord = vi.fn();
+
+    vi.doMock("../telemetry.js", () => ({
+      tracer: { startActiveSpan: vi.fn((_n: string, fn: (s: { end: () => void }) => unknown) => fn({ end: vi.fn() })) },
+      meter: {
+        createCounter: vi.fn().mockReturnValue({ add: mockAdd }),
+        createHistogram: vi.fn().mockReturnValue({ record: mockRecord }),
+      },
+    }));
+
+    const { docker } = makeMockDocker();
+    const { PlanningAgentManager } = await import("../orchestrator/planningAgentManager.js");
+    const mgr = new PlanningAgentManager(docker as never);
+    await mgr.ensureRunning("proj-metrics", []);
+    const socket = netState.lastSocket!;
+
+    // Emit tool_execution_start
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "tool_execution_start", toolName: "bash", toolCallId: "call-1", args: {} }) + "\n"
+    ));
+
+    expect(mockAdd).toHaveBeenCalledWith(1, { "tool.name": "bash", "project.id": "proj-metrics" });
+
+    // Emit tool_execution_end with matching toolCallId
+    socket.emit("data", Buffer.from(
+      JSON.stringify({ type: "tool_execution_end", toolName: "bash", toolCallId: "call-1", result: "ok", isError: false }) + "\n"
+    ));
+
+    expect(mockRecord).toHaveBeenCalledWith(
+      expect.any(Number),
+      { "tool.name": "bash", "project.id": "proj-metrics" }
+    );
+  });
+});
+
 describe("PlanningAgentManager - docker cleanup", () => {
   beforeEach(() => {
     vi.resetModules();
