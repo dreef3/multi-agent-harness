@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, beforeAll } from "vitest";
 import { initDb, getDb } from "../store/db.js";
 import os from "os";
 import path from "path";
 import fs from "fs";
-import { insertProject, getProject, listProjects, updateProject, listProjectsAwaitingLgtm } from "../store/projects.js";
+import { insertProject, getProject, listProjects, updateProject, listProjectsAwaitingLgtm, deleteProject } from "../store/projects.js";
+import { insertAgentSession } from "../store/agents.js";
 import { appendMessage, listMessages, listMessagesSince } from "../store/messages.js";
 import { parsePlan } from "../agents/planParser.js";
 import type { Project, Plan } from "../models/types.js";
@@ -24,11 +25,23 @@ vi.mock("../orchestrator/recoveryService.js", () => ({
   }),
 }));
 
+const mockStopContainer = vi.fn().mockResolvedValue(undefined);
+const mockIsRunning = vi.fn().mockReturnValue(false);
+
 vi.mock("../orchestrator/planningAgentManager.js", () => ({
   getPlanningAgentManager: () => ({
-    isRunning: vi.fn().mockReturnValue(true),
+    isRunning: mockIsRunning,
     ensureRunning: vi.fn().mockResolvedValue(undefined),
+    stopContainer: mockStopContainer,
   }),
+}));
+
+const mockStopContainerFn = vi.fn().mockResolvedValue(undefined);
+const mockRemoveContainerFn = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("../orchestrator/containerManager.js", () => ({
+  stopContainer: (...args: unknown[]) => mockStopContainerFn(...args),
+  removeContainer: (...args: unknown[]) => mockRemoveContainerFn(...args),
 }));
 
 describe("projects store", () => {
@@ -381,7 +394,7 @@ beforeEach(() => {
   initDb(tmpHttpDir);
   app = express();
   app.use(express.json());
-  app.use("/projects", createProjectsRouter("/tmp/test-data"));
+  app.use("/projects", createProjectsRouter("/tmp/test-data", {} as never));
 });
 
 afterEach(() => {
@@ -574,5 +587,71 @@ describe("POST /api/projects/:id/retry", () => {
     await request(app).post(`/projects/${project.id}/retry`);
     const updated = await request(app).get(`/projects/${project.id}`);
     expect(updated.body.lastError).toBeFalsy();
+  });
+});
+
+describe("DELETE /projects/:id", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsRunning.mockReturnValue(false);
+  });
+
+  it("returns 404 for unknown project", async () => {
+    const res = await request(app).delete("/projects/nonexistent");
+    expect(res.status).toBe(404);
+  });
+
+  it("removes the project from DB", async () => {
+    const project = createTestProject();
+    const res = await request(app).delete(`/projects/${project.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(getProject(project.id)).toBeNull();
+  });
+
+  it("stops planning agent container when it is running", async () => {
+    mockIsRunning.mockReturnValue(true);
+    const project = createTestProject();
+    await request(app).delete(`/projects/${project.id}`);
+    expect(mockStopContainer).toHaveBeenCalledWith(project.id);
+  });
+
+  it("skips planning agent stop when it is not running", async () => {
+    mockIsRunning.mockReturnValue(false);
+    const project = createTestProject();
+    await request(app).delete(`/projects/${project.id}`);
+    expect(mockStopContainer).not.toHaveBeenCalled();
+  });
+
+  it("stops and removes active sub-agent containers", async () => {
+    const project = createTestProject();
+    const now = new Date().toISOString();
+    insertAgentSession({
+      id: "sess-1", projectId: project.id, type: "sub", status: "running",
+      containerId: "container-abc", createdAt: now, updatedAt: now,
+    });
+    insertAgentSession({
+      id: "sess-2", projectId: project.id, type: "sub", status: "starting",
+      containerId: "container-def", createdAt: now, updatedAt: now,
+    });
+
+    await request(app).delete(`/projects/${project.id}`);
+
+    expect(mockStopContainerFn).toHaveBeenCalledTimes(2);
+    expect(mockRemoveContainerFn).toHaveBeenCalledTimes(2);
+    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-abc");
+    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-def");
+  });
+
+  it("does not stop sub-agent containers that are already terminated", async () => {
+    const project = createTestProject();
+    const now = new Date().toISOString();
+    insertAgentSession({
+      id: "sess-done", projectId: project.id, type: "sub", status: "completed",
+      containerId: "container-xyz", createdAt: now, updatedAt: now,
+    });
+
+    await request(app).delete(`/projects/${project.id}`);
+    expect(mockStopContainerFn).not.toHaveBeenCalled();
   });
 });

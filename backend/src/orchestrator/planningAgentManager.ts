@@ -609,21 +609,47 @@ export class PlanningAgentManager extends EventEmitter {
 
   async cleanupStaleContainers(): Promise<void> {
     try {
+      const { getAgentSession } = await import("../store/agents.js");
+      const { getProject } = await import("../store/projects.js");
       const containers = await this.docker.listContainers({ all: true });
-      const stale = containers.filter((c) => {
+      const harnessContainers = containers.filter((c) => {
         const name = (c.Names?.[0] ?? "").replace(/^\//, "");
-        return (name.startsWith("planning-") || name.startsWith("task-")) && c.State !== "running";
+        return name.startsWith("planning-") || name.startsWith("task-");
       });
-      for (const c of stale) {
+
+      let removedCount = 0;
+      let stoppedOrphanCount = 0;
+
+      for (const c of harnessContainers) {
+        const name = c.Names?.[0] ?? c.Id;
         try {
-          await this.docker.getContainer(c.Id).remove({ force: true });
-          console.log(`[PlanningAgentManager] cleaned up stale container ${c.Names?.[0]}`);
+          if (c.State !== "running") {
+            // Remove stopped/exited harness containers regardless of DB state
+            await this.docker.getContainer(c.Id).remove({ force: true });
+            console.log(`[PlanningAgentManager] removed stopped container ${name}`);
+            removedCount++;
+          } else {
+            // Running container — check if it belongs to a known session/project
+            const sessionId = c.Labels?.["harness.session-id"];
+            if (sessionId) {
+              const session = getAgentSession(sessionId);
+              if (!session || !getProject(session.projectId)) {
+                // Orphan: session or project no longer exists in DB
+                console.log(`[PlanningAgentManager] stopping orphan sub-agent container ${name} (session=${sessionId})`);
+                await this.docker.getContainer(c.Id).stop({ t: 5 });
+                await this.docker.getContainer(c.Id).remove({ force: true });
+                console.log(`[PlanningAgentManager] removed orphan container ${name}`);
+                stoppedOrphanCount++;
+              }
+            }
+          }
         } catch (err) {
-          console.warn(`[PlanningAgentManager] cleanup failed for ${c.Id}:`, err);
+          console.warn(`[PlanningAgentManager] cleanup failed for ${name}:`, err);
         }
       }
-      if (stale.length > 0) {
-        console.log(`[PlanningAgentManager] cleaned up ${stale.length} stale container(s)`);
+
+      if (removedCount > 0 || stoppedOrphanCount > 0) {
+        console.log(`[PlanningAgentManager] cleanup complete: ${removedCount} stopped container(s) removed, ${stoppedOrphanCount} orphan(s) stopped`);
       }
     } catch (err) {
       console.warn(`[PlanningAgentManager] container cleanup error:`, err);
