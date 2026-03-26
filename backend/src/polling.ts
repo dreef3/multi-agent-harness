@@ -18,8 +18,9 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
 
 /**
  * Poll a single PR for new comments (works for GitHub and Bitbucket Server).
+ * Exported for unit testing.
  */
-async function pollPullRequest(
+export async function pollPullRequest(
   docker: Dockerode,
   pr: PullRequest
 ): Promise<number> {
@@ -34,6 +35,17 @@ async function pollPullRequest(
 
   try {
     const connector = getConnector(repository.provider);
+
+    // Sync the live PR status — implementation PRs never get updated locally when merged.
+    const prInfo = await connector.getPullRequest(repository, pr.externalId);
+    if (prInfo.status !== "open") {
+      const { updatePullRequest } = await import("./store/pullRequests.js");
+      updatePullRequest(pr.id, { status: prInfo.status });
+      console.log(`[polling] PR ${pr.id} is ${prInfo.status} on remote — updated local status, skipping comment poll`);
+      pollStates.delete(pr.id);
+      return 0;
+    }
+
     const comments = await connector.getComments(repository, pr.externalId, since);
 
     let newComments = 0;
@@ -51,8 +63,8 @@ async function pollPullRequest(
         updatedAt: new Date().toISOString(),
       };
 
-      upsertReviewComment(reviewComment);
-      newComments++;
+      const isNew = upsertReviewComment(reviewComment);
+      if (isNew) newComments++;
     }
 
     // Update poll state

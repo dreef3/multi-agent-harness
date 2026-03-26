@@ -129,7 +129,8 @@ export function updatePullRequest(id: string, updates: Partial<Omit<PullRequest,
     });
 }
 
-export function upsertReviewComment(comment: ReviewComment): void {
+/** Returns true if the comment was newly inserted, false if it already existed. */
+export function upsertReviewComment(comment: ReviewComment): boolean {
   const existing = getDb()
     .prepare("SELECT * FROM review_comments WHERE external_id = ?")
     .get(comment.externalId) as ReviewCommentRow | undefined;
@@ -137,7 +138,7 @@ export function upsertReviewComment(comment: ReviewComment): void {
   if (existing) {
     getDb()
       .prepare(
-        `UPDATE review_comments SET 
+        `UPDATE review_comments SET
           pull_request_id = @pullRequestId,
           author = @author,
           body = @body,
@@ -157,6 +158,7 @@ export function upsertReviewComment(comment: ReviewComment): void {
         updatedAt: new Date().toISOString(),
         externalId: comment.externalId,
       });
+    return false;
   } else {
     getDb()
       .prepare(
@@ -175,6 +177,7 @@ export function upsertReviewComment(comment: ReviewComment): void {
         receivedAt: comment.receivedAt,
         updatedAt: comment.updatedAt,
       });
+    return true;
   }
 }
 
