@@ -38,6 +38,7 @@ const repo: Repository = {
   name: "my-repo",
   provider: "github",
   providerConfig: { owner: "org", repo: "my-repo" },
+  cloneUrl: "https://github.com/org/my-repo.git",
   defaultBranch: "main",
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
