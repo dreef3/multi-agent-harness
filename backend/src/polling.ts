@@ -52,7 +52,7 @@ export async function pollPullRequest(
         const project = getProject(pr.projectId);
         if (project && project.status !== "completed" && project.status !== "cancelled") {
           const allPrs = listPullRequestsByProject(pr.projectId);
-          const allTerminal = allPrs.every(p => p.status === "merged" || p.status === "declined");
+          const allTerminal = allPrs.length > 0 && allPrs.every(p => p.status === "merged" || p.status === "declined");
           if (allTerminal) {
             updateProject(pr.projectId, { status: "completed" });
             console.log(`[polling] All PRs for project ${pr.projectId} are terminal — marking project completed`);
