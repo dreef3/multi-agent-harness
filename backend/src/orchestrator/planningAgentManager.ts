@@ -2,8 +2,9 @@ import type Dockerode from "dockerode";
 import { PassThrough } from "stream";
 import { Socket } from "net";
 import { EventEmitter } from "node:events";
+import { context, trace, SpanStatusCode, type Span } from "@opentelemetry/api";
 import { config } from "../config.js";
-import { meter } from "../telemetry.js";
+import { tracer, meter } from "../telemetry.js";
 
 const toolCallCounter = meter.createCounter("harness.tool_calls.total", {
   description: "Total tool calls made by the planning agent",
@@ -11,6 +12,18 @@ const toolCallCounter = meter.createCounter("harness.tool_calls.total", {
 const toolCallDuration = meter.createHistogram("harness.tool_calls.duration_ms", {
   description: "Duration of planning agent tool calls in milliseconds",
   unit: "ms",
+});
+const tokensInput = meter.createCounter("harness.tokens.input", {
+  description: "Input tokens consumed by the planning agent",
+  unit: "tokens",
+});
+const tokensOutput = meter.createCounter("harness.tokens.output", {
+  description: "Output tokens produced by the planning agent",
+  unit: "tokens",
+});
+const tokensCacheRead = meter.createCounter("harness.tokens.cache_read", {
+  description: "Cache-read tokens consumed by the planning agent",
+  unit: "tokens",
 });
 
 export type PlanningAgentEvent =
@@ -33,6 +46,10 @@ interface ProjectState {
   outputHandlers: Set<(event: PlanningAgentEvent) => void>;
   lifecycleState: "running" | "idle" | "stopping" | "crashed";
   stopTimer: ReturnType<typeof setTimeout> | null;
+  // OTEL tracing
+  sessionSpan: Span | null;  // covers entire agent session (agent_start → agent_end)
+  turnSpan: Span | null;     // covers a single turn (turn_start → turn_end)
+  toolSpans: Map<string, Span>; // toolCallId → span
 }
 
 let instance: PlanningAgentManager | null = null;
@@ -115,6 +132,9 @@ export class PlanningAgentManager extends EventEmitter {
       outputHandlers: new Set(),
       lifecycleState: "running",
       stopTimer: null,
+      sessionSpan: null,
+      turnSpan: null,
+      toolSpans: new Map(),
     };
     this.projects.set(projectId, state);
     this.listenTcp(projectId, state);
@@ -171,6 +191,7 @@ export class PlanningAgentManager extends EventEmitter {
       "OPENAI_API_KEY",
       "OPENCODE_API_KEY",
       "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
+      "COPILOT_GITHUB_TOKEN",
     ]
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
@@ -267,6 +288,15 @@ export class PlanningAgentManager extends EventEmitter {
         }
         currentState.lifecycleState = "crashed";
         this.projects.delete(projectId);
+        // End any open spans on crash
+        currentState.turnSpan?.setStatus({ code: SpanStatusCode.ERROR, message: "container crashed" });
+        currentState.turnSpan?.end();
+        for (const span of currentState.toolSpans.values()) {
+          span.setStatus({ code: SpanStatusCode.ERROR, message: "container crashed" });
+          span.end();
+        }
+        currentState.sessionSpan?.setStatus({ code: SpanStatusCode.ERROR, message: "container crashed" });
+        currentState.sessionSpan?.end();
         // Unblock any WS clients waiting for a response
         this.emitAgentEvent(projectId, currentState, { type: "conversation_complete" });
       } else {
@@ -295,11 +325,59 @@ export class PlanningAgentManager extends EventEmitter {
       return;
     }
     if (!["agent_start", "message_start", "message_update", "tool_execution_start", "tool_execution_end", "message_end", "agent_end",
-         "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end"].includes(type)) {
+         "extension_ui_request", "extension_error", "thinking_start", "thinking_delta", "thinking_end",
+         "turn_start", "turn_end", "auto_retry_start", "auto_retry_end"].includes(type)) {
       console.log(`[PlanningAgentManager] unhandled event type="${type}" for ${projectId}: ${line.slice(0, 200)}`);
     }
 
-    if (type === "agent_start") { state.isStreaming = true; console.log(`[PlanningAgentManager] agent_start for ${projectId}`); return; }
+    if (type === "agent_start") {
+      state.isStreaming = true;
+      console.log(`[PlanningAgentManager] agent_start for ${projectId}`);
+      state.sessionSpan = tracer.startSpan("planning_agent.session", {
+        attributes: { "project.id": projectId },
+      });
+      return;
+    }
+
+    if (type === "turn_start") {
+      const parentCtx = state.sessionSpan
+        ? trace.setSpan(context.active(), state.sessionSpan)
+        : context.active();
+      state.turnSpan = tracer.startSpan("planning_agent.turn", {
+        attributes: { "project.id": projectId },
+      }, parentCtx);
+      return;
+    }
+
+    if (type === "turn_end") {
+      const msg = obj.message as {
+        model?: string; provider?: string; api?: string;
+        usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number };
+      } | undefined;
+      const usage = msg?.usage;
+      const attrs = {
+        "project.id": projectId,
+        "model": msg?.model ?? "",
+        "provider": msg?.provider ?? "",
+      };
+      if (usage) {
+        if (usage.input)     tokensInput.add(usage.input, attrs);
+        if (usage.output)    tokensOutput.add(usage.output, attrs);
+        if (usage.cacheRead) tokensCacheRead.add(usage.cacheRead, attrs);
+        if (state.turnSpan) {
+          state.turnSpan.setAttributes({
+            "llm.usage.input_tokens": usage.input ?? 0,
+            "llm.usage.output_tokens": usage.output ?? 0,
+            "llm.usage.cache_read_tokens": usage.cacheRead ?? 0,
+            "llm.model": msg?.model ?? "",
+            "llm.provider": msg?.provider ?? "",
+          });
+        }
+      }
+      state.turnSpan?.end();
+      state.turnSpan = null;
+      return;
+    }
 
     if (type === "message_update") {
       const evt = obj.assistantMessageEvent as Record<string, unknown> | undefined;
@@ -314,6 +392,15 @@ export class PlanningAgentManager extends EventEmitter {
       const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? toolName);
       this.toolCallStartTimes.set(toolCallId, Date.now());
       toolCallCounter.add(1, { "tool.name": toolName, "project.id": projectId });
+      const parentCtx = state.turnSpan
+        ? trace.setSpan(context.active(), state.turnSpan)
+        : state.sessionSpan
+          ? trace.setSpan(context.active(), state.sessionSpan)
+          : context.active();
+      const toolSpan = tracer.startSpan(`planning_agent.tool.${toolName}`, {
+        attributes: { "project.id": projectId, "tool.name": toolName },
+      }, parentCtx);
+      state.toolSpans.set(toolCallId, toolSpan);
       this.emitAgentEvent(projectId, state, {
         type: "tool_call",
         toolName: toolName,
@@ -323,15 +410,23 @@ export class PlanningAgentManager extends EventEmitter {
     }
 
     if (type === "tool_execution_end") {
-      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? (obj.toolName as string));
+      const toolName = obj.toolName as string;
+      const toolCallId = projectId + ":" + ((obj.toolCallId as string | undefined) ?? toolName);
       const start = this.toolCallStartTimes.get(toolCallId);
       if (start !== undefined) {
-        toolCallDuration.record(Date.now() - start, { "tool.name": obj.toolName as string, "project.id": projectId });
+        toolCallDuration.record(Date.now() - start, { "tool.name": toolName, "project.id": projectId });
         this.toolCallStartTimes.delete(toolCallId);
+      }
+      const toolSpan = state.toolSpans.get(toolCallId);
+      if (toolSpan) {
+        const isError = obj.isError as boolean | undefined;
+        if (isError) toolSpan.setStatus({ code: SpanStatusCode.ERROR });
+        toolSpan.end();
+        state.toolSpans.delete(toolCallId);
       }
       this.emitAgentEvent(projectId, state, {
         type: "tool_result",
-        toolName: obj.toolName as string,
+        toolName: toolName,
         result: obj.result,
         isError: obj.isError as boolean | undefined,
       });
@@ -360,6 +455,13 @@ export class PlanningAgentManager extends EventEmitter {
     if (type === "agent_end") {
       state.isStreaming = false;
       state.promptPending = false;
+      // End any dangling spans
+      state.turnSpan?.end();
+      state.turnSpan = null;
+      for (const span of state.toolSpans.values()) span.end();
+      state.toolSpans.clear();
+      state.sessionSpan?.end();
+      state.sessionSpan = null;
       this.emitAgentEvent(projectId, state, { type: "conversation_complete" });
       void this.commitSessionLog(projectId);
       // Note: do NOT call checkStop here. The container lifecycle is driven by WS

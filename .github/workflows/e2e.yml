@@ -12,8 +12,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  e2e-opencode-go:
-    name: E2E with OpenCode Go
+  e2e-github-copilot:
+    name: E2E with GitHub Copilot
     runs-on: ubuntu-latest
 
     steps:
@@ -26,13 +26,13 @@ jobs:
         run: |
           cat > .env << 'EOF'
           GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
+          COPILOT_GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
           SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
-          AGENT_PROVIDER=opencode-go
-          OPENCODE_API_KEY=${{ secrets.OPENCODE_API_KEY }}
-          TEST_REPO_URL=git@github.com:dreef3/multi-agent-harness-test-repo.git
+          AGENT_PLANNING_MODEL=github-copilot/gpt-5-mini
+          AGENT_IMPLEMENTATION_MODEL=github-copilot/gpt-5-mini
           JIRA_BASE_URL=
           JIRA_TOKEN=
           BITBUCKET_BASE_URL=
@@ -75,6 +75,11 @@ jobs:
           load: true
           cache-from: type=gha,scope=planning-agent
           cache-to: type=gha,scope=planning-agent,mode=max
+
+      - name: Seed Copilot auth into pi-agent volume
+        env:
+          COPILOT_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: bash scripts/copy-copilot-auth.sh
 
       - name: Start services
         run: |
@@ -124,12 +129,10 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit == 'true'
         run: bunx playwright install-deps chromium
 
-      - name: Run E2E tests with OpenCode Go
+      - name: Run E2E tests
         working-directory: ./e2e-tests
         env:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
-          AGENT_PROVIDER: opencode-go
-          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
         run: bunx playwright test
@@ -138,7 +141,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-opencode-go
+          name: playwright-report-github-copilot
           path: e2e-tests/playwright-report/
           retention-days: 30
 

@@ -13,11 +13,56 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createGuardHook, createWebFetchTool } from "./tools.mjs";
 import { createOutputFilterExtension } from '/app/shared/extensions/output-filter.mjs';
+
+const PI_AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
+
+/** Bootstrap Copilot auth from PAT if COPILOT_GITHUB_TOKEN is set. */
+async function setupCopilotAuth() {
+  const token = process.env.COPILOT_GITHUB_TOKEN;
+  if (!token) return;
+  delete process.env.COPILOT_GITHUB_TOKEN;
+
+  try {
+    const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat",
+      },
+    });
+    if (!res.ok) {
+      console.warn(`[sub-agent] Copilot token exchange failed: HTTP ${res.status}`);
+      return;
+    }
+    const ct = await res.json();
+    if (!ct.token) {
+      console.warn("[sub-agent] Copilot token exchange returned no token");
+      return;
+    }
+    const authPath = join(PI_AGENT_DIR, "auth.json");
+    let existing = {};
+    try { existing = JSON.parse(readFileSync(authPath, "utf8")); } catch { /* ok */ }
+    existing["github-copilot"] = {
+      type: "oauth",
+      refresh: token,
+      access: ct.token,
+      expires: ct.expires_at * 1000 - 5 * 60 * 1000,
+    };
+    mkdirSync(PI_AGENT_DIR, { recursive: true });
+    writeFileSync(authPath, JSON.stringify(existing, null, 2), { mode: 0o600 });
+    console.log("[sub-agent] Seeded Copilot auth from COPILOT_GITHUB_TOKEN");
+  } catch (err) {
+    console.warn("[sub-agent] Failed to bootstrap Copilot auth:", err.message);
+  }
+}
 
 const REPO_CLONE_URL = process.env.REPO_CLONE_URL ?? "";
 const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
@@ -92,9 +137,12 @@ git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles a
 process.chdir("/workspace/repo");
 git("checkout", BRANCH_NAME);
 
+// ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
+await setupCopilotAuth();
+
 // ── Run AI agent ─────────────────────────────────────────────────────────────
 console.log("[sub-agent] Running task:", TASK_DESCRIPTION);
-const sessionDir = process.env.PI_CODING_AGENT_DIR ?? "/pi-agent";
+const sessionDir = PI_AGENT_DIR;
 let aiSucceeded = false;
 
 try {
