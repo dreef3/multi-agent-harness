@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { context, trace, SpanStatusCode, type Span } from "@opentelemetry/api";
 import { config } from "../config.js";
 import { tracer, meter } from "../telemetry.js";
+import { appendEvent } from "../store/agentEvents.js";
 
 const toolCallCounter = meter.createCounter("harness.tool_calls.total", {
   description: "Total tool calls made by the planning agent",
@@ -477,6 +478,8 @@ export class PlanningAgentManager extends EventEmitter {
       try { handler(event); } catch { /* ignore handler errors */ }
     }
     this.emit(projectId, event);
+    const { type, ...payload } = event;
+    appendEvent(`master-${projectId}`, { type, payload: payload as Record<string, unknown>, timestamp: new Date().toISOString() });
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
