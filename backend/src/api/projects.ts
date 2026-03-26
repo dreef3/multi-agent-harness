@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { insertProject, getProject, listProjects, updateProject, deleteProject } from "../store/projects.js";
 import { getRepository, listRepositories } from "../store/repositories.js";
@@ -8,9 +9,11 @@ import type { Project } from "../models/types.js";
 import { preInitAgent } from "./websocket.js";
 import { getEvents } from "../store/agentEvents.js";
 import { getRecoveryService } from "../orchestrator/recoveryService.js";
+import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
+import { stopContainer, removeContainer } from "../orchestrator/containerManager.js";
 import { handleWritePlanningDocument } from "../agents/planningTool.js";
 
-export function createProjectsRouter(dataDir: string): Router {
+export function createProjectsRouter(dataDir: string, docker: Dockerode): Router {
   const router = Router();
   // List all projects
   router.get("/", (_req, res) => {
@@ -136,13 +139,49 @@ export function createProjectsRouter(dataDir: string): Router {
   });
 
   // Delete project
-  router.delete("/:id", (req, res) => {
+  router.delete("/:id", async (req, res) => {
     const project = getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
+    console.log(`[projects] Deleting project ${req.params.id} ("${project.name}")`);
+
+    // Stop planning agent container if running
+    try {
+      const manager = getPlanningAgentManager();
+      if (manager.isRunning(req.params.id)) {
+        console.log(`[projects] Stopping planning agent for project ${req.params.id}`);
+        await manager.stopContainer(req.params.id);
+      } else {
+        console.log(`[projects] Planning agent not running for project ${req.params.id}`);
+      }
+    } catch (err) {
+      console.warn(`[projects] Failed to stop planning agent for project ${req.params.id}:`, err);
+    }
+
+    // Stop all active sub-agent containers for this project
+    const activeSessions = listAgentSessions(req.params.id).filter(
+      s => s.type === "sub" && (s.status === "starting" || s.status === "running") && s.containerId
+    );
+    if (activeSessions.length > 0) {
+      console.log(`[projects] Stopping ${activeSessions.length} sub-agent container(s) for project ${req.params.id}`);
+      await Promise.allSettled(activeSessions.map(async (session) => {
+        try {
+          console.log(`[projects] Stopping sub-agent container ${session.containerId} (session ${session.id})`);
+          await stopContainer(docker, session.containerId!);
+          await removeContainer(docker, session.containerId!);
+          console.log(`[projects] Stopped and removed container ${session.containerId}`);
+        } catch (err) {
+          console.warn(`[projects] Failed to stop sub-agent container ${session.containerId}:`, err);
+        }
+      }));
+    } else {
+      console.log(`[projects] No active sub-agent containers for project ${req.params.id}`);
+    }
+
     deleteProject(req.params.id);
+    console.log(`[projects] Project ${req.params.id} ("${project.name}") deleted successfully`);
     res.json({ success: true });
   });
 
