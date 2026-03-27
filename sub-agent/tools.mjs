@@ -34,6 +34,7 @@ const BASE_BLOCKED = [
   [["git", "branch", "-D"],               "Branch deletion is blocked."],
   [["git", "branch", "--delete"],         "Branch deletion is blocked."],
   [["git", "branch", "-d"],               "Branch deletion is blocked."],
+  [["gh", "pr", "create"],                "The harness creates the pull request automatically. Do not create PRs manually."],
   [["gh", "repo", "delete"],              "Repository deletion is blocked."],
   [["gh", "repo", "edit"],                "Repository settings changes are blocked."],
   [["gh", "api"],                         "Direct gh API calls are blocked."],

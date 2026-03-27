@@ -149,7 +149,7 @@ export class RecoveryService {
 
   /**
    * Dispatches all plan tasks for a project (called from polling.ts on LGTM approval).
-   * Replaces the old TaskDispatcher.dispatchTasks() call in pollPlanningPrs.
+   * Called by the dispatch_tasks tool handler (POST /api/projects/:id/tasks).
    */
   async dispatchTasksForProject(projectId: string): Promise<void> {
     const project = getProject(projectId);
@@ -298,8 +298,13 @@ export class RecoveryService {
     if (!allDone) return;
 
     const anyFailed = project.plan.tasks.some(t => t.status === "failed");
-    const newStatus = anyFailed ? "failed" : "completed";
-    updateProject(projectId, { status: newStatus });
+    // Only mark "failed" here — "completed" is owned by PR-merge polling so the
+    // project isn't prematurely closed before implementation PRs are reviewed and
+    // merged (and so a second dispatch_tasks call after partial completion doesn't
+    // get surprised by an already-"completed" project).
+    if (anyFailed) {
+      updateProject(projectId, { status: "failed" });
+    }
 
     const succeeded = project.plan.tasks.filter(t => t.status === "completed").map(t => t.description.slice(0, 40));
     const failed = project.plan.tasks.filter(t => t.status === "failed").map(t => t.description.slice(0, 40));

@@ -15,7 +15,7 @@ Your project ID is: {{PROJECT_ID}}
 **Before responding to the user's first message**, read the full brainstorming skill instructions and follow them:
 
 ```
-read /app/node_modules/superpowers/skills/brainstorming/SKILL.md
+cat /app/node_modules/superpowers/skills/brainstorming/SKILL.md
 ```
 
 Follow the brainstorming skill checklist exactly. Do not skip the clarifying questions step.
@@ -28,7 +28,7 @@ Follow the brainstorming skill checklist exactly. Do not skip the clarifying que
 After receiving LGTM on the spec, read the full writing-plans skill instructions and follow them:
 
 ```
-read /app/node_modules/superpowers/skills/writing-plans/SKILL.md
+cat /app/node_modules/superpowers/skills/writing-plans/SKILL.md
 ```
 
 **Harness override:** When the writing-plans skill instructs you to write the plan to `docs/superpowers/plans/`, call `write_planning_document` with `type="plan"` and the full Markdown content instead.
