@@ -460,7 +460,7 @@ describe('Chat Component State Management', () => {
   });
 
   describe('header navigation', () => {
-    it('contains a back to projects link routing to /', () => {
+    it('contains a compact back link visually showing chevron + Projects and has accessible aria-label', () => {
       render(
         <MemoryRouter initialEntries={['/project/test-project-id']}>
           <Routes>
@@ -471,6 +471,10 @@ describe('Chat Component State Management', () => {
       const link = screen.getByRole('link', { name: /projects/i });
       expect(link).toBeInTheDocument();
       expect(link.getAttribute('href')).toBe('/');
+      // Preserve accessible label for screen readers
+      expect(link.getAttribute('aria-label')).toBe('Back to projects');
+      // Visually should show a chevron + the singular word "Projects"
+      expect(link.textContent?.trim()).toBe('← Projects');
     });
   });
 });
