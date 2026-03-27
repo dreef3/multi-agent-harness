@@ -541,12 +541,12 @@ describe("PlanningAgentManager - docker cleanup", () => {
     expect(mockContainer.remove).toHaveBeenCalled();
   });
 
-  it("cleanupStaleContainers removes stopped planning- and task- containers", async () => {
+  it("cleanupStaleContainers removes stopped planning- and sub- containers", async () => {
     const removeMock = vi.fn().mockResolvedValue(undefined);
     const { docker } = makeMockDocker();
     vi.mocked(docker.listContainers).mockResolvedValue([
       { Id: "aaa", Names: ["/planning-proj-1"], State: "exited" },
-      { Id: "bbb", Names: ["/task-abc12345678"], State: "exited" },
+      { Id: "bbb", Names: ["/sub-abc12345678"], State: "exited" },
       { Id: "ccc", Names: ["/planning-proj-2"], State: "running" }, // skip — running
       { Id: "ddd", Names: ["/other-container"], State: "exited" }, // skip — not ours
     ] as never);

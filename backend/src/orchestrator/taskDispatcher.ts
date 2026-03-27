@@ -150,12 +150,20 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
           : repository.cloneUrl;
 
+        const taskName = task.description
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "")
+          .slice(0, 30)
+          .replace(/-+$/g, "");
+
         containerId = await createSubAgentContainer(docker, {
           sessionId,
           repoCloneUrl: repository.cloneUrl,
           gitPushUrl,
           branchName,
           taskDescription: this.buildTaskPrompt(task),
+          taskName,
           taskId: task.id,
         });
 
@@ -172,7 +180,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         await startContainer(docker, containerId);
 
         // Stream container logs to backend stdout for observability
-        this.streamContainerLogs(docker, containerId, `task-${task.id.slice(0, 8)}`);
+        this.streamContainerLogs(docker, containerId, `sub-${task.id.slice(0, 8)}`);
 
         // Wait for completion
         console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
