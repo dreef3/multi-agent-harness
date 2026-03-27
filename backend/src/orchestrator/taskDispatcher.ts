@@ -1,7 +1,7 @@
 import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import type { Project, Repository, AgentSession, PlanTask, PullRequest } from "../models/types.js";
-import { getProject, updateProject } from "../store/projects.js";
+import { getProject } from "../store/projects.js";
 import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession, getAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
@@ -83,52 +83,6 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
   public buildTaskPrompt(task: PlanTask): string {
     return TaskDispatcher.TASK_PREAMBLE + task.description;
-  }
-
-  /**
-   * Dispatch all tasks from an approved plan for a project.
-   * Launches all tasks in parallel.
-   */
-  async dispatchTasks(docker: Dockerode, projectId: string): Promise<TaskResult[]> {
-    const project = getProject(projectId);
-    if (!project) {
-      throw new Error(`Project not found: ${projectId}`);
-    }
-
-    if (!project.planningPr?.planApprovedAt) {
-      throw new Error(`Project ${projectId} does not have an approved plan (planningPr.planApprovedAt not set)`);
-    }
-
-    if (!project.plan) {
-      console.warn(`[taskDispatcher] Project ${projectId} has no plan — nothing to dispatch`);
-      return [];
-    }
-    if (project.plan.tasks.length === 0) {
-      console.warn(`[taskDispatcher] Project ${projectId} plan has 0 tasks — nothing to dispatch`);
-      return [];
-    }
-
-    console.log(`[taskDispatcher] Dispatching ${project.plan.tasks.length} task(s) for project ${projectId}`);
-    for (const t of project.plan.tasks) {
-      console.log(`[taskDispatcher]   task id=${t.id} repoId=${t.repositoryId} status=${t.status}`);
-    }
-
-    // Launch all tasks in parallel
-    const taskPromises = project.plan.tasks.map(task =>
-      this.runTask(docker, project, task)
-    );
-
-    const results = await Promise.all(taskPromises);
-
-    // Update project status if all tasks completed
-    const allCompleted = results.every(r => r.success);
-    if (allCompleted) {
-      updateProject(projectId, { status: "completed" });
-    } else if (results.some(r => !r.success)) {
-      updateProject(projectId, { status: "failed" });
-    }
-
-    return results;
   }
 
   /**

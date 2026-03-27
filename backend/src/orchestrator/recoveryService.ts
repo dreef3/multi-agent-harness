@@ -149,7 +149,7 @@ export class RecoveryService {
 
   /**
    * Dispatches all plan tasks for a project (called from polling.ts on LGTM approval).
-   * Replaces the old TaskDispatcher.dispatchTasks() call in pollPlanningPrs.
+   * Called by the dispatch_tasks tool handler (POST /api/projects/:id/tasks).
    */
   async dispatchTasksForProject(projectId: string): Promise<void> {
     const project = getProject(projectId);
