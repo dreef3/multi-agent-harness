@@ -140,7 +140,7 @@ export default function NewProject() {
         primaryRepositoryId: primaryRepoId ?? selectedRepoIds[0],
         source,
       });
-      navigate(`/projects/${project.id}/chat`, { state: { project } });
+      navigate(`/projects/${project.id}/chat`, { state: { project }, replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create project");
     } finally {
@@ -568,7 +568,7 @@ export default function NewProject() {
           </button>
           <button
             type="button"
-            onClick={() => navigate(-1)}
+            onClick={() => navigate('/')}
             className="text-gray-400 hover:text-white px-4 py-2"
           >
             Cancel
