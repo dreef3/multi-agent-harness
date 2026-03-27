@@ -43,6 +43,7 @@ export interface ContainerCreateOptions {
   gitPushUrl?: string;
   branchName: string;
   taskDescription?: string;
+  taskName?: string;
   agentProvider?: string;
   agentModel?: string;
   taskId?: string;
@@ -77,7 +78,10 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   console.log(`[containerManager]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
   console.log(`[containerManager]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
 
-  const containerName = `task-${(opts.taskId ?? opts.sessionId).slice(0, 16)}`;
+  const nameSuffix = opts.taskName
+    ? `${opts.taskName}-${(opts.taskId ?? opts.sessionId).slice(0, 8)}`
+    : (opts.taskId ?? opts.sessionId).slice(0, 16);
+  const containerName = `sub-${nameSuffix}`;
 
   const container = await docker.createContainer({
     Image: config.subAgentImage,

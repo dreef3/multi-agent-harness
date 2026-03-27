@@ -614,7 +614,7 @@ export class PlanningAgentManager extends EventEmitter {
       const containers = await this.docker.listContainers({ all: true });
       const harnessContainers = containers.filter((c) => {
         const name = (c.Names?.[0] ?? "").replace(/^\//, "");
-        return name.startsWith("planning-") || name.startsWith("task-");
+        return name.startsWith("planning-") || name.startsWith("sub-");
       });
 
       let removedCount = 0;
