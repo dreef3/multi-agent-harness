@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { useParams, useLocation } from "react-router-dom";
+import { useParams, useLocation, Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, Message, Project } from "../lib/api";
@@ -256,7 +256,12 @@ export default function Chat() {
   return (
     <div className="h-[calc(100vh-8rem)] flex flex-col space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Chat</h1>
+        <div className="flex items-center gap-3">
+          <Link to="/" aria-label="Back to projects" className="text-blue-400 hover:text-blue-300 focus:outline-none">
+            ← Projects
+          </Link>
+          <h1 className="text-2xl font-bold">Chat</h1>
+        </div>
       </div>
 
       {retryBanner && (

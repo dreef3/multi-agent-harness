@@ -458,4 +458,19 @@ describe('Chat Component State Management', () => {
       expect(wsClient.disconnect).toHaveBeenCalledOnce();
     });
   });
+
+  describe('header navigation', () => {
+    it('contains a back to projects link routing to /', () => {
+      render(
+        <MemoryRouter initialEntries={['/project/test-project-id']}>
+          <Routes>
+            <Route path="/project/:id" element={<Chat />} />
+          </Routes>
+        </MemoryRouter>
+      );
+      const link = screen.getByRole('link', { name: /projects/i });
+      expect(link).toBeInTheDocument();
+      expect(link.getAttribute('href')).toBe('/');
+    });
+  });
 });
