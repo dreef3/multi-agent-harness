@@ -81,14 +81,14 @@ describe('Dashboard', () => {
     expect(screen.queryByText('Completed Project')).not.toBeInTheDocument();
   });
 
-  it('shows completed project when toggle is enabled', async () => {
+  it('shows completed project when expander is clicked', async () => {
     const { api } = await import('../lib/api');
     vi.mocked(api.projects.list).mockResolvedValue([
       makeProject({ id: 'c1', name: 'Completed Project', status: 'completed' }),
     ]);
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
-    const toggle = await screen.findByLabelText('Show completed projects');
-    fireEvent.click(toggle);
+    const expander = await screen.findByRole('button', { name: /Show .* completed projects/i });
+    fireEvent.click(expander);
     await waitFor(() => expect(screen.getByText('Completed Project')).toBeInTheDocument());
     expect(screen.getByText('Completed')).toBeInTheDocument();
   });
@@ -99,8 +99,8 @@ describe('Dashboard', () => {
       makeProject({ id: 'c1', name: 'Completed Project', status: 'completed' }),
     ]);
     render(<MemoryRouter><Dashboard /></MemoryRouter>);
-    const toggle = await screen.findByLabelText('Show completed projects');
-    fireEvent.click(toggle);
+    const expander = await screen.findByRole('button', { name: /Show .* completed projects/i });
+    fireEvent.click(expander);
     await waitFor(() => expect(screen.getByText('Completed Project')).toBeInTheDocument());
     expect(screen.queryByText('Execute')).not.toBeInTheDocument();
     // Completed projects should not have Retry actions available
