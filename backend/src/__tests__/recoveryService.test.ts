@@ -153,7 +153,7 @@ describe("RecoveryService", () => {
   });
 
   describe("checkAllTerminal", () => {
-    it("updates project to completed when all tasks succeeded", async () => {
+    it("leaves project as executing (not completed) when all tasks succeeded — completed is owned by PR-merge polling", async () => {
       const proj = makeProject("proj-5");
       proj.plan!.tasks[0].status = "completed";
       insertProject(proj);
@@ -164,7 +164,9 @@ describe("RecoveryService", () => {
       svc.notifyMaster = mockNotify;
       // @ts-expect-error accessing private for test
       await svc.checkAllTerminal("proj-5");
-      expect(getProject("proj-5")!.status).toBe("completed");
+      // Project must NOT be set to "completed" here — the polling loop does that
+      // when implementation PRs are merged, to avoid premature closure.
+      expect(getProject("proj-5")!.status).toBe("executing");
       expect(mockNotify).toHaveBeenCalledWith("proj-5", expect.stringContaining("complete"));
     });
 
@@ -383,8 +385,8 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       await svc.recoverOrphanedProject(proj);
 
-      // checkAllTerminal should transition project to completed and notify
-      expect(getProject("proj-orphan-2")!.status).toBe("completed");
+      // checkAllTerminal should notify but leave status as "executing" — "completed" is owned by PR-merge polling
+      expect(getProject("proj-orphan-2")!.status).toBe("executing");
       expect(mockNotify).toHaveBeenCalledWith("proj-orphan-2", expect.stringContaining("complete"));
     });
 

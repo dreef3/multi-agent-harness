@@ -70,7 +70,10 @@ Before considering the task done:
 If verification fails, go back and fix — do not push broken code.
 
 ## Step 6 — Commit and Push
-Stage and commit all changes. The harness will open the pull request automatically.
+
+You are already checked out on the correct feature branch. Do NOT run \`git checkout -b\`
+or create a new branch. Stage and commit all changes with clear commit messages. The
+harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
 ---
 
