@@ -9,6 +9,9 @@ const mockUpdatePullRequest = vi.fn();
 const mockUpsertReviewComment = vi.fn();
 const mockGetRepository = vi.fn();
 const mockGetDebounceEngine = vi.fn().mockReturnValue(null);
+const mockGetProject = vi.fn();
+const mockUpdateProject = vi.fn();
+const mockListPullRequestsByProject = vi.fn();
 
 vi.mock("../connectors/types.js", () => ({
   getConnector: vi.fn().mockReturnValue({
@@ -23,12 +26,17 @@ vi.mock("../store/repositories.js", () => ({
 
 vi.mock("../store/pullRequests.js", () => ({
   upsertReviewComment: mockUpsertReviewComment,
-  listPullRequestsByProject: vi.fn(),
+  listPullRequestsByProject: mockListPullRequestsByProject,
   updatePullRequest: mockUpdatePullRequest,
 }));
 
 vi.mock("../api/webhooks.js", () => ({
   getDebounceEngine: mockGetDebounceEngine,
+}));
+
+vi.mock("../store/projects.js", () => ({
+  getProject: mockGetProject,
+  updateProject: mockUpdateProject,
 }));
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -77,6 +85,9 @@ describe("pollPullRequest — PR status sync (restart ghost-push bug)", () => {
     vi.clearAllMocks();
     mockGetRepository.mockReturnValue(repo);
     mockGetDebounceEngine.mockReturnValue(null);
+    // Default: project is executing, not yet completed
+    mockGetProject.mockReturnValue({ id: "project-1", status: "executing" });
+    mockListPullRequestsByProject.mockReturnValue([]);
   });
 
   it("skips comment poll and updates local status when remote PR is merged", async () => {
@@ -136,5 +147,107 @@ describe("pollPullRequest — PR status sync (restart ghost-push bug)", () => {
     expect(newComments).toBe(0);
     // Debounce engine must NOT be triggered for already-seen comments
     expect(mockGetDebounceEngine).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollPullRequest — project completion on all PRs merged", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGetRepository.mockReturnValue(repo);
+    mockGetDebounceEngine.mockReturnValue(null);
+    mockGetProject.mockReturnValue({ id: "project-1", status: "executing" });
+  });
+
+  it("marks project completed when the only PR is merged", async () => {
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    // After updatePullRequest, listPullRequestsByProject returns this PR as merged
+    mockListPullRequestsByProject.mockReturnValue([
+      { ...pr, status: "merged" },
+    ]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).toHaveBeenCalledWith("project-1", { status: "completed" });
+  });
+
+  it("marks project completed when all PRs are merged or declined", async () => {
+    const pr2: PullRequest = {
+      ...pr,
+      id: "pr-2",
+      externalId: "43",
+      status: "declined",
+    };
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    mockListPullRequestsByProject.mockReturnValue([
+      { ...pr, status: "merged" },
+      { ...pr2, status: "declined" },
+    ]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).toHaveBeenCalledWith("project-1", { status: "completed" });
+  });
+
+  it("does not mark project completed when another PR is still open", async () => {
+    const pr2: PullRequest = {
+      ...pr,
+      id: "pr-2",
+      externalId: "43",
+      status: "open",
+    };
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    mockListPullRequestsByProject.mockReturnValue([
+      { ...pr, status: "merged" },
+      pr2,
+    ]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("does not mark project completed when PR is declined (not merged)", async () => {
+    mockGetPullRequest.mockResolvedValue({ status: "declined", url: pr.url });
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    // Declined alone does not trigger completion check
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("does not mark project completed when project is already completed", async () => {
+    mockGetProject.mockReturnValue({ id: "project-1", status: "completed" });
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    mockListPullRequestsByProject.mockReturnValue([{ ...pr, status: "merged" }]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("does not mark project completed when project is cancelled", async () => {
+    mockGetProject.mockReturnValue({ id: "project-1", status: "cancelled" });
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    mockListPullRequestsByProject.mockReturnValue([{ ...pr, status: "merged" }]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).not.toHaveBeenCalled();
+  });
+
+  it("does not mark project completed when project has no PRs in DB", async () => {
+    mockGetPullRequest.mockResolvedValue({ status: "merged", url: pr.url });
+    mockListPullRequestsByProject.mockReturnValue([]);
+
+    const { pollPullRequest } = await import("../polling.js");
+    await pollPullRequest({} as never, pr);
+
+    expect(mockUpdateProject).not.toHaveBeenCalled();
   });
 });

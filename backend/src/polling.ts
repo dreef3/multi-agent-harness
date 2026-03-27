@@ -46,6 +46,20 @@ export async function pollPullRequest(
     if (prInfo.status !== "open") {
       updatePullRequest(pr.id, { status: prInfo.status });
       console.log(`[polling] PR ${pr.id} is ${prInfo.status} on remote — updated local status, skipping comment poll`);
+
+      // When a PR is merged, check if all project PRs are now terminal → mark project completed
+      if (prInfo.status === "merged") {
+        const project = getProject(pr.projectId);
+        if (project && project.status !== "completed" && project.status !== "cancelled") {
+          const allPrs = listPullRequestsByProject(pr.projectId);
+          const allTerminal = allPrs.length > 0 && allPrs.every(p => p.status === "merged" || p.status === "declined");
+          if (allTerminal) {
+            updateProject(pr.projectId, { status: "completed" });
+            console.log(`[polling] All PRs for project ${pr.projectId} are terminal — marking project completed`);
+          }
+        }
+      }
+
       pollStates.delete(pr.id);
       return 0;
     }
