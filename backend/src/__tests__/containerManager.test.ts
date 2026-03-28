@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createSubAgentContainer, startContainer, getContainerStatus } from "../orchestrator/containerManager.js";
+import { EventEmitter } from "events";
+import { createSubAgentContainer, startContainer, getContainerStatus, watchContainerExit } from "../orchestrator/containerManager.js";
 
 describe("imageBuilder", () => {
   beforeEach(() => { vi.resetModules(); });
@@ -98,5 +99,34 @@ describe("containerManager", () => {
       "/workspace": expect.stringContaining("rw"),
     });
     delete process.env.SUB_AGENT_READONLY_ROOTFS;
+  });
+});
+
+describe("watchContainerExit", () => {
+  it("calls onExit with parsed exit code when die event fires", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onExit = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", onExit);
+    emitter.emit("data", Buffer.from(JSON.stringify({ Actor: { Attributes: { exitCode: "0" } } })));
+    expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it("defaults exitCode to 1 when Attributes are missing", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onExit = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", onExit);
+    emitter.emit("data", Buffer.from(JSON.stringify({})));
+    expect(onExit).toHaveBeenCalledWith(1);
+  });
+
+  it("calls onError when the stream emits an error", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onError = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", vi.fn(), onError);
+    emitter.emit("error", new Error("stream closed unexpectedly"));
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

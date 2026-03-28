@@ -144,10 +144,25 @@ export async function getContainerStatus(docker: Dockerode, containerId: string)
   } catch { return "unknown"; }
 }
 
-export async function watchContainerExit(docker: Dockerode, containerId: string, onExit: (exitCode: number) => void): Promise<void> {
-  const events = await docker.getEvents({ filters: JSON.stringify({ container: [containerId], event: ["die"] }) });
-  (events as NodeJS.EventEmitter).on("data", (data: Buffer) => {
+export async function watchContainerExit(
+  docker: Dockerode,
+  containerId: string,
+  onExit: (exitCode: number) => void,
+  onError?: (err: Error) => void
+): Promise<void> {
+  const events = await docker.getEvents({
+    filters: JSON.stringify({ container: [containerId], event: ["die"] }),
+  });
+  const emitter = events as NodeJS.EventEmitter;
+  emitter.on("data", (data: Buffer) => {
     const event = JSON.parse(data.toString()) as { Actor?: { Attributes?: { exitCode?: string } } };
     onExit(parseInt(event.Actor?.Attributes?.exitCode ?? "1", 10));
+  });
+  emitter.on("error", (err: Error) => {
+    console.error(`[containerManager] watchContainerExit stream error for ${containerId}:`, err);
+    onError?.(err);
+  });
+  emitter.on("end", () => {
+    console.log(`[containerManager] watchContainerExit stream ended for ${containerId}`);
   });
 }
