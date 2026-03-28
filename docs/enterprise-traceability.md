@@ -126,7 +126,7 @@ A single, structured `.harness/trace.json` file per project branch that provides
 ### Schema Design Decisions
 
 - **`project.status`**: One of `brainstorming`, `spec_in_progress`, `awaiting_spec_approval`, `plan_in_progress`, `awaiting_plan_approval`, `executing`, `completed`, `failed`, `cancelled`. Matches the project lifecycle state machine in `models/types.ts`.
-- **`project.specApprovedBy` / `planApprovedBy`**: The email of the user who posted the LGTM comment. Populated from the VCS comment author when LGTM is detected in `polling.ts`. In local mode (no auth), set to `"local-user"`.
+- **`project.specApprovedBy` / `planApprovedBy`**: The email of the user who submitted the PR approval. Populated from the VCS review author when approval is detected by the polling loop via the VCS connector's PR review API. In local mode (no auth), set to `"local-user"`.
 - **`requirements` array**: Extracted from the spec document when the planning agent writes it via `write_planning_document`. The backend parses the spec markdown using a simple heuristic: top-level numbered items or `##`/`###` headings under sections named "Requirements", "Features", or "Functional Requirements". Each extracted item gets `id` (sequential `req-N`), `summary` (first sentence or heading text), and `section` (the full heading path, e.g., "Requirements > Authentication > OIDC"). If the spec has no parseable structure, the array is empty — this is acceptable; traceability still works at the task level.
 - **`tasks[].id`**: Either a SHA-256 hash (from `dispatch_tasks` stable ID generation: `sha256(repoId + ':' + description)`) or a UUID (from manual task creation via API). Both formats are valid; the trace file does not normalize them.
 - **`tasks[].status`**: One of `pending`, `running`, `completed`, `failed`. Derived from the latest attempt: `running` if the last attempt has no `completedAt`, `completed` if last attempt has `exitCode === 0`, `failed` if last attempt has `exitCode !== 0`, `pending` if no attempts exist.
@@ -151,7 +151,7 @@ The trace file is updated at each state transition in the project lifecycle, com
 
 | Event | What Changes | Trigger Location |
 |-------|-------------|-----------------|
-| **Plan approved** (project enters `executing`) | File created with `project` (incl. approver identity), `requirements` (from project record), `planningPr`, and `tasks` stubs (from plan) | `polling.ts` — LGTM detection for plan approval |
+| **Plan approved** (project enters `executing`) | File created with `project` (incl. approver identity), `requirements` (from project record), `planningPr`, and `tasks` stubs (from plan) | `polling.ts` — PR approval detection for plan approval |
 | **Task dispatched** | Task entry updated with `startedAt`, `agent` config | `taskDispatcher.ts` — `runTask()` |
 | **Task completed** | Attempt entry appended with `toolCalls`, `commits`, `filesChanged`, `exitCode` | `taskDispatcher.ts` — `waitForCompletion()` resolution |
 | **PR created** | `pullRequests` array entry added | `taskDispatcher.ts` — after PR creation step |
@@ -299,7 +299,7 @@ For regulated environments, `trace.json` provides:
 - **What was planned**: `tasks` array with `planSection` references
 - **What was done**: `toolCalls` per attempt
 - **What changed**: `commits` and `filesChanged`
-- **Who approved**: `specApprovedBy`/`planApprovedBy` fields in `project` (email of the LGTM commenter), with timestamps. Cross-reference with `audit_log` for full user action history.
+- **Who approved**: `specApprovedBy`/`planApprovedBy` fields in `project` (email of the PR approver), with timestamps. Cross-reference with `audit_log` for full user action history.
 - **Success/failure**: `exitCode` and `status` per attempt, with retry history
 
 ---

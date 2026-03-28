@@ -87,7 +87,7 @@ Four roles mapped to the team structure:
 |------|-------------|---------------|
 | `admin` | Full access, system configuration, user management | Tech Lead, Platform team |
 | `operator` | Create projects, operate agents, dispatch tasks, manage repositories | Developers |
-| `reviewer` | Approve specs/plans (LGTM), review PRs, view all projects | Tech Lead, QA, Senior Devs |
+| `reviewer` | Approve specs/plans (PR approval), review PRs, view all projects | Tech Lead, QA, Senior Devs |
 | `viewer` | Read-only access to projects, plans, execution status | Business Analysts, Stakeholders |
 
 Roles are **not mutually exclusive** — a Tech Lead would have `admin` + `reviewer`. A developer would have `operator` + `reviewer`. When a user holds multiple roles, permissions are the **union** (any role granting access is sufficient).
@@ -101,7 +101,7 @@ Roles are **not mutually exclusive** — a Tech Lead would have `admin` + `revie
 | Delete project | Y | N | N | N |
 | Configure repositories | Y | Y | N | N |
 | Send chat messages (prompt agent) | Y | Y | N | N |
-| Approve spec/plan (LGTM on PR) | Y | N | Y | N |
+| Approve spec/plan (PR approval) | Y | N | Y | N |
 | Retry failed project | Y | Y | N | N |
 | Cancel project | Y | Y | N | N |
 | View system settings (provider, model config — no secrets) | Y | Y | Y | Y |
@@ -122,7 +122,7 @@ OIDC_ROLE_MAP_REVIEWER=harness-reviewers
 OIDC_ROLE_MAP_VIEWER=harness-viewers
 ```
 
-**Note on LGTM approval**: The `reviewer` role grants spec/plan approval, which is performed by posting a "LGTM" comment on the planning PR in the VCS provider (GitHub/Bitbucket). This is detected by the polling loop via the VCS connector — it does not use the WebSocket chat channel. Reviewers do not need chat access to approve.
+**Note on PR approval**: The `reviewer` role grants spec/plan approval, which is performed by submitting a PR approval (GitHub "Approve" review / Bitbucket "Approve" button) on the planning PR. This replaces the previous LGTM-comment-based detection — PR approvals are a first-class VCS concept with proper audit trails, cannot be spoofed by non-reviewers (VCS enforces permissions), and integrate with branch protection rules. The polling loop detects approvals via the VCS connector's PR review API. Reviewers do not need chat access to approve.
 
 **Middleware stack** (applied in order):
 1. `verifyJwt()` — validates JWT signature, expiry, issuer, audience. Attaches decoded claims to `req.user`. Returns 401 if invalid/missing (skipped when `AUTH_ENABLED=false`).

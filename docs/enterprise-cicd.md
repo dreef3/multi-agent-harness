@@ -115,6 +115,8 @@ pipeline {
         REGISTRY = credentials('artifactory-docker-registry')
         NPM_TOKEN = credentials('artifactory-npm-token')
         IMAGE_TAG = "sha-${env.GIT_COMMIT.take(12)}"
+        // BASE_IMAGE_FAMILY: 'ubi' or 'wolfi' — selects Dockerfile.<family> for all image builds
+        BASE_IMAGE_FAMILY = "${env.BASE_IMAGE_FAMILY ?: 'ubi'}"
     }
 
     stages {
@@ -144,10 +146,10 @@ pipeline {
 
         stage('Build Images') {
             steps {
-                sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} ./backend"
-                sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} ./frontend"
-                sh "docker build -t ${REGISTRY}/planning-agent:${IMAGE_TAG} -f planning-agent/Dockerfile ."
-                sh "docker build -t ${REGISTRY}/sub-agent:${IMAGE_TAG} -f sub-agent/Dockerfile ."
+                sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} -f backend/Dockerfile.${BASE_IMAGE_FAMILY} ./backend"
+                sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} -f frontend/Dockerfile.${BASE_IMAGE_FAMILY} ./frontend"
+                sh "docker build -t ${REGISTRY}/planning-agent:${IMAGE_TAG} -f planning-agent/Dockerfile.${BASE_IMAGE_FAMILY} ."
+                sh "docker build -t ${REGISTRY}/sub-agent:${IMAGE_TAG} -f sub-agent/Dockerfile.${BASE_IMAGE_FAMILY} ."
             }
         }
 
@@ -215,16 +217,19 @@ object TestAndBuild : BuildType({
             name = "Build Images"
             scriptContent = """
                 IMAGE_TAG="sha-${'$'}{BUILD_VCS_NUMBER:0:12}"
-                docker build -t %REGISTRY%/backend:${'$'}IMAGE_TAG ./backend
-                docker build -t %REGISTRY%/frontend:${'$'}IMAGE_TAG ./frontend
-                docker build -t %REGISTRY%/planning-agent:${'$'}IMAGE_TAG -f planning-agent/Dockerfile .
-                docker build -t %REGISTRY%/sub-agent:${'$'}IMAGE_TAG -f sub-agent/Dockerfile .
+                FAMILY="${'$'}{BASE_IMAGE_FAMILY:-ubi}"
+                docker build -t %REGISTRY%/backend:${'$'}IMAGE_TAG -f backend/Dockerfile.${'$'}FAMILY ./backend
+                docker build -t %REGISTRY%/frontend:${'$'}IMAGE_TAG -f frontend/Dockerfile.${'$'}FAMILY ./frontend
+                docker build -t %REGISTRY%/planning-agent:${'$'}IMAGE_TAG -f planning-agent/Dockerfile.${'$'}FAMILY .
+                docker build -t %REGISTRY%/sub-agent:${'$'}IMAGE_TAG -f sub-agent/Dockerfile.${'$'}FAMILY .
             """.trimIndent()
         }
     }
 
     params {
         password("REGISTRY", "credentialsJSON:artifactory-docker-registry")
+        text("BASE_IMAGE_FAMILY", "ubi", display = ParameterDisplay.PROMPT,
+            description = "Base image family: 'ubi' or 'wolfi'")
     }
 })
 

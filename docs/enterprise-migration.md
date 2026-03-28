@@ -66,9 +66,10 @@
 | Frontend OIDC client | JWT middleware | `oidc-client-ts`, authorization code + PKCE flow, token storage in localStorage, silent refresh, `AuthProvider` context, role-gated UI |
 | Audit logging middleware | Auth + DB | Log all mutations with user, action, resource |
 | WebSocket auth | JWT middleware | Validate JWT from `?token=` query param on upgrade |
+| Replace LGTM comment detection with PR approval detection | Auth + VCS connectors | `polling.ts` and VCS connectors: use PR review/approval API instead of scanning comments for "LGTM". Both GitHub (`GET /pulls/{id}/reviews`) and Bitbucket Server (`GET /pull-requests/{id}/participants`) support approval status. Backwards compatible: local mode can retain LGTM as fallback. |
 | Tests for auth + RBAC | All above | Unit tests for JWT verification, role middleware. E2E with Keycloak in Docker |
 
-**Exit criteria:** OIDC login works against a test IdP (Keycloak in Docker). JWT validated on all endpoints. Roles enforced. Local mode works without auth. Audit log populated.
+**Exit criteria:** OIDC login works against a test IdP (Keycloak in Docker). JWT validated on all endpoints. Roles enforced. PR approvals detected instead of LGTM comments. Local mode works without auth. Audit log populated.
 
 ---
 
