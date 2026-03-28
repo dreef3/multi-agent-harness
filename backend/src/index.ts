@@ -1,5 +1,6 @@
 import "./telemetry.js"; // MUST be first — patches Node.js HTTP before any other import
 import express from "express";
+import helmet from "helmet";
 import { createServer } from "http";
 import Dockerode from "dockerode";
 import { config } from "./config.js";
@@ -46,6 +47,19 @@ async function main() {
   startPolling(docker);
 
   const app = express();
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          connectSrc: ["'self'", "ws:", "wss:"],
+          imgSrc: ["'self'", "data:"],
+        },
+      },
+    })
+  );
   app.use(express.json());
   app.use("/api", createRouter(config.dataDir, docker));
 
