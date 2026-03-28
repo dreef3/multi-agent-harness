@@ -44,8 +44,8 @@ describe("createGuardHook", () => {
   test("blocks http (httpie)", () => assert.equal(run("http GET https://example.com").blocked, true));
 
   // ── Extra patterns ────────────────────────────────────────────────────────────
-  test("allows gh pr create when no extra patterns", () =>
-    assert.equal(run("gh pr create --title x").blocked, false));
+  test("blocks gh pr create (blocked in BASE_BLOCKED for sub-agents)", () =>
+    assert.equal(run("gh pr create --title x").blocked, true));
   test("blocks extra pattern when provided", () => {
     const hookWithExtra = createGuardHook([
       [["gh", "pr", "create"], "Use write_planning_document instead."],
@@ -53,6 +53,34 @@ describe("createGuardHook", () => {
     assert.equal(hookWithExtra({ command: "gh pr create --title x", cwd: "/tmp", env: {} })
       .command.includes("Blocked:"), true);
   });
+});
+
+describe("createGuardHook — .harness/ path guard", () => {
+  const hook = createGuardHook();
+
+  function blocked(command) {
+    return hook({ command, cwd: "/tmp", env: {} }).command.includes("exit 1");
+  }
+
+  test("blocks direct .harness/ path in command", () =>
+    assert.equal(blocked("cat .harness/trace.json"), true));
+
+  test("block message contains GUARD", () => {
+    const result = hook({ command: "cat .harness/trace.json", cwd: "/tmp", env: {} });
+    assert.match(result.command, /GUARD/);
+  });
+
+  test("blocks absolute path containing .harness/", () =>
+    assert.equal(blocked("ls /workspace/repo/.harness/logs/"), true));
+
+  test("blocks write to .harness/", () =>
+    assert.equal(blocked("echo foo > .harness/trace.json"), true));
+
+  test("does not block unrelated commands", () =>
+    assert.equal(blocked("ls /workspace/repo/src/"), false));
+
+  test("does not block path with harness in name but not .harness/", () =>
+    assert.equal(blocked("ls harness-data/"), false));
 });
 
 describe("createWebFetchTool (SSRF block)", async () => {

@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import type { Project, PlanTask } from "../models/types.js";
 import { tracer, meter } from "../telemetry.js";
 import { SpanStatusCode } from "@opentelemetry/api";
+import { getOrCreateTrace } from "./traceBuilder.js";
 
 const taskCounter = meter.createCounter("harness.tasks.dispatched", {
   description: "Number of tasks dispatched",
@@ -217,6 +218,7 @@ export class RecoveryService {
           span.setAttribute("task.attempt", localRetryCount + 1);
           const isRetry = localRetryCount > 0;
           updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
+          getOrCreateTrace(project.id, project.name).recordTaskAttempt(task.id, localRetryCount + 1);
           console.log(`[recoveryService] task ${task.id} attempt ${localRetryCount + 1}/${config.subAgentMaxRetries + 1}`);
 
           // On retry, inject a resume note into the task description
@@ -246,6 +248,7 @@ export class RecoveryService {
 
           if (result.success) {
             updateTaskInPlan(project.id, task.id, { status: "completed" });
+            getOrCreateTrace(project.id, project.name).recordTaskComplete(task.id);
             console.log(`[recoveryService] task ${task.id} completed successfully`);
             taskCounter.add(1, { "project.id": project.id, status: "success" });
             span.setAttributes({ "task.status": "success" });
@@ -256,6 +259,7 @@ export class RecoveryService {
           lastError = result.error;
           localRetryCount++;
           updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
+          getOrCreateTrace(project.id, project.name).recordTaskFailed(task.id);
           console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
         }
 
@@ -266,6 +270,7 @@ export class RecoveryService {
           retryCount: localRetryCount,
           errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
         });
+        getOrCreateTrace(project.id, project.name).recordTaskFailed(task.id);
         taskCounter.add(1, { "project.id": project.id, status: "failed" });
         span.setAttributes({ "task.status": "failed" });
         span.setStatus({ code: SpanStatusCode.ERROR, message: lastError });
