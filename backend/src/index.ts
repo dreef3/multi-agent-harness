@@ -61,7 +61,13 @@ async function main() {
       },
     })
   );
-  app.use(express.json());
+  app.use(
+    express.json({
+      verify: (_req, _res, buf) => {
+        (_req as import("express").Request & { rawBody: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use("/api", createRouter(config.dataDir, docker));
 
   const server = createServer(app);
