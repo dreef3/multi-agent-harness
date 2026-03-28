@@ -97,6 +97,19 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
       Memory: config.subAgentMemoryBytes,
       NanoCpus: config.subAgentCpuCount * 1_000_000_000,
       NetworkMode: config.subAgentNetwork,
+      // Security hardening: drop all Linux capabilities and prevent setuid escalation.
+      // git operations require no special capabilities so this is safe for the workload.
+      CapDrop: ["ALL"],
+      SecurityOpt: ["no-new-privileges:true"],
+      // Opt-in read-only root filesystem (SUB_AGENT_READONLY_ROOTFS=true).
+      // When enabled, /tmp and /workspace are mounted as tmpfs for writable scratch space.
+      ...(config.subAgentReadOnlyRootfs ? {
+        ReadonlyRootfs: true,
+        Tmpfs: {
+          "/tmp": "rw,noexec,nosuid,size=100m",
+          "/workspace": "rw,noexec,nosuid,size=2g",
+        },
+      } : {}),
     },
     Labels: { "harness.session-id": opts.sessionId },
   });

@@ -50,4 +50,53 @@ describe("containerManager", () => {
     const mockDocker = { getContainer: vi.fn().mockReturnValue({ inspect: vi.fn().mockRejectedValue(new Error("No such container")) }) };
     expect(await getContainerStatus(mockDocker as never, "abc")).toBe("unknown");
   });
+
+  it("includes CapDrop ALL and SecurityOpt no-new-privileges in HostConfig", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-secure" });
+    await createSubAgentContainer({ createContainer: mockCreate } as never, {
+      sessionId: "sess-sec",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/proj-1/task-sec",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig as {
+      CapDrop: string[];
+      SecurityOpt: string[];
+    };
+    expect(hostConfig.CapDrop).toEqual(["ALL"]);
+    expect(hostConfig.SecurityOpt).toContain("no-new-privileges:true");
+  });
+
+  it("does not set ReadonlyRootfs when SUB_AGENT_READONLY_ROOTFS is not set", async () => {
+    delete process.env.SUB_AGENT_READONLY_ROOTFS;
+    vi.resetModules();
+    const { createSubAgentContainer: createFresh } = await import("../orchestrator/containerManager.js");
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-rw" });
+    await createFresh({ createContainer: mockCreate } as never, {
+      sessionId: "sess-rw",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/task-rw",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig;
+    expect(hostConfig.ReadonlyRootfs).toBeUndefined();
+    expect(hostConfig.Tmpfs).toBeUndefined();
+  });
+
+  it("sets ReadonlyRootfs and Tmpfs when SUB_AGENT_READONLY_ROOTFS=true", async () => {
+    process.env.SUB_AGENT_READONLY_ROOTFS = "true";
+    vi.resetModules();
+    const { createSubAgentContainer: createFresh } = await import("../orchestrator/containerManager.js");
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-ro" });
+    await createFresh({ createContainer: mockCreate } as never, {
+      sessionId: "sess-ro",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/task-ro",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig;
+    expect(hostConfig.ReadonlyRootfs).toBe(true);
+    expect(hostConfig.Tmpfs).toMatchObject({
+      "/tmp": expect.stringContaining("rw"),
+      "/workspace": expect.stringContaining("rw"),
+    });
+    delete process.env.SUB_AGENT_READONLY_ROOTFS;
+  });
 });
