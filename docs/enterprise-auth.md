@@ -8,7 +8,7 @@ This is acceptable for single-developer local use but blocks any shared or corpo
 
 ## Target State
 
-Shared workspace visible to all 3 squads (Tech Lead, Business Analysts, QA, Developers). OIDC-based authentication for corporate deployments. No auth required for local mode. Role-based access control governs who can perform which actions.
+Shared workspace visible to all squads (Tech Lead, Business Analysts, QA, Developers across 3 squads). OIDC-based authentication for corporate deployments. No auth required for local mode. Role-based access control governs who can perform which actions.
 
 ---
 
@@ -30,10 +30,10 @@ All subsequent API/WS requests carry session cookie
 
 | Component | Change |
 |-----------|--------|
-| Backend | Add `passport` + `passport-openidconnect` (or lighter `openid-client`). Session store in SQLite (new `sessions` table) or Redis if available. |
+| Backend | Add `passport` + `passport-openidconnect` (or lighter `openid-client`). Session store selected via `SESSION_STORE=sqlite|redis` env var (default: `sqlite`, using new `sessions` table). Redis recommended for multi-replica deployments. |
 | Frontend | Add auth context provider. Redirect to `/api/auth/login` when 401 received. Store user display name/email in React state from `/api/auth/me`. |
 | WebSocket | Validate session cookie on upgrade request. Reject with 401 if invalid. |
-| nginx | Pass `Cookie` header through to backend (already does via `proxy_set_header`). |
+| nginx | Cookies pass through to backend by default (standard HTTP header forwarding). No additional `proxy_set_header` needed. |
 
 **Configuration (env vars):**
 ```
@@ -42,8 +42,10 @@ OIDC_ISSUER_URL=https://idp.corp.example.com/realms/harness
 OIDC_CLIENT_ID=multi-agent-harness
 OIDC_CLIENT_SECRET=<secret>
 OIDC_REDIRECT_URI=https://harness.corp.example.com/api/auth/callback
+SESSION_STORE=sqlite|redis       # Session backend (default: sqlite)
 SESSION_SECRET=<random>
-SESSION_TTL_HOURS=8              # Work-day session length
+SESSION_TTL_HOURS=8              # Absolute expiry from login time (not sliding window)
+REDIS_URL=redis://localhost:6379 # Only required when SESSION_STORE=redis
 ```
 
 ### Local Mode (No Auth)
@@ -79,7 +81,7 @@ Four roles mapped to the team structure:
 | `reviewer` | Approve specs/plans (LGTM), review PRs, view all projects | Tech Lead, QA, Senior Devs |
 | `viewer` | Read-only access to projects, plans, execution status | Business Analysts, Stakeholders |
 
-Roles are **not mutually exclusive** — a Tech Lead would have `admin` + `reviewer`. A developer would have `operator` + `reviewer`.
+Roles are **not mutually exclusive** — a Tech Lead would have `admin` + `reviewer`. A developer would have `operator` + `reviewer`. When a user holds multiple roles, permissions are the **union** (any role granting access is sufficient).
 
 ### Permission Matrix
 
@@ -90,16 +92,18 @@ Roles are **not mutually exclusive** — a Tech Lead would have `admin` + `revie
 | Delete project | Y | N | N | N |
 | Configure repositories | Y | Y | N | N |
 | Send chat messages (prompt agent) | Y | Y | N | N |
-| Approve spec/plan (LGTM) | Y | N | Y | N |
+| Approve spec/plan (LGTM on PR) | Y | N | Y | N |
 | Retry failed project | Y | Y | N | N |
 | Cancel project | Y | Y | N | N |
-| View system settings | Y | Y | Y | Y |
+| View system settings (provider, model config — no secrets) | Y | Y | Y | Y |
 | Modify system settings (provider, model) | Y | N | N | N |
 | Manage users/roles | Y | N | N | N |
 
+**Ownership override**: The creator of a project (`createdBy`) always has `operator`-level access to their own project, regardless of their assigned roles. This allows a user with only `viewer` role to still see projects they created.
+
 ### Implementation
 
-**Role source**: OIDC claims. The IdP includes a `roles` or `groups` claim in the ID token. A mapping configuration maps IdP groups to harness roles:
+**Role source**: OIDC claims. The IdP includes a `roles` or `groups` claim in the ID token. A mapping configuration maps IdP groups to harness roles. Roles are **refreshed on each login** — the `users` table caches the last-known roles for display/audit purposes, but the session's active roles are always derived from the most recent OIDC token. There is no in-app role assignment; roles are managed exclusively in the IdP. If an admin needs to change a user's roles, they update the IdP group membership:
 
 ```
 OIDC_ROLE_CLAIM=groups                              # or "roles", "realm_access.roles"
@@ -108,6 +112,8 @@ OIDC_ROLE_MAP_OPERATOR=harness-operators
 OIDC_ROLE_MAP_REVIEWER=harness-reviewers
 OIDC_ROLE_MAP_VIEWER=harness-viewers
 ```
+
+**Note on LGTM approval**: The `reviewer` role grants spec/plan approval, which is performed by posting a "LGTM" comment on the planning PR in the VCS provider (GitHub/Bitbucket). This is detected by the polling loop via the VCS connector — it does not use the WebSocket chat channel. Reviewers do not need chat access to approve.
 
 **Middleware**: A `requireRole(...roles)` Express middleware checks the session's roles before allowing the request. Applied per-route in `routes.ts`.
 
@@ -123,11 +129,11 @@ All users see all projects. No workspace isolation. This matches the team's oper
 
 ### Project Ownership
 
-Each project has a `createdBy` user. The creator can always operate their own project. Other users need appropriate roles. This enables:
-- BA creates a project with requirements → `viewer` role sufficient to see it
+Each project has a `createdBy` user. The creator always has `operator`-level access to their own project (ownership override). Other users need appropriate roles. Typical flow:
+- Developer (`operator`) creates a project with requirements from the BA
 - Developer operates the agent → `operator` role
-- TL/QA reviews and approves → `reviewer` role
-- Any squad member can see any project's status → `viewer`
+- TL/QA reviews and approves via PR comments → `reviewer` role
+- BA and any squad member can see any project's status → `viewer` role
 
 ### Audit Trail
 
@@ -158,7 +164,7 @@ This provides the traceability corporate security teams require.
 
 | Table | Change |
 |-------|--------|
-| `users` | **New** — OIDC subject, email, display name, roles (JSON), last login |
+| `users` | **New** — `id` is the OIDC `sub` claim (stable across sessions). Email, display name, roles (JSON, cached from last login), last login. |
 | `projects` | Add `created_by TEXT REFERENCES users(id)` |
 | `agent_sessions` | Add `triggered_by TEXT REFERENCES users(id)` |
 | `audit_log` | **New** — full mutation audit trail |

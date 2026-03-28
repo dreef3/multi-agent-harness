@@ -95,10 +95,11 @@ Closest to current setup. Docker Compose on a RHEL 8 VM with Podman or Docker CE
 - Systemd unit file for service management
 - Log rotation via `journald` or Docker log driver → `json-file` with max-size
 
-**Podman compatibility note:** Podman is the default on RHEL 8. The docker-socket-proxy pattern doesn't work with Podman. Options:
-1. Install Docker CE on RHEL 8 (supported, requires RHEL subscription for container-tools)
-2. Switch to Podman socket (`/run/podman/podman.sock`) — tecnativa proxy not needed, Podman API is compatible with Docker API
-3. Add `CONTAINER_RUNTIME=podman|docker` config switch
+**Podman compatibility note:** Podman is the default on RHEL 8. The docker-socket-proxy pattern doesn't work with Podman.
+
+**Recommended approach:** Use the Podman socket (`/run/podman/podman.sock`). Podman's REST API is Docker-compatible, so Dockerode connects without code changes. The tecnativa docker-socket-proxy is not needed — Podman's socket is already rootless. Configure via `DOCKER_HOST=unix:///run/podman/podman.sock` in the backend environment.
+
+Alternative: Install Docker CE on RHEL 8 (requires RHEL subscription for `container-tools` module), which preserves the exact same setup as local development.
 
 ---
 
@@ -111,7 +112,9 @@ Closest to current setup. Docker Compose on a RHEL 8 VM with Podman or Docker CE
 | backend | `node:24-slim` (Debian) | `registry.access.redhat.com/ubi8/nodejs-22` | `cgr.dev/chainguard/node:latest` |
 | frontend | `nginx:alpine` → builder: `oven/bun:1` | UBI8 nginx: `registry.access.redhat.com/ubi8/nginx-124` | `cgr.dev/chainguard/nginx:latest` |
 | planning-agent | `node:22-slim` (Debian) | `ubi8/nodejs-22` | `cgr.dev/chainguard/node:latest` |
-| sub-agent | `oven/bun:1` (Debian) | `ubi8/nodejs-22` + bun installed | `cgr.dev/chainguard/node:latest` + bun |
+| sub-agent | `oven/bun:1` (Debian) | `ubi8/nodejs-22` + bun installed (see note below) | `cgr.dev/chainguard/node:latest` + bun |
+
+**Sub-agent bun compatibility note:** The sub-agent uses bun as its primary runtime (`runner.mjs` runs under bun). On UBI/Wolfi, bun must be installed as an additional binary (download from `bun.sh` releases). The runner is compatible with Node.js as well, but this configuration must be validated — the multi-stage Dockerfile should copy the bun binary and set it as the entrypoint.
 
 **Approach:** Use build args in Dockerfiles to select base image at build time:
 
@@ -214,8 +217,8 @@ NO_PROXY=backend,docker-proxy,localhost,127.0.0.1,.corp.example.com
 
 **Propagation:**
 - Backend: Set in Helm values / Docker Compose env
-- Planning agent containers: Inherited from backend config, injected via `containerManager.ts` env vars
-- Sub-agent containers: Same — injected at container creation
+- Planning agent containers: Inherited from backend config, injected via `ContainerRuntime` at agent creation
+- Sub-agent containers: Same — injected at container/pod creation
 - `NO_PROXY` must include internal service names (`backend`, `docker-proxy`) to avoid routing internal traffic through the proxy
 
 **Config addition to `config.ts`:**
@@ -232,7 +235,7 @@ These are forwarded to agent containers alongside existing `PROVIDER_ENV_VARS`.
 
 ## 4. Container Runtime Abstraction
 
-The backend currently uses `Dockerode` directly for all container operations. To support Kubernetes, introduce a `ContainerRuntime` interface:
+The backend currently uses `Dockerode` directly via `backend/src/orchestrator/containerManager.ts`. To support Kubernetes, refactor this module into a `ContainerRuntime` interface with two implementations. The existing `containerManager.ts` functions become the `DockerContainerRuntime` implementation:
 
 ```typescript
 interface ContainerRuntime {
@@ -242,7 +245,7 @@ interface ContainerRuntime {
   removeAgent(id: string): Promise<void>;
   getStatus(id: string): Promise<"running" | "exited" | "stopped" | "unknown">;
   watchExit(id: string, onExit: (code: number) => void): Promise<void>;
-  streamLogs(id: string, label: string): void;
+  streamLogs(id: string, label: string): Promise<void>;
 }
 ```
 
@@ -257,11 +260,13 @@ const runtime = process.env.CONTAINER_RUNTIME === "kubernetes"
   : new DockerContainerRuntime(docker);
 ```
 
-The planning agent's TCP RPC pattern works in Kubernetes — the backend connects to the Pod's IP on port 3333 (within the namespace network). Service discovery: the Job creates a headless Service or the backend reads the Pod IP after creation.
+The planning agent's TCP RPC pattern works in Kubernetes — the backend connects to the Pod's IP on port 3333 (within the namespace network). **Service discovery**: The backend reads the Pod IP from the Kubernetes API after the Job's pod enters `Running` state. A headless Service is not needed — the planning agent pod is short-lived and 1:1 with the backend connection. The Pod IP approach is simpler and avoids managing Service lifecycle alongside Job lifecycle.
 
 ---
 
 ## 5. Persistent Storage
+
+The `harness-pi-auth` volume stores OAuth tokens (e.g., GitHub Copilot) shared between the backend, planning agent pods, and sub-agent pods. All three mount it at `/pi-agent`. This requires ReadWriteMany in Kubernetes (multiple pods read/write concurrently).
 
 | Deployment | SQLite DB | Pi-agent auth volume |
 |------------|-----------|---------------------|
@@ -305,7 +310,7 @@ spec:
         - port: 3000
     - to:
         - ipBlock:
-            cidr: <proxy-ip>/32
+            cidr: 10.0.1.50/32  # Corporate proxy IP — set via Helm values: networkPolicy.proxyIpCidr
       ports:
         - port: 8080
 ```

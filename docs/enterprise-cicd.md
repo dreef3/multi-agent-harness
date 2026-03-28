@@ -101,7 +101,7 @@ Current CI lives here. Extended with:
 
 **Image registries for GitHub mode:**
 - Primary: `ghcr.io/dreef3/multi-agent-harness/*` (GitHub Container Registry)
-- Optional: Push to Artifactory too (for corporate environments that source from GitHub but deploy via Artifactory)
+- Optional: Push to Artifactory too, enabled via `PUSH_TO_ARTIFACTORY=true` repository secret in GitHub Actions (for corporate environments that source from GitHub but deploy via Artifactory)
 
 ### Bitbucket Server + Jenkins
 
@@ -114,6 +114,7 @@ pipeline {
     environment {
         REGISTRY = credentials('artifactory-docker-registry')
         NPM_TOKEN = credentials('artifactory-npm-token')
+        IMAGE_TAG = "sha-${env.GIT_COMMIT.take(12)}"
     }
 
     stages {
@@ -143,33 +144,33 @@ pipeline {
 
         stage('Build Images') {
             steps {
-                sh "docker build -t ${REGISTRY}/backend:${BUILD_TAG} ./backend"
-                sh "docker build -t ${REGISTRY}/frontend:${BUILD_TAG} ./frontend"
-                sh "docker build -t ${REGISTRY}/planning-agent:${BUILD_TAG} -f planning-agent/Dockerfile ."
-                sh "docker build -t ${REGISTRY}/sub-agent:${BUILD_TAG} -f sub-agent/Dockerfile ."
+                sh "docker build -t ${REGISTRY}/backend:${IMAGE_TAG} ./backend"
+                sh "docker build -t ${REGISTRY}/frontend:${IMAGE_TAG} ./frontend"
+                sh "docker build -t ${REGISTRY}/planning-agent:${IMAGE_TAG} -f planning-agent/Dockerfile ."
+                sh "docker build -t ${REGISTRY}/sub-agent:${IMAGE_TAG} -f sub-agent/Dockerfile ."
             }
         }
 
         stage('Push Images') {
             when { branch 'main' }
             steps {
-                sh "docker push ${REGISTRY}/backend:${BUILD_TAG}"
-                sh "docker push ${REGISTRY}/frontend:${BUILD_TAG}"
-                sh "docker push ${REGISTRY}/planning-agent:${BUILD_TAG}"
-                sh "docker push ${REGISTRY}/sub-agent:${BUILD_TAG}"
+                sh "docker push ${REGISTRY}/backend:${IMAGE_TAG}"
+                sh "docker push ${REGISTRY}/frontend:${IMAGE_TAG}"
+                sh "docker push ${REGISTRY}/planning-agent:${IMAGE_TAG}"
+                sh "docker push ${REGISTRY}/sub-agent:${IMAGE_TAG}"
             }
         }
 
         stage('E2E Tests') {
             when { branch 'main' }
             steps {
-                sh 'docker compose up -d'
+                sh "IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.yml -f docker-compose.corp.yaml up -d"
                 dir('e2e-tests') {
                     sh 'bunx playwright test'
                 }
             }
             post {
-                always { sh 'docker compose down' }
+                always { sh 'docker compose -f docker-compose.yml -f docker-compose.corp.yaml down' }
             }
         }
     }
@@ -180,9 +181,77 @@ pipeline {
 
 **`.teamcity/settings.kts`** (Kotlin DSL):
 
-TeamCity build configuration with the same stages as Jenkins but in TeamCity's native format. Build steps reference shared templates for Docker build, test, and push.
+```kotlin
+import jetbrains.buildServer.configs.kotlin.v2019_2.*
+import jetbrains.buildServer.configs.kotlin.v2019_2.buildSteps.script
+import jetbrains.buildServer.configs.kotlin.v2019_2.triggers.vcs
 
-Key difference: TeamCity uses build configurations and VCS triggers rather than a Jenkinsfile. The `.teamcity/` directory contains Kotlin DSL that TeamCity syncs from the repo.
+version = "2024.03"
+
+project {
+    buildType(TestAndBuild)
+    buildType(PushImages)
+}
+
+object TestAndBuild : BuildType({
+    name = "Test & Build"
+    vcs { root(DslContext.settingsRoot) }
+    triggers { vcs {} }
+
+    steps {
+        script {
+            name = "Backend Tests"
+            scriptContent = """
+                cd backend && bun install && bunx tsc --noEmit && bun run test
+            """.trimIndent()
+        }
+        script {
+            name = "Frontend Tests"
+            scriptContent = """
+                cd frontend && bun install && bunx tsc --noEmit && bun run test && bun run build
+            """.trimIndent()
+        }
+        script {
+            name = "Build Images"
+            scriptContent = """
+                IMAGE_TAG="sha-${'$'}{BUILD_VCS_NUMBER:0:12}"
+                docker build -t %REGISTRY%/backend:${'$'}IMAGE_TAG ./backend
+                docker build -t %REGISTRY%/frontend:${'$'}IMAGE_TAG ./frontend
+                docker build -t %REGISTRY%/planning-agent:${'$'}IMAGE_TAG -f planning-agent/Dockerfile .
+                docker build -t %REGISTRY%/sub-agent:${'$'}IMAGE_TAG -f sub-agent/Dockerfile .
+            """.trimIndent()
+        }
+    }
+
+    params {
+        password("REGISTRY", "credentialsJSON:artifactory-docker-registry")
+    }
+})
+
+object PushImages : BuildType({
+    name = "Push Images"
+    vcs { root(DslContext.settingsRoot) }
+
+    dependencies {
+        snapshot(TestAndBuild) { onDependencyFailure = FailureAction.FAIL_TO_START }
+    }
+
+    steps {
+        script {
+            name = "Push to Artifactory"
+            scriptContent = """
+                IMAGE_TAG="sha-${'$'}{BUILD_VCS_NUMBER:0:12}"
+                docker push %REGISTRY%/backend:${'$'}IMAGE_TAG
+                docker push %REGISTRY%/frontend:${'$'}IMAGE_TAG
+                docker push %REGISTRY%/planning-agent:${'$'}IMAGE_TAG
+                docker push %REGISTRY%/sub-agent:${'$'}IMAGE_TAG
+            """.trimIndent()
+        }
+    }
+})
+```
+
+Key difference from Jenkins: TeamCity uses build configurations with snapshot dependencies (not pipeline stages). The `.teamcity/` directory contains Kotlin DSL that TeamCity syncs from the repo via VCS root.
 
 ---
 
@@ -190,7 +259,7 @@ Key difference: TeamCity uses build configurations and VCS triggers rather than 
 
 ### Build Matrix
 
-Every CI run builds and tests against all configured base image targets:
+Every CI run builds against the configured base image targets. Each deployment chooses **one** base image family (Debian for local, UBI8 or Wolfi for corporate). GitHub Actions builds all three for validation; corporate CI (Jenkins/TeamCity) builds only the selected corporate base:
 
 ```
 ┌─────────────┐    ┌──────────────┐    ┌──────────────┐
@@ -240,7 +309,7 @@ MAJOR.MINOR.PATCH
 
 ### Version Source
 
-Single source of truth: `package.json` at repo root. The version field is read by:
+Single source of truth: `package.json` at repo root. All four images share the same version (**lockstep versioning** — the repo is deployed as a unit, not as independent services). The version field is read by:
 - Docker image tags
 - Helm chart `appVersion`
 - Backend `/api/health` endpoint (for deployment verification)
@@ -248,7 +317,7 @@ Single source of truth: `package.json` at repo root. The version field is read b
 
 ### Changelog
 
-Conventional commits (`feat:`, `fix:`, `chore:`) parsed by `conventional-changelog` or `release-please` to auto-generate `CHANGELOG.md`.
+Conventional commits (`feat:`, `fix:`, `chore:`) parsed by `release-please` to auto-generate `CHANGELOG.md`. `release-please` is preferred over `conventional-changelog` because it also automates version bumps and creates release PRs, reducing manual steps in the release flow.
 
 ---
 

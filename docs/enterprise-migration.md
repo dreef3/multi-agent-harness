@@ -9,7 +9,7 @@
 | **Authentication (OIDC)** | None | Critical | Medium — standard passport-openidconnect integration |
 | **RBAC (4 roles)** | None | Critical | Medium — middleware + DB schema + frontend gating |
 | **Audit trail** | None | High | Low — new table + middleware logging |
-| **Multi-user WebSocket** | Works (broadcasts to all project connections) | None | Already multi-client per project |
+| **Multi-user WebSocket** | Works (broadcasts to all project connections) | Low | Auth validation on WS upgrade needed (see Phase 1) |
 | **PostgreSQL** | SQLite | High | Medium — query migration, connection pooling |
 | **Kubernetes runtime** | Docker only (Dockerode) | High | High — new `ContainerRuntime` abstraction + K8s client |
 | **Helm chart** | None | High | Medium — templates, values, RBAC, secrets |
@@ -21,28 +21,33 @@
 | **Bitbucket Server VCS** | Connector exists, under-tested | Low | Low — additional E2E coverage |
 | **SBOM / compliance artifacts** | None | Low | Low — syft in CI pipeline |
 | **Versioning / changelog** | No versioning | Low | Low — conventional-commits + release workflow |
+| **Agent traceability** | Raw `.harness/logs/` dumps in repos, no requirement-to-code chain | High | Medium — TraceBuilder, guard hooks, remove legacy commits (see `enterprise-traceability.md`) |
 | **Frontend tests in CI** | Not run | Low | Trivial — add `bun run test` step |
 
 ---
 
 ## Migration Phases
 
-### Phase 0: Foundation Hardening (2-3 weeks)
+### Phase 0: Foundation Hardening & Traceability (3-4 weeks)
 
 **Goal:** Fix issues from the audit that are prerequisites for enterprise work. No new features — just quality and correctness.
 
 | Task | Files | Rationale |
 |------|-------|-----------|
-| Remove dead code (5 items from audit) | `taskDispatcher.ts`, `strategies.ts`, `websocket.ts` | Clean codebase before adding enterprise features |
-| Fix dynamic import in hot path | `taskDispatcher.ts:310` | Performance/correctness |
+| Remove dead code (5 items: `activeTasks` Map, `getActiveTaskCount()`, `DebounceStrategy` type, `defaultDebounceConfig`, `preInitAgent()` — see `audit-2026-03-28.md` §3) | `taskDispatcher.ts`, `strategies.ts`, `websocket.ts` | Clean codebase before adding enterprise features |
+| Fix dynamic import in hot path (`await import("../store/agents.js")` inside polling loop) | `taskDispatcher.ts` | Performance/correctness |
 | Add frontend tests to CI | `.github/workflows/ci.yml` | Quality gate before further work |
 | Add input validation with TypeBox | `api/projects.ts`, `api/repositories.ts` | Prerequisite for multi-user (untrusted input) |
 | Add graceful shutdown | `index.ts` | Required for Kubernetes (SIGTERM on pod eviction) |
-| Pin pi-coding-agent to exact version | All `package.json` files | Stability for enterprise |
+| Pin pi-coding-agent to current version (`^0.61.1` → exact) | All `package.json` files | Stability for enterprise |
 | Webhook raw body signature fix | `webhooks.ts` | Security correctness |
 | Add `helmet` security headers | `index.ts`, `nginx.conf` | Security baseline |
+| Add `.harness/` guard hook to both agent runners | `planning-agent/runner.mjs`, `sub-agent/runner.mjs` | Tamper protection — agents cannot read/modify audit trail |
+| Remove `.harness/logs/` commit logic from agents | `sub-agent/runner.mjs`, `planningTool.ts`, `planningAgentManager.ts` | Replace raw dumps with structured trace (see `enterprise-traceability.md`) |
+| Add `TraceBuilder` module + wire into lifecycle events | New: `backend/src/orchestrator/traceBuilder.ts`, wire into `taskDispatcher.ts`, `polling.ts` | Structured requirement-to-code traceability |
+| Add requirements extraction to spec handler | `backend/src/agents/planningTool.ts` | Populate requirements array for trace file |
 
-**Exit criteria:** All existing tests pass. CI runs backend + frontend tests. No dead code. Graceful shutdown works.
+**Exit criteria:** All existing tests pass. CI runs backend + frontend tests. No dead code. Graceful shutdown works. Agents blocked from `.harness/`. `trace.json` committed on task completion with correct schema.
 
 ---
 
@@ -73,8 +78,8 @@
 | Task | Details |
 |------|---------|
 | Add PostgreSQL support alongside SQLite | `better-sqlite3` → `pg` (node-postgres) with connection pooling |
-| Database adapter interface | Abstract query interface supporting both SQLite (local) and PostgreSQL (enterprise) |
-| Migrate all store modules | `store/db.ts`, `store/projects.ts`, `store/agents.ts`, etc. — parameterized queries |
+| Database adapter interface | Thin query wrapper abstracting `better-sqlite3` sync API vs `pg` async API. Each store module's functions are updated to call the adapter instead of SQLite directly. |
+| Migrate all store modules (including Phase 1 tables) | `store/db.ts`, `store/projects.ts`, `store/agents.ts`, `users`, `sessions`, `audit_log` — parameterized queries |
 | Schema migration system | Versioned migrations (1-N) with `schema_migrations` table tracking |
 | PostgreSQL in Docker Compose | Add `postgres` service to `docker-compose.yml` (optional, behind profile) |
 | PostgreSQL in Helm chart | StatefulSet or external DB reference in `values.yaml` |
@@ -144,7 +149,7 @@ DATABASE_URL=postgresql://user:pass@host:5432/harness
 | Create `Jenkinsfile` | Parallel test, build matrix (Debian/UBI/Wolfi), push to Artifactory |
 | Create TeamCity `.teamcity/settings.kts` | Equivalent build configurations in Kotlin DSL |
 | SBOM generation in CI | `syft` scan per image, attach to Artifactory manifest |
-| Versioning automation | `release-please` or manual `npm version` + tag |
+| Versioning automation | `release-please` for automated version bumps and release PRs (see `enterprise-cicd.md` §4) |
 | Branch protection / PR rules | Require CI pass, require review, no force push to main |
 
 **Exit criteria:** A git tag `v1.2.3` triggers automated release on both GitHub Actions and Jenkins/TeamCity. Images, Helm chart, and SBOM published to Artifactory. Changelog auto-generated.
@@ -189,13 +194,15 @@ Corporate features are purely additive, activated by configuration.
 
 | Phase | Duration | Cumulative |
 |-------|----------|------------|
-| Phase 0: Foundation Hardening | 2-3 weeks | 2-3 weeks |
-| Phase 1: Authentication & RBAC | 3-4 weeks | 5-7 weeks |
-| Phase 2: PostgreSQL Migration | 2-3 weeks | 7-10 weeks |
-| Phase 3: Container Runtime Abstraction | 3-4 weeks | 10-14 weeks |
-| Phase 4: Deployment Packaging | 2-3 weeks | 12-17 weeks |
-| Phase 5: CI/CD Pipelines | 2 weeks | 14-19 weeks |
+| Phase 0: Foundation Hardening & Traceability | 3-4 weeks | 3-4 weeks |
+| Phase 1: Authentication & RBAC | 3-4 weeks | 6-8 weeks |
+| Phase 2: PostgreSQL Migration | 2-3 weeks | 8-11 weeks |
+| Phase 3: Container Runtime Abstraction | 3-4 weeks | 11-15 weeks |
+| Phase 4: Deployment Packaging | 2-3 weeks | 13-18 weeks |
+| Phase 5: CI/CD Pipelines | 2 weeks | 15-20 weeks |
 
-**Total estimated: 14-19 weeks** (3.5-5 months) with a single developer. Parallelizable: Phases 4 and 5 can overlap with Phase 3. Phase 2 can start alongside Phase 1 (different code areas).
+**Total estimated: 15-20 weeks** (~4-5 months) with a single developer. Parallelizable: Phases 4 and 5 can overlap with Phase 3. Phase 2 can start alongside Phase 1 (different code areas).
 
-With 2-3 developers working in parallel on independent phases: **~10-12 weeks** (2.5-3 months).
+With 2-3 developers working in parallel on independent phases: **~10-13 weeks** (~2.5-3 months).
+
+**Note on Podman**: RHEL 8 VM target uses Podman by default. Podman socket compatibility is covered in `enterprise-deployment.md` §1C. No code changes needed — Dockerode connects to Podman's Docker-compatible API via `DOCKER_HOST` env var.
