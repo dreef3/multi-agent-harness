@@ -13,7 +13,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
+import { appendFileSync, existsSync as fsExistsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createGuardHook, createWebFetchTool } from "./tools.mjs";
@@ -241,16 +241,9 @@ try {
   git("add", "-A");
   const diff = execSync("git diff --cached --stat").toString().trim();
   if (!diff) {
-    const note = aiSucceeded
-      ? "AI agent completed but made no file changes."
-      : "AI agent unavailable; placeholder created.";
-    const fallbackLogDir = `.harness/logs/sub-agents/${TASK_ID}`;
-    mkdirSync(fallbackLogDir, { recursive: true });
-    writeFileSync(
-      `${fallbackLogDir}/task-output.md`,
-      `# Task Output\n\nTask: ${TASK_DESCRIPTION}\n\nNote: ${note}\nCompleted at: ${new Date().toISOString()}\n`
-    );
-    git("add", "-A");
+    // Legacy log commits removed — structured tracing handled by backend TraceBuilder.
+    // No file changes and no fallback log needed; exitCode remains aiSucceeded ? 0 : 1.
+    console.log("[sub-agent] No file changes to commit.");
   }
   const finalDiff = execSync("git diff --cached --stat").toString().trim();
   if (finalDiff) {
@@ -265,29 +258,7 @@ try {
   exitCode = 1;
 }
 
-// ── Commit session log ────────────────────────────────────────────────────────
-try {
-  const sessionJsonl = join(sessionDir, "session.jsonl");
-  const logDir = `.harness/logs/sub-agents/${TASK_ID}`;
-  const logDest = `${logDir}/session.jsonl`;
-
-  if (fsExistsSync(sessionJsonl)) {
-    mkdirSync(logDir, { recursive: true });
-    copyFileSync(sessionJsonl, logDest);
-    git("add", logDest);
-    const logDiff = execSync("git diff --cached --stat").toString().trim();
-    if (logDiff) {
-      git("commit", "-m", `chore: add agent log for task ${TASK_ID}`);
-      execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
-      console.log("[sub-agent] Session log committed for task:", TASK_ID);
-    }
-  } else {
-    console.warn("[sub-agent] No session.jsonl found at:", sessionJsonl);
-  }
-} catch (logErr) {
-  // Best-effort — do not change exit code
-  console.warn("[sub-agent] Failed to commit session log:", logErr.message);
-}
+// Legacy log commits removed — structured tracing handled by backend TraceBuilder.
 
 console.log("[sub-agent] Done, exit code:", exitCode);
 process.exit(exitCode);

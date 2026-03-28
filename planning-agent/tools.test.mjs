@@ -27,6 +27,28 @@ describe("createPlanningAgentGuardHook", () => {
   test("allows normal git push", () => assert.equal(blocked("git push origin main"), false));
 });
 
+describe("createPlanningAgentGuardHook — .harness/ path guard", () => {
+  const hook = createPlanningAgentGuardHook();
+
+  function blocked(command) {
+    return hook({ command, cwd: "/tmp", env: {} }).command.includes("exit 1");
+  }
+
+  test("blocks direct .harness/ path in command", () =>
+    assert.equal(blocked("cat .harness/trace.json"), true));
+
+  test("block message contains GUARD", () => {
+    const result = hook({ command: "ls .harness/", cwd: "/tmp", env: {} });
+    assert.match(result.command, /GUARD/);
+  });
+
+  test("blocks absolute path containing .harness/", () =>
+    assert.equal(blocked("rm -rf /workspace/.harness/logs/"), true));
+
+  test("does not block unrelated commands", () =>
+    assert.equal(blocked("git status"), false));
+});
+
 describe("createWebFetchTool (SSRF block)", async () => {
   const { createWebFetchTool } = await import("./tools.mjs");
   const tool = createWebFetchTool();
