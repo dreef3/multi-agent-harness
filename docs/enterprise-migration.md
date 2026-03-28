@@ -22,6 +22,7 @@
 | **SBOM / compliance artifacts** | None | Low | Low — syft in CI pipeline |
 | **Versioning / changelog** | No versioning | Low | Low — conventional-commits + release workflow |
 | **Agent traceability** | Raw `.harness/logs/` dumps in repos, no requirement-to-code chain | High | Medium — TraceBuilder, guard hooks, remove legacy commits (see `enterprise-traceability.md`) |
+| **Agent CI visibility** | Agents cannot see PR build status or CI logs | High | Medium — VCS connector extensions, agent tools, CI-aware completion (see `enterprise-cicd.md` §6) |
 | **Frontend tests in CI** | Not run | Low | Trivial — add `bun run test` step |
 
 ---
@@ -153,8 +154,12 @@ DATABASE_URL=postgresql://user:pass@host:5432/harness
 | SBOM generation in CI | `syft` scan per image, attach to Artifactory manifest |
 | Versioning automation | `release-please` for automated version bumps and release PRs (see `enterprise-cicd.md` §4) |
 | Branch protection / PR rules | Require CI pass, require review, no force push to main |
+| Add `getBuildStatus`, `getPrApprovals`, `getBuildLogs` to VCS connector | GitHub: check-runs + reviews API. Bitbucket: build-status + participants API. `CiProvider` abstraction for Jenkins/TeamCity log retrieval. |
+| Add `get_build_status` + `get_build_logs` agent tools | Planning agent + sub-agent tools calling new backend API endpoints (`/api/pull-requests/:id/build-status`, `/api/builds/:id/logs`) |
+| CI-aware task completion | `WAIT_FOR_CI` flag in taskDispatcher — poll PR build status after sub-agent exits, mark task failed if CI fails (see `enterprise-cicd.md` §6) |
+| Add CI status to trace.json | TraceBuilder records `ci` block per attempt after build status is resolved |
 
-**Exit criteria:** A git tag `v1.2.3` triggers automated release on both GitHub Actions and Jenkins/TeamCity. Images, Helm chart, and SBOM published to Artifactory. Changelog auto-generated.
+**Exit criteria:** A git tag `v1.2.3` triggers automated release on both GitHub Actions and Jenkins/TeamCity. Images, Helm chart, and SBOM published to Artifactory. Changelog auto-generated. Agents can query PR build status and read CI logs.
 
 ---
 

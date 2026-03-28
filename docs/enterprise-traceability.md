@@ -101,7 +101,15 @@ A single, structured `.harness/trace.json` file per project branch that provides
           "filesChanged": [
             "src/middleware/auth.ts",
             "src/middleware/auth.test.ts"
-          ]
+          ],
+          "ci": {
+            "state": "success",
+            "checks": [
+              { "name": "test-backend", "status": "success" },
+              { "name": "test-frontend", "status": "success" }
+            ],
+            "checkedAt": "2026-03-28T14:45:00Z"
+          }
         }
       ]
     }
@@ -179,6 +187,7 @@ Conflict risk is low: the per-project semaphore (`MAX_IMPL_AGENTS_PER_PROJECT=1`
 | `tasks[].attempts[].toolCalls` | `agent_events` SQLite table (filtered: `type='tool_call'`) |
 | `tasks[].attempts[].commits` | Parsed from container output or git log on branch after task completion |
 | `tasks[].attempts[].filesChanged` | Git diff between branch state before and after task |
+| `tasks[].attempts[].ci` | VCS connector `getBuildStatus()` — polled after task completion (see `enterprise-cicd.md` §6) |
 | `pullRequests` | `pull_requests` SQLite table |
 
 ---

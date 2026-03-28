@@ -348,7 +348,137 @@ syft multi-agent-harness/backend:1.2.3 -o spdx-json > sbom-backend.json
 
 ---
 
-## 6. Local Development Pipeline
+## 6. Agent CI Integration
+
+Agents need visibility into CI build results to make informed decisions: the planning agent must know whether implementation PRs are passing CI, and sub-agents should verify their changes pass before declaring a task complete.
+
+### VCS Connector Extensions
+
+Add three methods to the `VcsConnector` interface:
+
+```typescript
+interface VcsConnector {
+  // ... existing methods ...
+
+  /**
+   * Get the combined CI build status for a commit or PR.
+   * Returns the overall status and individual check runs.
+   */
+  getBuildStatus(repo: Repository, ref: string): Promise<BuildStatus>;
+
+  /**
+   * Get the approval status of a pull request.
+   * Returns list of reviewers and their approval state.
+   */
+  getPrApprovals(repo: Repository, prId: string): Promise<PrApproval[]>;
+
+  /**
+   * Get logs for a specific CI build/check run.
+   * Returns plain text log output.
+   */
+  getBuildLogs(repo: Repository, buildId: string): Promise<string>;
+}
+
+interface BuildStatus {
+  state: "success" | "failure" | "pending" | "unknown";
+  checks: Array<{
+    name: string;           // e.g., "ci / test-backend", "Build Images"
+    status: "success" | "failure" | "pending" | "skipped";
+    url: string;            // Link to CI run
+    buildId: string;        // ID for getBuildLogs()
+    startedAt?: string;
+    completedAt?: string;
+  }>;
+}
+
+interface PrApproval {
+  user: string;             // Email or username
+  state: "approved" | "changes_requested" | "pending";
+  submittedAt: string;
+}
+```
+
+### Provider-Specific Implementations
+
+| Method | GitHub | Bitbucket Server | Jenkins | TeamCity |
+|--------|--------|-------------------|---------|----------|
+| `getBuildStatus` | `GET /repos/{owner}/{repo}/commits/{ref}/check-runs` | `GET /rest/build-status/1.0/commits/{sha}` | Status reported via Bitbucket Build Status API | Status reported via Bitbucket Build Status API |
+| `getPrApprovals` | `GET /repos/{owner}/{repo}/pulls/{id}/reviews` | `GET /rest/api/1.0/projects/{key}/repos/{slug}/pull-requests/{id}/participants` | N/A (VCS-level) | N/A (VCS-level) |
+| `getBuildLogs` | `GET /repos/{owner}/{repo}/actions/runs/{id}/logs` (zip) | Build URL from status → scrape or CI API | `GET /job/{name}/{id}/consoleText` | `GET /app/rest/builds/id:{id}/log` |
+
+**Note on `getBuildLogs`**: GitHub Actions returns logs as a zip archive that must be extracted. Jenkins and TeamCity have direct log endpoints. For Bitbucket Server, the build status includes a URL to the CI system — `getBuildLogs` follows that URL and calls the appropriate CI API (Jenkins or TeamCity). The connector needs a `CiProvider` abstraction for log retrieval:
+
+```typescript
+interface CiProvider {
+  getBuildLogs(buildUrl: string): Promise<string>;
+}
+```
+
+Implementations: `JenkinsCiProvider` (calls `/consoleText`), `TeamCityCiProvider` (calls `/app/rest/builds/...`), `GitHubActionsCiProvider` (downloads and extracts log zip).
+
+### Agent Tools
+
+**Planning agent** — two new tools:
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `get_build_status` | Get CI build status for a PR or commit. Returns pass/fail state and individual check names. | Planning agent checks if implementation PRs are green before considering tasks complete. Can also identify which specific check failed. |
+| `get_build_logs` | Get CI build logs for a specific check run. Returns plain text output (truncated to last 500 lines if large). | Planning agent reads failure details to provide context when retrying a failed task or reporting to the user. |
+
+These call the backend API, which proxies to the VCS connector:
+
+```
+GET /api/pull-requests/:prId/build-status   → connector.getBuildStatus()
+GET /api/builds/:buildId/logs               → connector.getBuildLogs() (via CiProvider)
+GET /api/pull-requests/:prId/approvals      → connector.getPrApprovals()
+```
+
+**Sub-agent** — one new tool:
+
+| Tool | Description | Use Case |
+|------|-------------|----------|
+| `get_build_status` | Same as planning agent — get CI status for the current PR/branch. | Sub-agent pushes changes, waits for CI, and reads results. If CI fails, the sub-agent can read logs and attempt a fix before declaring the task complete. |
+
+### CI-Aware Task Completion
+
+Currently, `taskDispatcher.ts` considers a task complete when the sub-agent container exits with code 0. With CI integration, the completion flow becomes:
+
+```
+Sub-agent exits (code 0)
+  → taskDispatcher checks PR build status via connector
+  → If CI pending: poll every 30s until terminal (success/failure), up to 15 min
+  → If CI success: task marked completed
+  → If CI failure: task marked failed with CI error context
+     → Planning agent can retry with CI failure details
+  → If CI timeout: task marked completed with warning (CI may be slow)
+```
+
+This is optional behavior controlled by `WAIT_FOR_CI=true|false` (default: `false` for local mode, `true` for enterprise). When disabled, task completion works as it does today.
+
+### Trace File Integration
+
+Build status is recorded in `trace.json` (see `enterprise-traceability.md`):
+
+```json
+{
+  "tasks": [{
+    "attempts": [{
+      "ci": {
+        "state": "success",
+        "checks": [
+          { "name": "test-backend", "status": "success" },
+          { "name": "test-frontend", "status": "success" }
+        ],
+        "checkedAt": "2026-03-28T15:00:00Z"
+      }
+    }]
+  }]
+}
+```
+
+---
+
+## 7. Local Development Pipeline
 
 For developers running locally, the existing workflow is preserved:
 
