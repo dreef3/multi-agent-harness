@@ -8,11 +8,12 @@ import { initDb } from "./store/db.js";
 import { ensureSubAgentImage } from "./orchestrator/imageBuilder.js";
 import { createRouter } from "./api/routes.js";
 import { setupWebSocket } from "./api/websocket.js";
-import { startPolling } from "./polling.js";
+import { startPolling, stopPolling } from "./polling.js";
 import { DebounceEngine } from "./debounce/engine.js";
 import { setDebounceEngine } from "./api/webhooks.js";
 import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
 import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
+import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -69,6 +70,10 @@ async function main() {
   server.listen(config.port, () => {
     console.log(`[startup] Backend listening on port ${config.port}`);
   });
+
+  const shutdown = createShutdownHandler({ server, stopPolling, debounceEngine });
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT",  () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => { console.error("[fatal]", err); process.exit(1); });

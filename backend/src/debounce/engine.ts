@@ -101,6 +101,14 @@ export class DebounceEngine {
   }
 
   /**
+   * Shut down the engine: cancel all pending timers and the cleanup interval.
+   * Alias for dispose(); prefer this name in shutdown contexts.
+   */
+  shutdown(): void {
+    this.dispose();
+  }
+
+  /**
    * Dispose of all timers and clean up resources.
    */
   dispose(): void {
