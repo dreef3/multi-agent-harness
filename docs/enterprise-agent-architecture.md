@@ -225,50 +225,19 @@ Workspace Manager:
 
 ---
 
-## Recommendation: Phased Approach
+## Decision: Retain Ephemeral Model with Targeted Optimizations
 
-### Phase 0: Persistent Task Queue (Low Effort, High Value)
+### Design Principles
 
-Replace the in-memory semaphore waiters with a persistent task queue. This is orthogonal to container lifecycle and can be done independently.
+1. **No third-party runtime dependencies**: No Redis, no message broker, no external queue. The backend stays lean — SQLite (or PostgreSQL in enterprise) is the only data store.
+2. **Existing recovery is sufficient**: The `RecoveryService` already handles restart resilience — stale session detection, boot recovery scan, retry with backoff. A 3-squad team (~15-30 people) will not generate load that exceeds the current semaphore model.
+3. **Ephemeral containers are the right model**: Clean isolation, simple debugging, no state contamination. The overhead is worth the correctness guarantees.
 
-**Current state:**
-```typescript
-// recoveryService.ts — waiters array is in-memory, lost on restart
-private waiters: Array<() => void> = [];
-```
+Options B (warm pool) and D (sidecar manager) are **rejected** — they add operational complexity and runtime dependencies that are not justified at the expected scale. Option A (status quo) is retained as the base, with two targeted optimizations from Option C.
 
-**Target state:**
-- Add `status` + `queued_at` + `priority` columns to the existing `plan_tasks` structure (or a new `task_queue` table)
-- Dispatch loop reads from the queue ordered by priority, then FIFO
-- Queue survives backend restart — no recovery polling delay
-- Priority field enables urgent tasks (fix runs for CI failures) to preempt routine implementation tasks
+### Optimization 1: Git Clone Cache (Phase 0)
 
-**Schema:**
-```sql
--- Extend existing task tracking or add:
-ALTER TABLE plan_tasks ADD COLUMN queued_at TEXT;
-ALTER TABLE plan_tasks ADD COLUMN priority INTEGER DEFAULT 0;  -- higher = more urgent
--- Status already exists: pending → queued → executing → completed/failed
-```
-
-**Dispatch loop:**
-```typescript
-async function dispatchLoop() {
-  while (running) {
-    const task = await dequeueNextTask();  // highest priority, then oldest queued_at
-    if (!task) { await sleep(1000); continue; }
-    await acquireGlobalSlot();
-    await acquireProjectSlot(task.projectId);
-    void runTaskAndRelease(task);  // fire-and-forget, releases slots on completion
-  }
-}
-```
-
-**Benefits:** Queue persistence, priority support, cleaner dispatch loop, no `Promise.all()` of potentially unbounded tasks. Zero impact on container lifecycle.
-
-### Phase 1: Git Clone Cache (Low-Medium Effort, High Value)
-
-Implement Option C — cached bare git repo on a shared volume.
+Cache bare git repos on a shared volume. Sub-agents use `git fetch` + `git worktree` instead of full `git clone`.
 
 **Changes:**
 
@@ -303,54 +272,80 @@ Implement Option C — cached bare git repo on a shared volume.
 
 5. **K8s**: ReadWriteMany PVC for the cache volume (same as `harness-pi-auth`). Git's built-in locking handles concurrent access.
 
-6. **Docker Compose**: Named volume, shared across sub-agent containers.
+6. **Docker Compose**: Named volume `harness-repo-cache`, shared across sub-agent containers.
 
-**Expected savings:** 20-55 seconds per task (eliminates full clone, replaces with fetch). For a 10-task project: 3-9 minutes saved.
+**Expected savings:** 20-55 seconds per task after first clone. For a 10-task project: 3-9 minutes saved.
 
-### Phase 2: Framework Pre-Warm (Medium Effort, Medium Value)
+### Optimization 2: Pre-Install SDK Extensions in Image (Phase 0)
 
-Reduce pi-coding-agent initialization time by pre-loading common state into the container image or shared volume.
+The `DefaultResourceLoader` loads pi-coding-agent extensions at startup. Pre-installing them in the Docker image eliminates the download/setup step at runtime.
 
-**Options investigated:**
+**Changes:**
 
-1. **Pre-bake framework init into image**: Run the pi-coding-agent setup during `docker build`, snapshot the initialized state. At runtime, copy from snapshot instead of initializing from scratch.
-   - **Blocker**: Session creation requires runtime parameters (model, tools). Framework init includes dynamic tool registration that can't be pre-computed.
+1. **Sub-agent Dockerfile**: Add extension pre-install step after `npm install`
+   ```dockerfile
+   # Pre-install pi-coding-agent extensions so they're cached in the image layer
+   RUN node -e "const {DefaultResourceLoader} = require('@anthropic/pi-coding-agent'); \
+     DefaultResourceLoader.preloadExtensions('/pi-agent-cache');"
+   ```
 
-2. **Cache model registry**: The `ModelRegistry.find()` call queries available models. Cache the registry result on the shared volume so subsequent containers skip the discovery step.
-   - **Feasible**: ~2-5s savings per task.
+2. **`sub-agent/runner.mjs`**: Point `DefaultResourceLoader` at the pre-installed cache
+   ```javascript
+   const loader = new DefaultResourceLoader({
+     extensionCachePath: "/pi-agent-cache",
+     // ... existing config
+   });
+   ```
 
-3. **Pre-install SDK extensions**: The `DefaultResourceLoader` loads extensions at startup. If extensions are pre-loaded into the image, this step is faster.
-   - **Feasible**: ~1-3s savings per task.
+3. **Same for planning-agent Dockerfile**.
 
-**Realistic savings:** 3-8 seconds per task. Smaller win than clone cache, but compounds across many tasks.
+**Expected savings:** 1-3 seconds per task for extension loading. Model registry resolution (~2-5s) may also benefit if the registry response is cached in the image.
 
-### Phase 3: Warm Pool (High Effort, Conditional Value)
+**Note:** The exact API depends on `pi-coding-agent` internals. If `DefaultResourceLoader` doesn't expose a cache path option, the alternative is to run the initialization once during `docker build` and snapshot the resulting files into the image layer. This needs validation against the SDK before implementation.
 
-Only pursue if:
-- Concurrent agent count exceeds ~10 (enterprise multi-squad use)
-- Bootstrap latency becomes a user-facing pain point after Phases 0-2
-- The team accepts the operational complexity of pool management
+### Optimization 3: SQLite-Backed Persistent Task Queue (Phase 0)
 
-If needed, implement Option B with strict workspace isolation:
-- Workspace reset script between tasks (git clean, env reset, temp file cleanup)
-- Per-task credential injection via mounted secrets (not env vars)
-- Health check endpoint in warm containers
-- Pool auto-scaling based on queue depth
+Replace the in-memory semaphore waiters with a persistent queue in the existing SQLite database. No external dependencies — uses the same DB the backend already manages.
 
-**Not recommended for initial enterprise rollout.** Phases 0-2 address 80% of the overhead with 20% of the complexity.
+**Current state:**
+```typescript
+// recoveryService.ts — waiters array is in-memory, lost on restart
+private waiters: Array<() => void> = [];
+```
 
----
+**Target state:** Add `queued_at` and `priority` columns to the existing task tracking. The dispatch loop reads from SQLite ordered by priority (descending), then FIFO (oldest `queued_at` first).
 
-## Impact on Migration Roadmap
+**Schema:**
+```sql
+-- Extend existing task tracking:
+ALTER TABLE plan_tasks ADD COLUMN queued_at TEXT;
+ALTER TABLE plan_tasks ADD COLUMN priority INTEGER DEFAULT 0;  -- higher = more urgent
+-- Status flow: pending → queued → executing → completed/failed
+```
 
-These changes slot into the existing enterprise migration phases:
+**Dispatch loop:**
+```typescript
+async function dispatchLoop() {
+  while (running) {
+    const task = await dequeueNextTask();  // SELECT ... WHERE status='queued' ORDER BY priority DESC, queued_at ASC LIMIT 1
+    if (!task) { await sleep(1000); continue; }
+    await acquireGlobalSlot();
+    await acquireProjectSlot(task.projectId);
+    void runTaskAndRelease(task);  // fire-and-forget, releases slots on completion
+  }
+}
+```
 
-| Change | Phase | Rationale |
-|--------|-------|-----------|
-| Persistent task queue | Phase 0 (Foundation Hardening) | Replaces in-memory semaphore waiters, improves reliability |
-| Git clone cache | Phase 0 (Foundation Hardening) | Low-risk optimization to `runner.mjs` + volume config |
-| Framework pre-warm | Phase 4 (Deployment Packaging) | Ties into image build optimization for UBI/Wolfi |
-| Warm pool | Post-Phase 5 (if needed) | Only after scale demands justify complexity |
+**Benefits over current semaphore waiters:**
+
+| Property | Current (in-memory) | SQLite queue |
+|----------|-------------------|--------------|
+| **Restart resilience** | 60s recovery delay | Immediate — queued tasks in DB |
+| **Task ordering** | FIFO only | Priority + FIFO |
+| **Observability** | Hidden in memory | Queryable via API/SQL |
+| **Fix run priority** | Same as routine tasks | Higher priority preempts |
+
+The in-memory semaphore slots for concurrency control are retained — the queue only replaces the waiters array, not the slot management. This is a targeted improvement that uses the existing SQLite infrastructure.
 
 ---
 
@@ -360,10 +355,9 @@ Estimated per-task savings for a project with 10 implementation tasks against a 
 
 | Optimization | Time Saved Per Task | Total (10 tasks) | Effort |
 |-------------|-------------------|-------------------|--------|
-| Persistent queue (no dispatch delay) | 0-60s (recovery case) | 0-10 min | Low |
 | Git clone cache | 20-55s | 3-9 min | Low-Medium |
-| Framework pre-warm | 3-8s | 0.5-1.3 min | Medium |
-| Warm pool | 25-85s (replaces all above) | 4-14 min | High |
-| **Phases 0-2 combined** | **23-63s** | **3.8-10.5 min** | **Low-Medium** |
+| Pre-installed extensions | 1-3s | 0.2-0.5 min | Low |
+| SQLite persistent queue | 0s (latency) / 60s (recovery) | 0-1 min saved on restart | Low |
+| **Combined** | **21-58s** | **3.5-9.7 min** | **Low-Medium** |
 
-The phased approach (queue + clone cache + pre-warm) captures ~75% of the warm pool's benefit at ~25% of the implementation cost, while preserving the ephemeral container model's isolation and simplicity guarantees.
+The git clone cache captures the largest win (clone is the dominant bootstrap cost). The SQLite queue doesn't reduce per-task latency but eliminates the 60-second recovery delay on backend restart and adds priority dispatch for fix runs. All three optimizations use only existing infrastructure — no new runtime dependencies.

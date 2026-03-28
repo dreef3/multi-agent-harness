@@ -23,15 +23,15 @@
 | **Versioning / changelog** | No versioning | Low | Low — conventional-commits + release workflow |
 | **Agent traceability** | Raw `.harness/logs/` dumps in repos, no requirement-to-code chain | High | Medium — TraceBuilder, guard hooks, remove legacy commits (see `enterprise-traceability.md`) |
 | **Agent CI visibility** | Agents cannot see PR build status or CI logs | High | Medium — VCS connector extensions, agent tools, CI-aware completion (see `enterprise-cicd.md` §6) |
-| **Task queue persistence** | In-memory semaphore waiters lost on restart | High | Low — persistent queue table, priority dispatch (see `enterprise-agent-architecture.md`) |
-| **Agent bootstrap overhead** | 25-90s per task (full git clone + framework init) | Medium | Low — bare repo cache volume saves 20-55s/task (see `enterprise-agent-architecture.md`) |
+| **Agent bootstrap overhead** | 25-90s per task (full git clone + framework init) | Medium | Low — bare repo cache volume + pre-installed extensions (see `enterprise-agent-architecture.md`) |
+| **Task queue persistence** | In-memory semaphore waiters, lost on restart | Medium | Low — SQLite `queued_at` + `priority` columns on `plan_tasks` (see `enterprise-agent-architecture.md`) |
 | **Frontend tests in CI** | Not run | Low | Trivial — add `bun run test` step |
 
 ---
 
 ## Migration Phases
 
-### Phase 0: Foundation Hardening, Traceability & Dispatch (4-5 weeks)
+### Phase 0: Foundation Hardening & Traceability (4-5 weeks)
 
 **Goal:** Fix issues from the audit that are prerequisites for enterprise work. No new features — just quality and correctness.
 
@@ -49,10 +49,11 @@
 | Remove `.harness/logs/` commit logic from agents | `sub-agent/runner.mjs`, `planningTool.ts`, `planningAgentManager.ts` | Replace raw dumps with structured trace (see `enterprise-traceability.md`) |
 | Add `TraceBuilder` module + wire into lifecycle events | New: `backend/src/orchestrator/traceBuilder.ts`, wire into `taskDispatcher.ts`, `polling.ts` | Structured requirement-to-code traceability |
 | Add requirements extraction to spec handler | `backend/src/agents/planningTool.ts` | Populate requirements array for trace file |
-| Replace in-memory semaphore waiters with persistent task queue | `recoveryService.ts`, `store/db.ts` | Queue survives backend restart, enables priority dispatch (see `enterprise-agent-architecture.md`) |
 | Add git clone cache via shared bare repo volume | `sub-agent/runner.mjs`, `containerManager.ts`, `docker-compose.yml` | Saves 20-55s per task — `git fetch` instead of full `git clone` (see `enterprise-agent-architecture.md`) |
+| Pre-install SDK extensions in agent images | `sub-agent/Dockerfile`, `planning-agent/Dockerfile` | Eliminate extension download at runtime — baked into image layer |
+| Add SQLite-backed persistent task queue | `recoveryService.ts`, `store/db.ts` | Replace in-memory semaphore waiters with `queued_at` + `priority` columns on `plan_tasks`. Priority dispatch for fix runs. Survives restart (see `enterprise-agent-architecture.md`) |
 
-**Exit criteria:** All existing tests pass. CI runs backend + frontend tests. No dead code. Graceful shutdown works. Agents blocked from `.harness/`. `trace.json` committed on task completion with correct schema. Task queue persistent. Second+ tasks per repo use cached clone.
+**Exit criteria:** All existing tests pass. CI runs backend + frontend tests. No dead code. Graceful shutdown works. Agents blocked from `.harness/`. `trace.json` committed on task completion with correct schema. Second+ tasks per repo use cached clone. Task queue persists across backend restarts.
 
 ---
 
@@ -205,7 +206,7 @@ Corporate features are purely additive, activated by configuration.
 
 | Phase | Duration | Cumulative |
 |-------|----------|------------|
-| Phase 0: Foundation Hardening, Traceability & Dispatch | 4-5 weeks | 4-5 weeks |
+| Phase 0: Foundation Hardening & Traceability | 4-5 weeks | 4-5 weeks |
 | Phase 1: Authentication & RBAC | 3-4 weeks | 7-9 weeks |
 | Phase 2: PostgreSQL Migration | 2-3 weeks | 9-12 weeks |
 | Phase 3: Container Runtime Abstraction | 3-4 weeks | 12-16 weeks |
