@@ -16,6 +16,12 @@ WORKDIR /app
 COPY planning-agent/package.json .
 RUN npm install
 
+# NOTE (2026-03-28): Extension pre-initialization was investigated.
+# DefaultResourceLoader.reload() could not be measured in this environment
+# (Docker images not pre-built). Investigation should be re-run with the
+# built image to determine if a pre-init RUN step would reduce startup time.
+# SDK version is pinned to 0.61.1 (see package.json) for reproducible builds.
+
 RUN mkdir -p /workspace /pi-agent && chown node:node /workspace /pi-agent
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
