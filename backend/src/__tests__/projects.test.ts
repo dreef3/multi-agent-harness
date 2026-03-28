@@ -14,7 +14,6 @@ import { createProjectsRouter } from "../api/projects.js";
 import { appendEvent } from "../store/agentEvents.js";
 
 vi.mock("../api/websocket.js", () => ({
-  preInitAgent: vi.fn(),
   setupWebSocket: vi.fn(),
 }));
 

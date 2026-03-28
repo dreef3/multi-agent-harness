@@ -34,8 +34,6 @@ export function buildClosingRefs(githubIssues: string[]): string {
 }
 
 export class TaskDispatcher {
-  private activeTasks = new Map<string, Promise<TaskResult>>();
-
   private static readonly TASK_PREAMBLE = `You are a software engineering sub-agent. Follow this workflow exactly.
 
 ## Step 1 — Understand the Task
@@ -288,7 +286,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         }
 
         // Check if session has been marked as completed via bridge
-        const session = await this.getSessionStatus(sessionId);
+        const session = this.getSessionStatus(sessionId);
         if (session === "completed") {
           clearInterval(checkInterval);
           resolve(true);
@@ -306,8 +304,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
   /**
    * Get session status from store.
    */
-  private async getSessionStatus(sessionId: string): Promise<AgentSession["status"] | null> {
-    const { getAgentSession } = await import("../store/agents.js");
+  private getSessionStatus(sessionId: string): AgentSession["status"] | null {
     const session = getAgentSession(sessionId);
     return session?.status ?? null;
   }
@@ -515,10 +512,4 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     );
   }
 
-  /**
-   * Get active task count.
-   */
-  getActiveTaskCount(): number {
-    return this.activeTasks.size;
-  }
 }

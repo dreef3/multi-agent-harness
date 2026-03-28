@@ -14,7 +14,6 @@ vi.mock("../api/githubIssues.js", () => ({
 }));
 
 vi.mock("../api/websocket.js", () => ({
-  preInitAgent: vi.fn(),
   setupWebSocket: vi.fn(),
 }));
 

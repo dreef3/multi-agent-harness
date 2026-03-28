@@ -6,7 +6,6 @@ import { getRepository, listRepositories } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
-import { preInitAgent } from "./websocket.js";
 import { getEvents } from "../store/agentEvents.js";
 import { getRecoveryService } from "../orchestrator/recoveryService.js";
 import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
@@ -80,8 +79,6 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
     };
 
     insertProject(project);
-    // Start agent initialization in background so it's ready when the WS connects
-    preInitAgent(project.id);
     res.status(201).json(project);
   });
 

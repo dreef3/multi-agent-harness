@@ -43,12 +43,6 @@ export function broadcastStuckAgent(projectId: string, sessionId: string) {
   });
 }
 
-export function preInitAgent(projectId: string): void {
-  // Master agent initialization is deferred to the first WS connection
-  // but we provide the hook for projects router.
-  console.log(`[ws] preInitAgent(${projectId}): deferred to first WS connection`);
-}
-
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
   const repoList = repos.length > 0
     ? repos.map((r) => `- **${r.name}** (id: \`${r.id}\`): ${r.cloneUrl} (default branch: ${r.defaultBranch})`).join("\n")
