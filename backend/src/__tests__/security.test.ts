@@ -10,10 +10,7 @@ import { createRouter } from "../api/routes.js";
 import Dockerode from "dockerode";
 
 vi.mock("../api/githubIssues.js", () => ({
-  createGitHubIssuesRouter: () => {
-    const { Router } = require("express");
-    return Router();
-  },
+  createGitHubIssuesRouter: vi.fn().mockReturnValue(vi.fn()),
 }));
 
 vi.mock("../api/websocket.js", () => ({
@@ -28,7 +25,7 @@ describe("security headers", () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sec-"));
     initDb(tmpDir);
-    const docker = new Dockerode({ socketPath: "/var/run/docker.sock" });
+    const docker = {} as Dockerode;
     app = express();
     app.use(
       helmet({
