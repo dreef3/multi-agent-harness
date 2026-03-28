@@ -57,17 +57,18 @@
 
 | Task | Depends On | Details |
 |------|-----------|---------|
-| Add `users` table, `audit_log` table, `sessions` table | Phase 0 | Schema migration in `db.ts` |
-| Implement OIDC auth flow | Users table | `passport-openidconnect`, session store |
-| Add `AUTH_ENABLED` toggle | OIDC flow | Conditionally load auth middleware |
-| Implement `requireRole()` middleware | Auth flow | Applied to routes in `routes.ts` |
+| Add `users` table, `audit_log` table | Phase 0 | Schema migration in `db.ts` (no sessions table — stateless JWT auth) |
+| Add JWT verification middleware (`jose` library) | Users table | Validate access token signature, claims (iss, aud, exp). JWKS fetched from IdP at startup, cached. |
+| Add `AUTH_ENABLED` toggle | JWT middleware | Conditionally load auth middleware; skip when false |
+| Add `upsertUser()` middleware | JWT middleware | Create/update user record from JWT claims on each request |
+| Implement `requireRole()` middleware | JWT middleware | Map JWT role/group claims to harness roles. Applied per-route in `routes.ts` |
 | Add `created_by` to projects | Users table | Migration + API attribution |
-| Frontend auth context | Auth flow | `AuthProvider`, login redirect, role-gated UI |
+| Frontend OIDC client | JWT middleware | `oidc-client-ts`, authorization code + PKCE flow, token storage in localStorage, silent refresh, `AuthProvider` context, role-gated UI |
 | Audit logging middleware | Auth + DB | Log all mutations with user, action, resource |
-| WebSocket auth | Auth flow | Validate session on upgrade |
-| Tests for auth + RBAC | All above | Unit tests for middleware, E2E for login flow |
+| WebSocket auth | JWT middleware | Validate JWT from `?token=` query param on upgrade |
+| Tests for auth + RBAC | All above | Unit tests for JWT verification, role middleware. E2E with Keycloak in Docker |
 
-**Exit criteria:** OIDC login works against a test IdP (Keycloak in Docker). Roles enforced on all endpoints. Local mode works without auth. Audit log populated.
+**Exit criteria:** OIDC login works against a test IdP (Keycloak in Docker). JWT validated on all endpoints. Roles enforced. Local mode works without auth. Audit log populated.
 
 ---
 
@@ -79,7 +80,7 @@
 |------|---------|
 | Add PostgreSQL support alongside SQLite | `better-sqlite3` → `pg` (node-postgres) with connection pooling |
 | Database adapter interface | Thin query wrapper abstracting `better-sqlite3` sync API vs `pg` async API. Each store module's functions are updated to call the adapter instead of SQLite directly. |
-| Migrate all store modules (including Phase 1 tables) | `store/db.ts`, `store/projects.ts`, `store/agents.ts`, `users`, `sessions`, `audit_log` — parameterized queries |
+| Migrate all store modules (including Phase 1 tables) | `store/db.ts`, `store/projects.ts`, `store/agents.ts`, `users`, `audit_log` — parameterized queries |
 | Schema migration system | Versioned migrations (1-N) with `schema_migrations` table tracking |
 | PostgreSQL in Docker Compose | Add `postgres` service to `docker-compose.yml` (optional, behind profile) |
 | PostgreSQL in Helm chart | StatefulSet or external DB reference in `values.yaml` |
