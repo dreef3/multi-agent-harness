@@ -106,9 +106,10 @@ function buildPostgresAdapter(sql: Sql | TransactionSql): DbAdapter {
     },
 
     exec(rawSql: string): void {
-      // Fire-and-forget raw DDL — used during migrations
-      // We schedule it synchronously but it runs async; callers must use execAsync for ordering guarantees.
-      // In practice, migrations use execAsync() via the async migration runner.
+      // ⚠️  UNSAFE — schedules but does NOT await the query. Satisfies the DbAdapter
+      // interface for code that calls exec() synchronously, but execution order is
+      // not guaranteed. ONLY safe during application startup when no concurrent
+      // callers exist. All migration code MUST use execAsync() instead.
       void sql.unsafe(rawSql);
     },
 

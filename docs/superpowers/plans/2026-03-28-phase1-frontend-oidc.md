@@ -242,16 +242,18 @@
       const response = await fetch(input, { ...init, headers });
 
       if (response.status === 401 && token) {
-        // Token may have expired between storage read and request.
-        // Trigger silent renew and retry once.
+        // Token expired between storage read and request.
+        // Attempt silent renew via hidden iframe, then retry once with the new token.
         try {
-          const { UserManager, WebStorageStateStore } = await import("oidc-client-ts");
-          // getUserManager() is module-level — re-use the same instance
-          const { getUserManager } = await import("./AuthContext.js") as { getUserManager?: () => InstanceType<typeof UserManager> };
-          // If UserManager is accessible, attempt silent renew
-          // Otherwise fall through to login redirect
+          const { getUserManager } = await import("./AuthContext.js");
+          const renewed = await getUserManager().signinSilent();
+          if (renewed?.access_token) {
+            const retryHeaders = new Headers(init.headers);
+            retryHeaders.set("Authorization", `Bearer ${renewed.access_token}`);
+            return fetch(input, { ...init, headers: retryHeaders });
+          }
         } catch {
-          // silent renew not possible
+          // Silent renew failed (e.g. session ended, third-party cookies blocked)
         }
         // Redirect to login as final fallback
         await login();
@@ -265,7 +267,7 @@
   }
   ```
 
-  > Note: the silent-renew path above is intentionally simple. If the project uses a dedicated API client module (e.g. `frontend/src/api.ts`), attach the auth header there instead of using this hook directly, to avoid duplication.
+  > Note: `getUserManager()` is the module-level singleton from `AuthContext.ts`. If the project uses a dedicated API client module (e.g. `frontend/src/api.ts`), attach the auth header there instead of using this hook directly, to avoid duplication. The `getAccessToken()` synchronous read does not check `expires_at` — an expired token will get a 401 and trigger the silent-renew path above, which is the correct recovery path.
 
 - [ ] **Task 5 — Create `frontend/src/pages/AuthCallback.tsx`**
 

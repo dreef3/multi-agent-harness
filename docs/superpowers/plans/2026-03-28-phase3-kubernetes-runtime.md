@@ -439,19 +439,29 @@ if (config.containerRuntime === "kubernetes") {
 }
 ```
 
-- [ ] Add `getPlanningAgentPodIp()` helper to `KubernetesContainerRuntime` or a separate Kubernetes utilities module:
+- [ ] Add `getPlanningAgentPodIp()` helper to `KubernetesContainerRuntime` or a separate Kubernetes utilities module. The pod IP is assigned only after the pod is scheduled and the network plugin runs, so poll until it appears (up to 60 seconds):
 
 ```typescript
-async getPlanningAgentPodIp(sessionId: string): Promise<string> {
-  const { body } = await this.coreV1.listNamespacedPod({
-    namespace: this.namespace,
-    labelSelector: `harness.role=planning-agent,harness.session-id=${sessionId}`,
-  });
-  const pod = body.items[0];
-  if (!pod) throw new Error(`Planning agent pod not found for session ${sessionId}`);
-  const ip = pod.status?.podIP;
-  if (!ip) throw new Error(`Planning agent pod has no IP yet for session ${sessionId}`);
-  return ip;
+async getPlanningAgentPodIp(
+  sessionId: string,
+  timeoutMs = 60_000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const { body } = await this.coreV1.listNamespacedPod({
+      namespace: this.namespace,
+      labelSelector: `harness.role=planning-agent,harness.session-id=${sessionId}`,
+    });
+    const pod = body.items[0];
+    const ip = pod?.status?.podIP;
+    if (ip) return ip;
+
+    // Pod not scheduled yet or IP not assigned — wait 2s and retry
+    await new Promise((r) => setTimeout(r, 2_000));
+  }
+  throw new Error(
+    `Planning agent pod IP not available after ${timeoutMs}ms for session ${sessionId}`
+  );
 }
 ```
 
