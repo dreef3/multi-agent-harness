@@ -33,18 +33,14 @@
 
 - [ ] Create directory: `backend/src/store/migrations/`
 
-- [ ] Plan migration numbering based on the audit:
+- [ ] Migration numbering based on actual `db.ts` schema (verified 2026-03-28):
 
 | Migration | Contents |
 |-----------|----------|
-| `001_initial_schema` | All base tables from original schema |
-| `002_add_primary_repository_id` | `ALTER TABLE projects ADD COLUMN primary_repository_id TEXT` |
-| `003_add_planning_pr` | `ALTER TABLE sessions ADD COLUMN planning_pr_number INTEGER` (verify actual column) |
-| `004_add_last_error` | `ALTER TABLE sessions ADD COLUMN last_error TEXT` (verify actual column) |
-| `005_add_auth_tables` | `users`, `sessions` auth table, `audit_log` (Phase 1) |
-| `006_add_task_queue` | `task_queue` table (Phase 0 SQLite queue) |
-
-> **Note:** Verify exact column names and tables from the `db.ts` audit in Step 1. The above is a template — actual migration content must match the real schema.
+| `001_initial_schema` | All 8 base tables + 3 indexes from `db.ts` `migrate()` |
+| `002_add_project_columns` | 4 `addColumnIfMissing` calls on `projects` + backfill SQL from `db.ts` |
+| `003_add_auth_tables` | `users`, `audit_log` tables (Phase 1) |
+| `004_add_task_queue` | `task_queue` table (Phase 0 SQLite queue) |
 
 ## Step 3 — Create `001_initial_schema.ts`
 
@@ -52,107 +48,136 @@
 
 ```typescript
 // backend/src/store/migrations/001_initial_schema.ts
+// Extracted verbatim from backend/src/store/db.ts migrate() as of 2026-03-28.
+// All statements use IF NOT EXISTS for idempotency on existing databases.
 import type { DbAdapter } from "../adapter.js";
 
 export const migration = {
   name: "001_initial_schema",
   async up(db: DbAdapter): Promise<void> {
-    // Use CREATE TABLE IF NOT EXISTS for idempotency on existing databases
     await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS repositories (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        clone_url     TEXT NOT NULL,
+        provider      TEXT NOT NULL,
+        provider_config TEXT NOT NULL,
+        default_branch TEXT NOT NULL DEFAULT 'main',
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS agent_sessions (
+        id            TEXT PRIMARY KEY,
+        project_id    TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        repository_id TEXT,
+        task_id       TEXT,
+        container_id  TEXT,
+        status        TEXT NOT NULL DEFAULT 'starting',
+        session_path  TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS projects (
+        id                  TEXT PRIMARY KEY,
+        name                TEXT NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'brainstorming',
+        source_type         TEXT NOT NULL,
+        source_json         TEXT NOT NULL,
+        repository_ids      TEXT NOT NULL DEFAULT '[]',
+        plan_json           TEXT,
+        master_session_path TEXT NOT NULL DEFAULT '',
+        created_at          TEXT NOT NULL,
+        updated_at          TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS messages (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id  TEXT NOT NULL,
+        seq_id      INTEGER NOT NULL,
+        role        TEXT NOT NULL,
+        content     TEXT NOT NULL,
+        created_at  TEXT NOT NULL,
+        UNIQUE(project_id, seq_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_messages_project_seq
+        ON messages (project_id, seq_id);
+
+      CREATE TABLE IF NOT EXISTS pull_requests (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL, repository_id TEXT NOT NULL,
+        agent_session_id TEXT NOT NULL, provider TEXT NOT NULL, external_id TEXT NOT NULL,
+        url TEXT NOT NULL, branch TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open',
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS review_comments (
+        id TEXT PRIMARY KEY, pull_request_id TEXT NOT NULL, external_id TEXT NOT NULL,
+        author TEXT NOT NULL, body TEXT NOT NULL, file_path TEXT, line_number INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending', received_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        UNIQUE(external_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_review_comments_pr ON review_comments (pull_request_id, status);
+
       CREATE TABLE IF NOT EXISTS schema_migrations (
         name TEXT PRIMARY KEY,
         applied_at TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS repositories (
-        id TEXT PRIMARY KEY,
-        url TEXT NOT NULL,
-        name TEXT NOT NULL,
-        local_path TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+      CREATE TABLE IF NOT EXISTS agent_events (
+        session_id  TEXT NOT NULL,
+        type        TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        timestamp   TEXT NOT NULL
       );
 
-      CREATE TABLE IF NOT EXISTS projects (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        description TEXT,
-        repository_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (repository_id) REFERENCES repositories(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS sessions (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS agents (
-        id TEXT PRIMARY KEY,
-        session_id TEXT NOT NULL,
-        role TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        container_id TEXT,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (session_id) REFERENCES sessions(id)
-      );
-
-      CREATE TABLE IF NOT EXISTS pull_requests (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        session_id TEXT,
-        number INTEGER,
-        title TEXT,
-        url TEXT,
-        status TEXT NOT NULL DEFAULT 'open',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (project_id) REFERENCES projects(id)
-      );
+      CREATE INDEX IF NOT EXISTS idx_agent_events_session
+        ON agent_events (session_id);
     `);
-    // Add any CREATE INDEX IF NOT EXISTS from the original schema here
   },
 };
 ```
 
-> **IMPORTANT:** The table definitions above are illustrative. Replace them with the EXACT schema from your `db.ts` audit in Step 1. Do not guess column names.
-
 ## Step 4 — Create incremental migration files
 
-For each incremental migration identified in the audit:
+> **Pattern note:** SQLite does not support `ALTER TABLE ADD COLUMN IF NOT EXISTS`. Use try/catch on the error message `"duplicate column"` for SQLite, or check for PostgreSQL's `column already exists` error. This is the correct cross-DB approach.
 
-- [ ] `backend/src/store/migrations/002_add_primary_repository_id.ts`:
+- [ ] `backend/src/store/migrations/002_add_project_columns.ts` — covers all 4 `addColumnIfMissing` calls from `db.ts` plus the backfill:
 
 ```typescript
 import type { DbAdapter } from "../adapter.js";
 
 export const migration = {
-  name: "002_add_primary_repository_id",
+  name: "002_add_project_columns",
   async up(db: DbAdapter): Promise<void> {
-    // SQLite and PostgreSQL both support ALTER TABLE ADD COLUMN IF NOT EXISTS
-    // but SQLite does NOT support IF NOT EXISTS on ALTER TABLE.
-    // Use a try/catch for SQLite compatibility:
-    try {
-      await db.execAsync(
-        "ALTER TABLE projects ADD COLUMN primary_repository_id TEXT REFERENCES repositories(id)"
-      );
-    } catch (e: unknown) {
-      // Column already exists (SQLite throws on duplicate column add)
-      if (!(e instanceof Error) || !e.message.includes("duplicate column")) throw e;
-    }
+    const addCol = async (col: string, def: string) => {
+      try {
+        await db.execAsync(`ALTER TABLE projects ADD COLUMN ${col} ${def}`);
+      } catch (e: unknown) {
+        if (!(e instanceof Error) || !e.message.includes("duplicate column")) throw e;
+      }
+    };
+
+    await addCol("primary_repository_id", "TEXT");
+    await addCol("planning_branch", "TEXT");
+    await addCol("planning_pr_json", "TEXT");
+    await addCol("last_error", "TEXT");
+
+    // Backfill primary_repository_id from first repositoryId
+    await db.execAsync(`
+      UPDATE projects
+      SET primary_repository_id = json_extract(repository_ids, '$[0]')
+      WHERE primary_repository_id IS NULL
+        AND json_array_length(repository_ids) > 0
+    `);
   },
 };
 ```
 
-> **Pattern note:** SQLite does not support `ALTER TABLE ADD COLUMN IF NOT EXISTS`. Use try/catch on the error message `"duplicate column"` for SQLite, or check for PostgreSQL's `column already exists` error. This is the correct cross-DB approach.
-
-- [ ] Create remaining migration files (`003_`, `004_`, `005_`, `006_`) following the same pattern. Verify exact column names from the audit.
+- [ ] Create `003_add_auth_tables.ts` and `004_add_task_queue.ts` following the same pattern (see Phase 1 and Phase 0 plans for their exact table schemas).
 
 ## Step 5 — Create `index.ts`
 
@@ -163,11 +188,9 @@ export const migration = {
 import type { DbAdapter } from "../adapter.js";
 
 import { migration as m001 } from "./001_initial_schema.js";
-import { migration as m002 } from "./002_add_primary_repository_id.js";
-import { migration as m003 } from "./003_add_planning_pr.js";
-import { migration as m004 } from "./004_add_last_error.js";
-import { migration as m005 } from "./005_add_auth_tables.js";
-import { migration as m006 } from "./006_add_task_queue.js";
+import { migration as m002 } from "./002_add_project_columns.js";
+import { migration as m003 } from "./003_add_auth_tables.js";
+import { migration as m004 } from "./004_add_task_queue.js";
 
 export interface Migration {
   name: string;
@@ -179,8 +202,6 @@ export const migrations: Migration[] = [
   m002,
   m003,
   m004,
-  m005,
-  m006,
 ];
 ```
 

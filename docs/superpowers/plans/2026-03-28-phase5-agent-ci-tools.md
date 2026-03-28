@@ -140,8 +140,12 @@ import { buildCiToolsDescription } from "../agents/ciTools";
 - [ ] In `buildMasterAgentContext()` (or equivalent), add the CI tools section:
 
 ```typescript
+import { config } from "../config.js";  // already imported in websocket.ts
+
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
-  const harnessApiUrl = process.env.HARNESS_API_URL ?? "http://localhost:3000";
+  // config.harnessApiUrl defaults to "http://backend:3000" — the URL the
+  // planning-agent container uses to reach the backend over the Docker network.
+  const harnessApiUrl = config.harnessApiUrl;
 
   return `
 ## Your Role
@@ -208,27 +212,20 @@ Returns `{ "logs": "..." }` — either raw text or a URL to the logs.
 
 ## Task 4 — Environment variable wiring
 
-- [ ] Open `docker-compose.yml` (or `docker-compose.corp.yaml`)
-- [ ] Confirm the planning agent service has `HARNESS_API_URL` set:
+`HARNESS_API_URL` is already handled — no new docker-compose changes required.
 
-```yaml
-  planning-agent:
-    environment:
-      HARNESS_API_URL: http://backend:3000
-      # ... other env vars ...
-```
+**How it's wired (verified 2026-03-28):**
+- `backend/src/config.ts:74`: `harnessApiUrl: process.env.HARNESS_API_URL ?? "http://backend:3000"`
+- `backend/src/orchestrator/containerManager.ts:66`: sub-agent containers receive `HARNESS_API_URL=${config.harnessApiUrl}`
+- Task 2 above uses `config.harnessApiUrl` (which defaults to `"http://backend:3000"`) — correct for the Docker network
 
-If using Kubernetes, confirm the planning agent Deployment has:
-```yaml
-env:
-  - name: HARNESS_API_URL
-    value: "http://backend-service:3000"
-```
+- [ ] Verify `docker-compose.yml` does not need a change: the backend service reads from `.env` via `env_file: .env`, and `HARNESS_API_URL` defaults in `config.ts` are appropriate for Docker networking.
 
-- [ ] Confirm `HARNESS_API_URL` is also available for local development (`.env` or `.env.example`):
+- [ ] Add `HARNESS_API_URL` to `.env.example` to document the override option:
 
 ```env
-HARNESS_API_URL=http://localhost:3000
+# Override the harness API base URL (default for Docker Compose: http://backend:3000)
+# HARNESS_API_URL=http://backend:3000
 ```
 
 - [ ] Commit: `feat: inject CI tools description into planning agent context`

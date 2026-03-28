@@ -135,8 +135,26 @@ Note: Import `BuildStatus` from `../connectors/types` if not already imported.
 
 ## Task 3 — Call `waitForPrCi()` in `runTask()`
 
-- [ ] In `runTask()`, find the section after the container exits successfully (after `waitForCompletion` returns `true` / after `updateAgentSession(sessionId, { status: "completed" })`)
-- [ ] Insert the CI-aware completion block **before** any `createPr()` or final task status update call:
+- [ ] In `runTask()` in `backend/src/orchestrator/taskDispatcher.ts`, locate these two lines (currently lines 195–196):
+
+```typescript
+        updateAgentSession(sessionId, { status: "completed" });
+        span.setStatus({ code: SpanStatusCode.OK });
+```
+
+- [ ] Insert the CI-aware completion block **immediately after** `span.setStatus(...)` and **before** the `// Try to create PR` comment (line 198). The result should read:
+
+```typescript
+        updateAgentSession(sessionId, { status: "completed" });
+        span.setStatus({ code: SpanStatusCode.OK });
+
+        // ── CI-aware completion ──────────────────────────────────────────────
+        // ... CI block here (see below) ...
+        // ── End CI-aware completion ──────────────────────────────────────────
+
+        // Try to create PR — non-fatal since the branch might have no new commits
+        try {
+```
 
 ```typescript
 // ── CI-aware completion ──────────────────────────────────────────────────────
@@ -182,7 +200,18 @@ The exact insertion point depends on the current `runTask()` structure. The key 
 
 ## Task 4 — Add `recordCiResultInTrace()` method
 
-- [ ] Add the following private method to `TaskDispatcher` (or as a module-level function):
+`TraceBuilder.recordCiResult()` is defined in the Phase 0 Traceability plan
+(`phase0-traceability.md`). Its signature is:
+
+```typescript
+recordCiResult(
+  taskId: string,
+  attemptNumber: number,
+  ci: TraceAttempt["ci"]   // { state: "pending"|"success"|"failure"|"error"; checks: Array<{name, state, url?}> }
+): this
+```
+
+- [ ] Add the following private method to `TaskDispatcher`:
 
 ```typescript
 private async recordCiResultInTrace(
@@ -195,25 +224,15 @@ private async recordCiResultInTrace(
   try {
     const trace = getOrCreateTrace(project.id, project.name);
 
-    // TraceBuilder API: add a CI result event to the task's attempt
-    // Adjust the method name to match TraceBuilder's actual API
-    if (typeof trace.recordEvent === "function") {
-      trace.recordEvent({
-        type: "ci_result",
-        taskId: task.id,
-        attemptNumber,
-        timestamp: new Date().toISOString(),
-        data: {
-          passed,
-          state: status.state,
-          checks: status.checks.map((c) => ({
-            name: c.name,
-            status: c.status,
-            buildId: c.buildId,
-          })),
-        },
-      });
-    }
+    // Map BuildStatus → TraceAttempt["ci"] shape
+    trace.recordCiResult(task.id, attemptNumber, {
+      state: passed ? "success" : (status.state === "failure" ? "failure" : "error"),
+      checks: status.checks.map((c) => ({
+        name: c.name,
+        state: c.status,  // BuildCheckRun.status → TraceAttempt check.state
+        url: c.url,
+      })),
+    });
 
     await persistTrace(project, trace);
   } catch (err) {
@@ -223,41 +242,17 @@ private async recordCiResultInTrace(
 }
 ```
 
-- [ ] Open `backend/src/orchestrator/traceBuilder.ts`
-- [ ] If `recordEvent()` does not exist, add it (or use the existing event recording method):
-
-```typescript
-recordEvent(event: {
-  type: string;
-  taskId: string;
-  attemptNumber: number;
-  timestamp: string;
-  data: Record<string, unknown>;
-}): void {
-  const attempt = this.getOrCreateAttempt(event.taskId, event.attemptNumber);
-  attempt.events = attempt.events ?? [];
-  attempt.events.push(event);
-}
-```
-
-The `trace.json` schema for CI results will look like:
+The `trace.json` schema for CI results (stored on the attempt's `ci` field):
 ```json
 {
   "taskId": "task-abc123",
   "attemptNumber": 1,
-  "events": [
-    {
-      "type": "ci_result",
-      "timestamp": "2026-03-28T10:15:00Z",
-      "data": {
-        "passed": false,
-        "state": "failure",
-        "checks": [
-          { "name": "CI / test-backend", "status": "failure", "buildId": "99887766" }
-        ]
-      }
-    }
-  ]
+  "ci": {
+    "state": "failure",
+    "checks": [
+      { "name": "CI / test-backend", "state": "failure", "url": "https://github.com/..." }
+    ]
+  }
 }
 ```
 
