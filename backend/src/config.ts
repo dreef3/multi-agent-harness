@@ -77,4 +77,7 @@ export const config = {
   // Opt-in: mount sub-agent root filesystem as read-only.
   // Requires tmpfs mounts for /tmp and /workspace.
   subAgentReadOnlyRootfs: process.env.SUB_AGENT_READONLY_ROOTFS === "true",
+  // Named Docker volume for bare-repo cache shared across sub-agent containers.
+  // Set HARNESS_REPO_CACHE_VOLUME="" to disable caching entirely (fallback to git clone).
+  repoCacheVolume: process.env.HARNESS_REPO_CACHE_VOLUME ?? "harness-repo-cache",
 };

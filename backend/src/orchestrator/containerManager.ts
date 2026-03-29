@@ -65,6 +65,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     `TASK_ID=${opts.taskId ?? ""}`,
     `HARNESS_API_URL=${config.harnessApiUrl}`,
     `AGENT_SESSION_ID=${opts.sessionId}`,
+    ...(config.repoCacheVolume ? [`REPO_CACHE_DIR=/cache`] : []),
   ];
 
   const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
@@ -77,6 +78,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   console.log(`[containerManager]   agentProvider=${agentProvider} agentModel=${agentModel}`);
   console.log(`[containerManager]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
   console.log(`[containerManager]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
+  console.log(`[containerManager]   repoCacheVolume=${config.repoCacheVolume || "(disabled)"}`);
 
   const nameSuffix = opts.taskName
     ? `${opts.taskName}-${(opts.taskId ?? opts.sessionId).slice(0, 8)}`
@@ -93,6 +95,8 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
         // Shared pi-agent dir so sub-agents can use OAuth tokens (e.g. GitHub Copilot)
         // logged in via the master agent
         `${config.piAgentVolume}:/pi-agent`,
+        // Shared bare-repo cache — eliminates full git clone per task
+        ...(config.repoCacheVolume ? [`${config.repoCacheVolume}:/cache`] : []),
       ],
       Memory: config.subAgentMemoryBytes,
       NanoCpus: config.subAgentCpuCount * 1_000_000_000,
