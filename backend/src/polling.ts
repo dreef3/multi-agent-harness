@@ -143,11 +143,15 @@ export async function pollPullRequest(
 
 // ── LGTM detection ────────────────────────────────────────────────────────────
 
+/**
+ * @deprecated Use getPrApprovals() via a VcsConnector instead.
+ * Kept for backward compatibility.
+ */
 export function detectLgtm(body: string): boolean {
   return /\bLGTM\b/i.test(body);
 }
 
-const lgtmPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
+const approvalPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
 
 async function pollPlanningPrs(docker: Dockerode): Promise<void> {
   if (!isRunning) return;
@@ -182,7 +186,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       if (prInfo.status !== "open") {
         console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
         updateProject(project.id, { status: "failed" });
-        lgtmPollStates.delete(project.id);
+        approvalPollStates.delete(project.id);
         await getPlanningAgentManager().sendPrompt(
           project.id,
           "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
@@ -190,19 +194,10 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         continue;
       }
 
-      const since = lgtmPollStates.get(project.id);
-      const comments = await connector.getComments(repo, String(project.planningPr.number), since);
-
-      // Update last seen timestamp
-      if (comments.length > 0) {
-        const latest = comments[comments.length - 1].createdAt;
-        lgtmPollStates.set(project.id, latest);
-      }
-
-      console.log(`[polling] project ${project.id}: ${comments.length} new comment(s) since last poll`);
-      const hasLgtm = comments.some(c => detectLgtm(c.body));
-      console.log(`[polling] project ${project.id}: LGTM detected=${hasLgtm}`);
-      if (!hasLgtm) continue;
+      const approvals = await connector.getPrApprovals(repo, String(project.planningPr.number));
+      const hasApproval = approvals.some(a => a.state === "approved");
+      console.log(`[polling] project ${project.id}: approval detected=${hasApproval}`);
+      if (!hasApproval) continue;
 
       // Re-fetch to confirm status hasn't changed
       const currentProject = getProject(project.id);
@@ -219,8 +214,6 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           status: "plan_in_progress",
         });
         getOrCreateTrace(project.id, project.name).setSpecApproved(specApprovedAt);
-        // Advance cursor to now so plan-phase polling only considers comments posted after spec approval
-        lgtmPollStates.set(project.id, specApprovedAt);
         await planningManager.sendPrompt(
           project.id,
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
@@ -234,7 +227,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           status: "executing",
         });
         getOrCreateTrace(project.id, project.name).setPlanApproved(planApprovedAt);
-        lgtmPollStates.delete(project.id);
+        approvalPollStates.delete(project.id);
 
         // Commit plan file to non-primary repos (primary repo was committed by write_planning_document)
         const freshProject = getProject(project.id);

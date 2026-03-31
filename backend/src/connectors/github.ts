@@ -1,6 +1,6 @@
 import { Octokit } from "@octokit/rest";
 import type { Repository, VcsComment } from "../models/types.js";
-import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo } from "./types.js";
+import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval } from "./types.js";
 import { ConnectorError } from "./types.js";
 
 export class GitHubConnector implements VcsConnector {
@@ -203,6 +203,30 @@ export class GitHubConnector implements VcsConnector {
     } catch (error) {
       throw new ConnectorError(
         `Failed to add comment: ${error instanceof Error ? error.message : String(error)}`,
+        "github",
+        error
+      );
+    }
+  }
+
+  async getPrApprovals(repo: Repository, prId: string): Promise<PrApproval[]> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+
+    try {
+      const { data } = await octokit.pulls.listReviews({
+        owner,
+        repo: repoName,
+        pull_number: parseInt(prId, 10),
+      });
+      return data.map(r => ({
+        userId: r.user?.login ?? "",
+        state: r.state === "APPROVED" ? "approved" : r.state === "CHANGES_REQUESTED" ? "changes_requested" : "pending",
+        submittedAt: r.submitted_at ?? new Date().toISOString(),
+      }));
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get PR approvals: ${error instanceof Error ? error.message : String(error)}`,
         "github",
         error
       );

@@ -1,5 +1,5 @@
 import type { Repository, VcsComment } from "../models/types.js";
-import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo } from "./types.js";
+import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval } from "./types.js";
 import { ConnectorError } from "./types.js";
 
 interface BitbucketRef {
@@ -240,6 +240,35 @@ export class BitbucketConnector implements VcsConnector {
     } catch (error) {
       throw new ConnectorError(
         `Failed to add comment: ${error instanceof Error ? error.message : String(error)}`,
+        "bitbucket-server",
+        error
+      );
+    }
+  }
+
+  async getPrApprovals(repo: Repository, prId: string): Promise<PrApproval[]> {
+    const { projectKey, repoSlug, baseUrl } = this.getProjectRepo(repo);
+
+    try {
+      const url = `${baseUrl}/rest/api/1.0/projects/${projectKey}/repos/${repoSlug}/pull-requests/${prId}/participants`;
+      const response = await this.fetchJson<{
+        values: Array<{
+          user: { slug: string; displayName?: string };
+          role: string;
+          approved: boolean;
+          status: "APPROVED" | "NEEDS_WORK" | "UNAPPROVED";
+          lastReviewedCommit?: string;
+        }>;
+      }>(url);
+
+      return response.values.map(p => ({
+        userId: p.user.slug,
+        state: p.status === "APPROVED" ? "approved" : p.status === "NEEDS_WORK" ? "changes_requested" : "pending",
+        submittedAt: new Date().toISOString(),
+      }));
+    } catch (error) {
+      throw new ConnectorError(
+        `Failed to get PR approvals: ${error instanceof Error ? error.message : String(error)}`,
         "bitbucket-server",
         error
       );

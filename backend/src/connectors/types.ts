@@ -19,6 +19,12 @@ export interface PullRequestInfo {
   url: string;
 }
 
+export interface PrApproval {
+  userId: string;
+  state: "approved" | "changes_requested" | "pending";
+  submittedAt: string; // ISO-8601
+}
+
 export interface VcsConnector {
   /**
    * Create a new branch in the repository
@@ -50,6 +56,11 @@ export interface VcsConnector {
    * Add a comment to a pull request
    */
   addComment(repo: Repository, prId: string, body: string): Promise<void>;
+
+  /**
+   * Get PR approvals (reviews) for a pull request
+   */
+  getPrApprovals(repo: Repository, prId: string): Promise<PrApproval[]>;
 
   /**
    * Commit a file to a branch. Creates the branch from defaultBranch first
