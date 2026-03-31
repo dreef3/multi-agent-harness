@@ -44,6 +44,15 @@ const GIT_PUSH_URL = process.env.GIT_PUSH_URL || REPO_CLONE_URL;
 // Empty string means caching is disabled; fall back to regular git clone.
 const REPO_CACHE_DIR = process.env.REPO_CACHE_DIR ?? "";
 
+// Use a session-unique worktree path so that parallel containers don't conflict
+// on the same path in the shared bare-clone worktree registry.
+// Each container's /workspace is an isolated overlay, but the bare clone at
+// /cache/xyz/worktrees/ is shared — two containers using identical paths would
+// overwrite each other's HEAD reference.
+const worktreePath = AGENT_SESSION_ID
+  ? `/workspace/repo-${AGENT_SESSION_ID.slice(0, 8)}`
+  : `/workspace/repo`;
+
 /** Configure git credential store and gh auth using the token in GIT_PUSH_URL. */
 function setupCredentials() {
   let token, hostname;
@@ -101,45 +110,39 @@ const cacheDir = REPO_CACHE_DIR ? `${REPO_CACHE_DIR}/${repoId}` : "";
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
   // Cache hit — fetch latest and create a worktree
   console.log("[sub-agent] Cache hit — fetching latest refs from origin...");
-  execSync(`git -C ${JSON.stringify(cacheDir)} fetch origin --prune`, { stdio: "inherit" });
+  execFileSync("git", ["-C", cacheDir, "fetch", "origin", "--prune"], { stdio: "inherit" });
 
   // Attempt worktree add; on conflict, prune stale entries and retry once
   try {
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
+    execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
       { stdio: "inherit" }
     );
   } catch (addErr) {
     console.warn("[sub-agent] worktree add failed, pruning and retrying:", addErr.message);
-    execSync(`git -C ${JSON.stringify(cacheDir)} worktree prune`, { stdio: "inherit" });
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
+    execFileSync("git", ["-C", cacheDir, "worktree", "prune"], { stdio: "inherit" });
+    execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
       { stdio: "inherit" }
     );
   }
-  console.log("[sub-agent] Worktree created at /workspace/repo for branch:", BRANCH_NAME);
+  console.log("[sub-agent] Worktree created at", worktreePath, "for branch:", BRANCH_NAME);
 } else if (cacheDir) {
   // Cache miss — bare clone, then create a worktree
   console.log("[sub-agent] Cache miss — bare cloning into cache...");
-  execSync(
-    `git clone --bare ${JSON.stringify(REPO_CLONE_URL)} ${JSON.stringify(cacheDir)}`,
+  execFileSync("git", ["clone", "--bare", REPO_CLONE_URL, cacheDir], { stdio: "inherit" });
+  execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
     { stdio: "inherit" }
   );
-  execSync(
-    `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
-    { stdio: "inherit" }
-  );
-  console.log("[sub-agent] Bare clone cached and worktree created at /workspace/repo");
+  console.log("[sub-agent] Bare clone cached and worktree created at", worktreePath);
 } else {
   // No cache configured — fallback to regular clone
   console.log("[sub-agent] No cache configured — cloning repository, branch:", BRANCH_NAME);
-  git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles auth
-  process.chdir("/workspace/repo");
+  git("clone", REPO_CLONE_URL, worktreePath);   // credential store handles auth
+  process.chdir(worktreePath);
   git("checkout", BRANCH_NAME);
 }
 
 // When using a worktree the chdir must happen after worktree creation
-if (cacheDir) process.chdir("/workspace/repo");
+if (cacheDir) process.chdir(worktreePath);
 
 // ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
 await setupCopilotAuth(PI_AGENT_DIR, "[sub-agent]");
@@ -240,7 +243,7 @@ try {
     resourceLoader,
     modelRegistry,
     ...(model ? { model } : {}),
-    tools: createCodingTools("/workspace/repo", { bash: { spawnHook: createGuardHook() } }),
+    tools: createCodingTools(worktreePath, { bash: { spawnHook: createGuardHook() } }),
     customTools: [createWebFetchTool(), askPlanningAgentTool],
   });
 
@@ -315,12 +318,10 @@ try {
 // ── Worktree cleanup ──────────────────────────────────────────────────────────
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
   try {
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree remove /workspace/repo --force`,
+    execFileSync("git", ["-C", cacheDir, "worktree", "remove", worktreePath, "--force"],
       { stdio: "inherit" }
     );
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree prune`,
+    execFileSync("git", ["-C", cacheDir, "worktree", "prune"],
       { stdio: "inherit" }
     );
     console.log("[sub-agent] Worktree removed from cache for task:", TASK_ID);
