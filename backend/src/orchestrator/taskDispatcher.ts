@@ -420,7 +420,15 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
     try {
       // Create container for fix-run (using existing branch)
-      const taskDescription = `Address the following code review comments on the pull request branch "${pr.branch}":\n\n${commentsText}\n\nMake any necessary code changes and ensure the changes are committed.`;
+      // Include the standard workflow preamble so the agent follows commit/push steps.
+      // Also give an explicit hint to inspect changed files before addressing comments.
+      const taskDescription = TaskDispatcher.TASK_PREAMBLE
+        + `You are addressing code review comments for the pull request on branch "${pr.branch}".\n\n`
+        + `First, identify the files changed in this branch by running:\n`
+        + `  git diff origin/main...HEAD --name-only\n\n`
+        + `Then address each of the following review comments by editing the relevant files:\n\n`
+        + commentsText
+        + `\n\nAfter making changes, stage and commit them. Do NOT create a new branch.`;
 
       const ghToken = process.env.GITHUB_TOKEN;
       const fixGitPushUrl = ghToken && repository.cloneUrl.startsWith("https://github.com/")

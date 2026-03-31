@@ -4,8 +4,10 @@ export default defineConfig({
   testDir: './tests',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  retries: 0,
+  // 2 workers lets repository-flow and review-flow run concurrently.
+  // Each uses a worker-unique harness repo name (E2E Test Repo 0/1) to avoid conflicts.
+  workers: process.env.CI ? 2 : undefined,
   reporter: 'html',
   use: {
     baseURL: process.env.HARNESS_URL || 'http://localhost:8080',

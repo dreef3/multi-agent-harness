@@ -44,6 +44,15 @@ const GIT_PUSH_URL = process.env.GIT_PUSH_URL || REPO_CLONE_URL;
 // Empty string means caching is disabled; fall back to regular git clone.
 const REPO_CACHE_DIR = process.env.REPO_CACHE_DIR ?? "";
 
+// Use a session-unique worktree path so that parallel containers don't conflict
+// on the same path in the shared bare-clone worktree registry.
+// Each container's /workspace is an isolated overlay, but the bare clone at
+// /cache/xyz/worktrees/ is shared — two containers using identical paths would
+// overwrite each other's HEAD reference.
+const worktreePath = AGENT_SESSION_ID
+  ? `/workspace/repo-${AGENT_SESSION_ID.slice(0, 8)}`
+  : `/workspace/repo`;
+
 /** Configure git credential store and gh auth using the token in GIT_PUSH_URL. */
 function setupCredentials() {
   let token, hostname;
@@ -99,47 +108,38 @@ const repoId = REPO_CLONE_URL.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
 const cacheDir = REPO_CACHE_DIR ? `${REPO_CACHE_DIR}/${repoId}` : "";
 
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
-  // Cache hit — fetch latest and create a worktree
+  // Cache hit — fetch latest and create a worktree.
+  // Use --no-prune to avoid deleting remote-tracking refs that parallel containers
+  // may have checked out (prune runs on the shared bare clone and can't see other
+  // containers' overlay filesystems).
   console.log("[sub-agent] Cache hit — fetching latest refs from origin...");
-  execSync(`git -C ${JSON.stringify(cacheDir)} fetch origin --prune`, { stdio: "inherit" });
+  execFileSync("git", ["-C", cacheDir, "fetch", "origin"], { stdio: "inherit" });
 
-  // Attempt worktree add; on conflict, prune stale entries and retry once
-  try {
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
-      { stdio: "inherit" }
-    );
-  } catch (addErr) {
-    console.warn("[sub-agent] worktree add failed, pruning and retrying:", addErr.message);
-    execSync(`git -C ${JSON.stringify(cacheDir)} worktree prune`, { stdio: "inherit" });
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
-      { stdio: "inherit" }
-    );
-  }
-  console.log("[sub-agent] Worktree created at /workspace/repo for branch:", BRANCH_NAME);
+  // Use --force so we can check out a branch even if another (possibly dead) worktree
+  // still has it registered. Never run `git worktree prune` here — it would cross-
+  // contaminate parallel containers by removing their live worktree registrations.
+  execFileSync("git", ["-C", cacheDir, "worktree", "add", "--force", worktreePath, BRANCH_NAME],
+    { stdio: "inherit" }
+  );
+  console.log("[sub-agent] Worktree created at", worktreePath, "for branch:", BRANCH_NAME);
 } else if (cacheDir) {
   // Cache miss — bare clone, then create a worktree
   console.log("[sub-agent] Cache miss — bare cloning into cache...");
-  execSync(
-    `git clone --bare ${JSON.stringify(REPO_CLONE_URL)} ${JSON.stringify(cacheDir)}`,
+  execFileSync("git", ["clone", "--bare", REPO_CLONE_URL, cacheDir], { stdio: "inherit" });
+  execFileSync("git", ["-C", cacheDir, "worktree", "add", "--force", worktreePath, BRANCH_NAME],
     { stdio: "inherit" }
   );
-  execSync(
-    `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
-    { stdio: "inherit" }
-  );
-  console.log("[sub-agent] Bare clone cached and worktree created at /workspace/repo");
+  console.log("[sub-agent] Bare clone cached and worktree created at", worktreePath);
 } else {
   // No cache configured — fallback to regular clone
   console.log("[sub-agent] No cache configured — cloning repository, branch:", BRANCH_NAME);
-  git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles auth
-  process.chdir("/workspace/repo");
+  git("clone", REPO_CLONE_URL, worktreePath);   // credential store handles auth
+  process.chdir(worktreePath);
   git("checkout", BRANCH_NAME);
 }
 
 // When using a worktree the chdir must happen after worktree creation
-if (cacheDir) process.chdir("/workspace/repo");
+if (cacheDir) process.chdir(worktreePath);
 
 // ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
 await setupCopilotAuth(PI_AGENT_DIR, "[sub-agent]");
@@ -166,6 +166,12 @@ try {
   let model;
   try {
     model = modelRegistry.find(AGENT_PROVIDER, AGENT_MODEL);
+    // pi-ai hardcodes "vscode-chat" as Copilot-Integration-Id, but GitHub Copilot
+    // rejects PATs for that integration ("Personal Access Tokens are not supported").
+    // "copilot-developer-cli" accepts both PATs and short-lived copilot tokens.
+    if (model?.provider === "github-copilot" && model.headers?.["Copilot-Integration-Id"] === "vscode-chat") {
+      model = { ...model, headers: { ...model.headers, "Copilot-Integration-Id": "copilot-developer-cli" } };
+    }
   } catch {
     console.warn("[sub-agent] Could not find model", AGENT_PROVIDER, AGENT_MODEL, "- using default");
   }
@@ -234,7 +240,7 @@ try {
     resourceLoader,
     modelRegistry,
     ...(model ? { model } : {}),
-    tools: createCodingTools("/workspace/repo", { bash: { spawnHook: createGuardHook() } }),
+    tools: createCodingTools(worktreePath, { bash: { spawnHook: createGuardHook() } }),
     customTools: [createWebFetchTool(), askPlanningAgentTool],
   });
 
@@ -309,12 +315,10 @@ try {
 // ── Worktree cleanup ──────────────────────────────────────────────────────────
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
   try {
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree remove /workspace/repo --force`,
-      { stdio: "inherit" }
-    );
-    execSync(
-      `git -C ${JSON.stringify(cacheDir)} worktree prune`,
+    // Remove only this container's worktree — never run `git worktree prune` here
+    // because prune would delete other parallel containers' live registrations
+    // (their /workspace paths are invisible from this container's overlay).
+    execFileSync("git", ["-C", cacheDir, "worktree", "remove", "--force", worktreePath],
       { stdio: "inherit" }
     );
     console.log("[sub-agent] Worktree removed from cache for task:", TASK_ID);

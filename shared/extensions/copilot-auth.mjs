@@ -1,9 +1,12 @@
 /**
  * Bootstrap GitHub Copilot auth.json from a PAT.
  *
- * Reads COPILOT_GITHUB_TOKEN, exchanges it for a
- * short-lived Copilot access token via the GitHub API, and writes the result into
+ * Reads COPILOT_GITHUB_TOKEN and writes it directly as the access token into
  * <piAgentDir>/auth.json so pi-coding-agent can use the github-copilot provider.
+ *
+ * Fine-grained PATs are used directly as Bearer tokens against
+ * api.individual.githubcopilot.com — no token exchange is needed or attempted.
+ * Expiry is set 1 year out so pi-ai never tries to auto-refresh during a run.
  *
  * @param {string} piAgentDir  Path to the pi-agent directory (e.g. /pi-agent)
  * @param {string} label       Log prefix (e.g. "[planning-agent]" or "[sub-agent]")
@@ -17,33 +20,14 @@ export async function setupCopilotAuth(piAgentDir, label) {
   delete process.env.COPILOT_GITHUB_TOKEN;
 
   try {
-    const res = await fetch("https://api.github.com/copilot_internal/v2/token", {
-      headers: {
-        "Accept": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "User-Agent": "GitHubCopilotChat/0.35.0",
-        "Editor-Version": "vscode/1.107.0",
-        "Editor-Plugin-Version": "copilot-chat/0.35.0",
-        "Copilot-Integration-Id": "vscode-chat",
-      },
-    });
-    if (!res.ok) {
-      console.warn(`${label} Copilot token exchange failed: HTTP ${res.status}`);
-      return;
-    }
-    const ct = await res.json();
-    if (!ct.token) {
-      console.warn(`${label} Copilot token exchange returned no token`);
-      return;
-    }
     const authPath = join(piAgentDir, "auth.json");
     let existing = {};
     try { existing = JSON.parse(readFileSync(authPath, "utf8")); } catch { /* ok */ }
     existing["github-copilot"] = {
       type: "oauth",
       refresh: token,
-      access: ct.token,
-      expires: ct.expires_at * 1000 - 5 * 60 * 1000,
+      access: token,
+      expires: Date.now() + 365 * 24 * 60 * 60 * 1000,
     };
     mkdirSync(piAgentDir, { recursive: true });
     writeFileSync(authPath, JSON.stringify(existing, null, 2), { mode: 0o600 });

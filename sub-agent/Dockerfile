@@ -37,7 +37,7 @@ RUN bun install
 # If reload() >= 500ms and a cache directory is written, add a pre-init RUN step here.
 # SDK version is pinned to 0.61.1 (see package.json) for reproducible builds.
 
-RUN mkdir -p /workspace /pi-agent && chown bun:bun /workspace /pi-agent
+RUN mkdir -p /workspace /pi-agent /cache && chown bun:bun /workspace /pi-agent /cache
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
 
@@ -49,7 +49,8 @@ COPY shared/bin/rtk /usr/local/bin/rtk
 RUN chmod +x /usr/local/bin/rtk && \
     /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch; bash output unfiltered"
 COPY shared/extensions/ /app/shared/extensions/
-RUN mkdir -p /home/bun/.config/rtk
+RUN mkdir -p /home/bun/.config/rtk /home/bun/.config/gh && \
+    chown -R bun:bun /home/bun/.config
 COPY shared/config/rtk-config.toml /home/bun/.config/rtk/config.toml
 
 USER bun
