@@ -93,11 +93,15 @@ export async function cleanupNewBranches(initialBranchNames: string[]): Promise<
   }
 }
 
-/** Seed the test repository into the harness and return its API id. */
-export async function seedTestRepo(request: APIRequestContext): Promise<void> {
+/**
+ * Seed the test repository into the harness under a given name.
+ * Use a worker-unique name (e.g. `E2E Test Repo ${testInfo.parallelIndex}`) to
+ * allow parallel test workers to operate on isolated harness repositories.
+ */
+export async function seedTestRepo(request: APIRequestContext, repoName: string): Promise<void> {
   await request.post(`${API_BASE}/repositories`, {
     data: {
-      name: 'E2E Test Repo',
+      name: repoName,
       provider: 'github',
       providerConfig: { owner: TEST_REPO_OWNER, repo: TEST_REPO_NAME },
       defaultBranch: 'main',
@@ -106,13 +110,13 @@ export async function seedTestRepo(request: APIRequestContext): Promise<void> {
   });
 }
 
-/** Delete the test repository from the harness. */
-export async function deleteTestRepo(request: APIRequestContext): Promise<void> {
+/** Delete the named test repository from the harness. */
+export async function deleteTestRepo(request: APIRequestContext, repoName: string): Promise<void> {
   const repos = await request.get(`${API_BASE}/repositories`);
   if (!repos.ok()) return;
   const data = await repos.json();
   for (const repo of (data as { id: string; name: string }[])) {
-    if (repo.name === 'E2E Test Repo') {
+    if (repo.name === repoName) {
       await request.delete(`${API_BASE}/repositories/${repo.id}`);
     }
   }

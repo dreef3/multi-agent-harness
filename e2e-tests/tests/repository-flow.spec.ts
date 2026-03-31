@@ -14,8 +14,12 @@ import {
 
 test.describe('Repository Configuration Flow', () => {
   let initialBranchNames: string[] = [];
+  let repoName: string;
 
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ request }, testInfo) => {
+    // Use worker-unique repo name so parallel workers don't clobber each other's repo.
+    repoName = `E2E Test Repo ${testInfo.parallelIndex}`;
+
     // Record current branches so we can detect new ones after the test
     const branchRes = await request.get(
       `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
@@ -28,11 +32,11 @@ test.describe('Repository Configuration Flow', () => {
       }
     }
 
-    await seedTestRepo(request);
+    await seedTestRepo(request, repoName);
   });
 
   test.afterEach(async ({ request }) => {
-    await deleteTestRepo(request);
+    await deleteTestRepo(request, repoName);
     await cleanupNewBranches(initialBranchNames);
   });
 
@@ -52,9 +56,9 @@ test.describe('Repository Configuration Flow', () => {
 
     // Select the test repository
     await page.locator('button:has-text("Select repositories")').click();
-    await page.locator('button:has-text("E2E Test Repo")').first().click();
+    await page.locator(`button:has-text("${repoName}")`).first().click();
     await page.keyboard.press('Escape');
-    await expect(page.locator('span:has-text("E2E Test Repo")').first()).toBeVisible();
+    await expect(page.locator(`span:has-text("${repoName}")`).first()).toBeVisible();
 
     // Create project and wait for redirect to chat
     await page.getByRole('button', { name: /create project/i }).click();
@@ -91,7 +95,7 @@ test.describe('Repository Configuration Flow', () => {
     // If the agent didn't complete the full planning flow in time, inject a plan via API.
     const reposRes = await request.get(`${API_BASE}/repositories`);
     const repos = await reposRes.json() as { id: string; name: string }[];
-    const testRepo = repos.find(r => r.name === 'E2E Test Repo');
+    const testRepo = repos.find(r => r.name === repoName);
     expect(testRepo).toBeDefined();
 
     const projectInApproval = await expect.poll(
@@ -132,7 +136,7 @@ test.describe('Repository Configuration Flow', () => {
         patchData.plan = {
           id: `e2e-plan-${suffix}`,
           projectId,
-          content: `### Task 1: Create e2e-marker.md\n**Repository:** E2E Test Repo\n**Description:**\nCreate e2e-marker.md.`,
+          content: `### Task 1: Create e2e-marker.md\n**Repository:** ${repoName}\n**Description:**\nCreate e2e-marker.md.`,
           tasks: [{
             id: `e2e-task-${suffix}`,
             repositoryId: testRepo!.id,
@@ -157,13 +161,13 @@ test.describe('Repository Configuration Flow', () => {
         const project = await res.json() as { status: string };
         return project.status === 'executing';
       },
-      { timeout: 120000, intervals: [5000] }
+      { timeout: 120000, intervals: [3000] }
     ).toBe(true);
 
     // Poll for sub-agent reaching a terminal state — fails fast on auth/model errors
     await expect.poll(
       pollSubAgentStatus(request, projectId!),
-      { timeout: 300000, intervals: [10000] }
+      { timeout: 300000, intervals: [5000] }
     ).toBe('completed');
 
     // Verify a new branch was pushed to the test repo — proves the commit+push happened

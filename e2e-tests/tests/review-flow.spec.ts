@@ -15,8 +15,12 @@ import {
 
 test.describe('Review Comment Fix-Run Flow', () => {
   let initialBranchNames: string[] = [];
+  let repoName: string;
 
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ request }, testInfo) => {
+    // Use worker-unique repo name so parallel workers don't clobber each other's repo.
+    repoName = `E2E Test Repo ${testInfo.parallelIndex}`;
+
     // Record current branches so we can clean up new ones in afterEach
     const branchRes = await fetch(
       `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
@@ -29,11 +33,11 @@ test.describe('Review Comment Fix-Run Flow', () => {
       }
     }
 
-    await seedTestRepo(request);
+    await seedTestRepo(request, repoName);
   });
 
   test.afterEach(async ({ request }) => {
-    await deleteTestRepo(request);
+    await deleteTestRepo(request, repoName);
     await cleanupNewBranches(initialBranchNames);
   });
 
@@ -43,7 +47,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
     // ── 1. Get the seeded repository ID ──────────────────────────────────────
     const reposRes = await request.get(`${API_BASE}/repositories`);
     const repos = await reposRes.json() as { id: string; name: string }[];
-    const testRepo = repos.find(r => r.name === 'E2E Test Repo');
+    const testRepo = repos.find(r => r.name === repoName);
     expect(testRepo).toBeDefined();
     const repoId = testRepo!.id;
 
@@ -71,7 +75,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         plan: {
           id: `e2e-plan-${suffix}`,
           projectId,
-          content: '### Task 1: Create review-flow-marker.md\n**Repository:** E2E Test Repo\n**Description:**\nCreate review-flow-marker.md.',
+          content: `### Task 1: Create review-flow-marker.md\n**Repository:** ${repoName}\n**Description:**\nCreate review-flow-marker.md.`,
           tasks: [{
             id: taskId,
             repositoryId: repoId,
@@ -94,14 +98,14 @@ test.describe('Review Comment Fix-Run Flow', () => {
         const proj = await res.json() as { status: string };
         return proj.status === 'executing';
       },
-      { timeout: 120000, intervals: [5000] }
+      { timeout: 120000, intervals: [3000] }
     ).toBe(true);
 
     // ── 6. Poll for sub-agent reaching a terminal state ───────────────────────
     // Fails fast on auth/model errors instead of waiting the full 10 minutes.
     await expect.poll(
       pollSubAgentStatus(request, projectId),
-      { timeout: 10 * 60 * 1000, intervals: [10000] }
+      { timeout: 10 * 60 * 1000, intervals: [5000] }
     ).toBe('completed');
 
     // ── 7. Poll for PR to appear in harness ──────────────────────────────────

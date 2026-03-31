@@ -49,7 +49,8 @@ COPY shared/bin/rtk /usr/local/bin/rtk
 RUN chmod +x /usr/local/bin/rtk && \
     /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch; bash output unfiltered"
 COPY shared/extensions/ /app/shared/extensions/
-RUN mkdir -p /home/bun/.config/rtk
+RUN mkdir -p /home/bun/.config/rtk /home/bun/.config/gh && \
+    chown -R bun:bun /home/bun/.config
 COPY shared/config/rtk-config.toml /home/bun/.config/rtk/config.toml
 
 USER bun
