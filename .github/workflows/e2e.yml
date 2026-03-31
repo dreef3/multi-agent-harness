@@ -149,6 +149,29 @@ jobs:
           docker compose logs backend
           echo "=== Frontend logs ==="
           docker compose logs frontend
+          echo "=== Planning agent container logs ==="
+          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+            while read name; do
+              echo "--- $name ---"
+              docker logs "$name" 2>&1 || true
+            done
+
+      - name: Collect planning agent session logs
+        if: failure()
+        run: |
+          mkdir -p /tmp/agent-sessions
+          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+            while read name; do
+              docker cp "$name:/pi-agent/sessions/." "/tmp/agent-sessions/$name/" 2>/dev/null || true
+            done
+
+      - name: Upload planning agent session logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-session-logs
+          path: /tmp/agent-sessions/
+          retention-days: 7
 
       - name: Stop services
         if: always()
