@@ -108,28 +108,25 @@ const repoId = REPO_CLONE_URL.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
 const cacheDir = REPO_CACHE_DIR ? `${REPO_CACHE_DIR}/${repoId}` : "";
 
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
-  // Cache hit — fetch latest and create a worktree
+  // Cache hit — fetch latest and create a worktree.
+  // Use --no-prune to avoid deleting remote-tracking refs that parallel containers
+  // may have checked out (prune runs on the shared bare clone and can't see other
+  // containers' overlay filesystems).
   console.log("[sub-agent] Cache hit — fetching latest refs from origin...");
-  execFileSync("git", ["-C", cacheDir, "fetch", "origin", "--prune"], { stdio: "inherit" });
+  execFileSync("git", ["-C", cacheDir, "fetch", "origin"], { stdio: "inherit" });
 
-  // Attempt worktree add; on conflict, prune stale entries and retry once
-  try {
-    execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
-      { stdio: "inherit" }
-    );
-  } catch (addErr) {
-    console.warn("[sub-agent] worktree add failed, pruning and retrying:", addErr.message);
-    execFileSync("git", ["-C", cacheDir, "worktree", "prune"], { stdio: "inherit" });
-    execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
-      { stdio: "inherit" }
-    );
-  }
+  // Use --force so we can check out a branch even if another (possibly dead) worktree
+  // still has it registered. Never run `git worktree prune` here — it would cross-
+  // contaminate parallel containers by removing their live worktree registrations.
+  execFileSync("git", ["-C", cacheDir, "worktree", "add", "--force", worktreePath, BRANCH_NAME],
+    { stdio: "inherit" }
+  );
   console.log("[sub-agent] Worktree created at", worktreePath, "for branch:", BRANCH_NAME);
 } else if (cacheDir) {
   // Cache miss — bare clone, then create a worktree
   console.log("[sub-agent] Cache miss — bare cloning into cache...");
   execFileSync("git", ["clone", "--bare", REPO_CLONE_URL, cacheDir], { stdio: "inherit" });
-  execFileSync("git", ["-C", cacheDir, "worktree", "add", worktreePath, BRANCH_NAME],
+  execFileSync("git", ["-C", cacheDir, "worktree", "add", "--force", worktreePath, BRANCH_NAME],
     { stdio: "inherit" }
   );
   console.log("[sub-agent] Bare clone cached and worktree created at", worktreePath);
@@ -318,10 +315,10 @@ try {
 // ── Worktree cleanup ──────────────────────────────────────────────────────────
 if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
   try {
-    execFileSync("git", ["-C", cacheDir, "worktree", "remove", worktreePath, "--force"],
-      { stdio: "inherit" }
-    );
-    execFileSync("git", ["-C", cacheDir, "worktree", "prune"],
+    // Remove only this container's worktree — never run `git worktree prune` here
+    // because prune would delete other parallel containers' live registrations
+    // (their /workspace paths are invisible from this container's overlay).
+    execFileSync("git", ["-C", cacheDir, "worktree", "remove", "--force", worktreePath],
       { stdio: "inherit" }
     );
     console.log("[sub-agent] Worktree removed from cache for task:", TASK_ID);
