@@ -125,7 +125,7 @@ export class PlanningAgentRpcClient {
     this.socket?.destroy();
     this.socket = null;
     try {
-      execSync(`docker stop ${this.containerName}`, { stdio: "pipe" });
+      execSync(`docker stop -t 1 ${this.containerName}`, { stdio: "pipe" });
     } catch {
       /* already stopped */
     }

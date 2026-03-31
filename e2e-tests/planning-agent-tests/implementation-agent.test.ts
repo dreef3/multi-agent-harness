@@ -31,7 +31,7 @@ beforeAll(() => {
 
 afterAll(() => {
   try {
-    execSync(`docker stop ${CONTAINER_NAME}`, { stdio: "pipe" });
+    execSync(`docker stop -t 1 ${CONTAINER_NAME}`, { stdio: "pipe" });
   } catch {
     /* already stopped */
   }
