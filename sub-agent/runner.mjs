@@ -166,6 +166,12 @@ try {
   let model;
   try {
     model = modelRegistry.find(AGENT_PROVIDER, AGENT_MODEL);
+    // pi-ai hardcodes "vscode-chat" as Copilot-Integration-Id, but GitHub Copilot
+    // rejects PATs for that integration ("Personal Access Tokens are not supported").
+    // "copilot-developer-cli" accepts both PATs and short-lived copilot tokens.
+    if (model?.provider === "github-copilot" && model.headers?.["Copilot-Integration-Id"] === "vscode-chat") {
+      model = { ...model, headers: { ...model.headers, "Copilot-Integration-Id": "copilot-developer-cli" } };
+    }
   } catch {
     console.warn("[sub-agent] Could not find model", AGENT_PROVIDER, AGENT_MODEL, "- using default");
   }
