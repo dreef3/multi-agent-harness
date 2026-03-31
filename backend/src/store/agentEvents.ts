@@ -1,4 +1,6 @@
-import { getDb } from "./db.js";
+import { getAdapter } from "./db.js";
+
+const db = () => getAdapter();
 
 export interface AgentEvent {
   type: string;
@@ -7,7 +9,7 @@ export interface AgentEvent {
 }
 
 export function appendEvent(sessionId: string, event: AgentEvent): void {
-  getDb()
+  db()
     .prepare(
       "INSERT INTO agent_events (session_id, type, payload, timestamp) VALUES (?, ?, ?, ?)"
     )
@@ -15,7 +17,7 @@ export function appendEvent(sessionId: string, event: AgentEvent): void {
 }
 
 export function getEvents(sessionId: string): AgentEvent[] {
-  const rows = getDb()
+  const rows = db()
     .prepare(
       "SELECT type, payload, timestamp FROM agent_events WHERE session_id = ? ORDER BY rowid"
     )
@@ -28,7 +30,7 @@ export function getEvents(sessionId: string): AgentEvent[] {
 }
 
 export function clearEvents(sessionId: string): void {
-  getDb()
+  db()
     .prepare("DELETE FROM agent_events WHERE session_id = ?")
     .run(sessionId);
 }

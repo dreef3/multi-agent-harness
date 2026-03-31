@@ -1,5 +1,7 @@
-import { getDb } from "./db.js";
+import { getAdapter } from "./db.js";
 import type { Repository } from "../models/types.js";
+
+const db = () => getAdapter();
 
 interface RepositoryRow {
   id: string;
@@ -26,7 +28,7 @@ function fromRow(row: RepositoryRow): Repository {
 }
 
 export function insertRepository(repo: Repository): void {
-  getDb()
+  db()
     .prepare(
       `INSERT INTO repositories (id, name, clone_url, provider, provider_config, default_branch, created_at, updated_at)
        VALUES (@id, @name, @cloneUrl, @provider, @providerConfig, @defaultBranch, @createdAt, @updatedAt)`
@@ -39,12 +41,12 @@ export function insertRepository(repo: Repository): void {
 }
 
 export function getRepository(id: string): Repository | null {
-  const row = getDb().prepare("SELECT * FROM repositories WHERE id = ?").get(id) as RepositoryRow | undefined;
+  const row = db().prepare("SELECT * FROM repositories WHERE id = ?").get(id) as RepositoryRow | null;
   return row ? fromRow(row) : null;
 }
 
 export function listRepositories(): Repository[] {
-  const rows = getDb().prepare("SELECT * FROM repositories ORDER BY created_at DESC").all() as RepositoryRow[];
+  const rows = db().prepare("SELECT * FROM repositories ORDER BY created_at DESC").all() as unknown as RepositoryRow[];
   return rows.map(fromRow);
 }
 
@@ -52,7 +54,7 @@ export function updateRepository(id: string, updates: Partial<Omit<Repository, "
   const existing = getRepository(id);
   if (!existing) throw new Error(`Repository not found: ${id}`);
   const merged = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
-  getDb()
+  db()
     .prepare(`UPDATE repositories SET name=@name, clone_url=@cloneUrl, provider=@provider,
              provider_config=@providerConfig, default_branch=@defaultBranch, updated_at=@updatedAt WHERE id=@id`)
     .run({
@@ -63,5 +65,5 @@ export function updateRepository(id: string, updates: Partial<Omit<Repository, "
 }
 
 export function deleteRepository(id: string): void {
-  getDb().prepare("DELETE FROM repositories WHERE id = ?").run(id);
+  db().prepare("DELETE FROM repositories WHERE id = ?").run(id);
 }

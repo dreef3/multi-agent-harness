@@ -1,17 +1,26 @@
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { createSqliteAdapter } from "./sqliteAdapter.js";
+import type { DbAdapter } from "./adapter.js";
 
 let db: Database.Database | null = null;
+let _adapter: DbAdapter | null = null;
 
 export function getDb(): Database.Database {
   if (!db) throw new Error("Database not initialized — call initDb() first.");
   return db;
 }
 
+export function getAdapter(): DbAdapter {
+  if (!_adapter) throw new Error("Database not initialized. Call initDb() first.");
+  return _adapter;
+}
+
 export function initDb(dataDir: string): void {
   fs.mkdirSync(dataDir, { recursive: true });
   db = new Database(path.join(dataDir, "harness.db"));
+  _adapter = createSqliteAdapter(db);
   db.pragma("journal_mode = WAL");
   db.pragma("foreign_keys = ON");
   migrate(db);

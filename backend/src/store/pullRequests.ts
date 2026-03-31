@@ -1,5 +1,7 @@
-import { getDb } from "./db.js";
+import { getAdapter } from "./db.js";
 import type { PullRequest, ReviewComment } from "../models/types.js";
+
+const db = () => getAdapter();
 
 interface PullRequestRow {
   id: string;
@@ -60,7 +62,7 @@ function commentFromRow(row: ReviewCommentRow): ReviewComment {
 }
 
 export function insertPullRequest(pr: PullRequest): void {
-  getDb()
+  db()
     .prepare(
       `INSERT INTO pull_requests (id, project_id, repository_id, agent_session_id, provider, external_id, url, branch, status, created_at, updated_at)
        VALUES (@id, @projectId, @repositoryId, @agentSessionId, @provider, @externalId, @url, @branch, @status, @createdAt, @updatedAt)`
@@ -81,19 +83,19 @@ export function insertPullRequest(pr: PullRequest): void {
 }
 
 export function getPullRequest(id: string): PullRequest | null {
-  const row = getDb().prepare("SELECT * FROM pull_requests WHERE id = ?").get(id) as PullRequestRow | undefined;
+  const row = db().prepare("SELECT * FROM pull_requests WHERE id = ?").get(id) as PullRequestRow | null;
   return row ? prFromRow(row) : null;
 }
 
 export function getPullRequestByExternalId(externalId: string): PullRequest | null {
-  const row = getDb().prepare("SELECT * FROM pull_requests WHERE external_id = ?").get(externalId) as PullRequestRow | undefined;
+  const row = db().prepare("SELECT * FROM pull_requests WHERE external_id = ?").get(externalId) as PullRequestRow | null;
   return row ? prFromRow(row) : null;
 }
 
 export function listPullRequestsByProject(projectId: string): PullRequest[] {
-  const rows = getDb()
+  const rows = db()
     .prepare("SELECT * FROM pull_requests WHERE project_id = ? ORDER BY created_at DESC")
-    .all(projectId) as PullRequestRow[];
+    .all(projectId) as unknown as PullRequestRow[];
   return rows.map(prFromRow);
 }
 
@@ -101,9 +103,9 @@ export function updatePullRequest(id: string, updates: Partial<Omit<PullRequest,
   const existing = getPullRequest(id);
   if (!existing) throw new Error(`PullRequest not found: ${id}`);
   const merged = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
-  getDb()
+  db()
     .prepare(
-      `UPDATE pull_requests SET 
+      `UPDATE pull_requests SET
         project_id = @projectId,
         repository_id = @repositoryId,
         agent_session_id = @agentSessionId,
@@ -131,12 +133,12 @@ export function updatePullRequest(id: string, updates: Partial<Omit<PullRequest,
 
 /** Returns true if the comment was newly inserted, false if it already existed. */
 export function upsertReviewComment(comment: ReviewComment): boolean {
-  const existing = getDb()
+  const existing = db()
     .prepare("SELECT * FROM review_comments WHERE external_id = ?")
-    .get(comment.externalId) as ReviewCommentRow | undefined;
+    .get(comment.externalId) as ReviewCommentRow | null;
 
   if (existing) {
-    getDb()
+    db()
       .prepare(
         `UPDATE review_comments SET
           pull_request_id = @pullRequestId,
@@ -160,7 +162,7 @@ export function upsertReviewComment(comment: ReviewComment): boolean {
       });
     return false;
   } else {
-    getDb()
+    db()
       .prepare(
         `INSERT INTO review_comments (id, pull_request_id, external_id, author, body, file_path, line_number, status, received_at, updated_at)
          VALUES (@id, @pullRequestId, @externalId, @author, @body, @filePath, @lineNumber, @status, @receivedAt, @updatedAt)`
@@ -182,9 +184,9 @@ export function upsertReviewComment(comment: ReviewComment): boolean {
 }
 
 export function getPendingComments(pullRequestId: string): ReviewComment[] {
-  const rows = getDb()
+  const rows = db()
     .prepare("SELECT * FROM review_comments WHERE pull_request_id = ? AND status = 'pending' ORDER BY received_at ASC")
-    .all(pullRequestId) as ReviewCommentRow[];
+    .all(pullRequestId) as unknown as ReviewCommentRow[];
   return rows.map(commentFromRow);
 }
 
@@ -193,7 +195,7 @@ export function markCommentsStatus(
   commentIds: string[],
   status: ReviewComment["status"]
 ): void {
-  const stmt = getDb().prepare(
+  const stmt = db().prepare(
     `UPDATE review_comments SET status = @status, updated_at = @updatedAt WHERE id = @id AND pull_request_id = @pullRequestId`
   );
   const updatedAt = new Date().toISOString();
@@ -203,8 +205,8 @@ export function markCommentsStatus(
 }
 
 export function listAllPendingComments(): ReviewComment[] {
-  const rows = getDb()
+  const rows = db()
     .prepare("SELECT * FROM review_comments WHERE status = 'pending' ORDER BY received_at ASC")
-    .all() as ReviewCommentRow[];
+    .all() as unknown as ReviewCommentRow[];
   return rows.map(commentFromRow);
 }
