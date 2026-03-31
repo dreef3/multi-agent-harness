@@ -40,9 +40,9 @@ describe("webhook signature verification", () => {
   let engine: DebounceEngine;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-webhook-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     process.env.GITHUB_WEBHOOK_SECRET = TEST_SECRET;
     engine = new DebounceEngine({ delayMs: 60_000 });
     setDebounceEngine(engine);

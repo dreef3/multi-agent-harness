@@ -7,9 +7,9 @@ import { appendEvent, getEvents, clearEvents } from "../store/agentEvents.js";
 
 let tmpDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-events-test-"));
-  initDb(tmpDir);
+  await initDb(tmpDir);
   clearEvents("session-1");
   clearEvents("session-2");
   clearEvents("master-proj-1");

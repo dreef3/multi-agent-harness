@@ -23,5 +23,12 @@ export function createSqliteAdapter(db: BetterSqlite3.Database): DbAdapter {
     exec(sql: string): void { db.exec(sql); },
     transaction<T>(fn: () => T): T { return db.transaction(fn)(); },
     pragma(statement: string): void { db.pragma(statement); },
+    execAsync: async (sql: string) => { db.exec(sql); },
+    query: async (sql: string, params: unknown[] = []): Promise<DbRow[]> => {
+      return db.prepare(sql).all(...params) as DbRow[];
+    },
+    execute: async (sql: string, params: unknown[] = []): Promise<void> => {
+      db.prepare(sql).run(...params);
+    },
   };
 }

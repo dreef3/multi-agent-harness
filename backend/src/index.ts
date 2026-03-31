@@ -17,7 +17,7 @@ import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
-  initDb(config.dataDir);
+  await initDb(config.dataDir);
 
   console.log(`[startup] Connecting to Docker proxy at ${config.dockerProxyUrl}...`);
   const dockerUrl = new URL(config.dockerProxyUrl);

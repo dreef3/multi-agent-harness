@@ -21,9 +21,9 @@ describe("security headers", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sec-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     const docker = {} as Dockerode;
     app = express();
     app.use(

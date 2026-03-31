@@ -81,7 +81,7 @@ describe("WebSocket message persistence", () => {
     mockManager = new MockManager();
     vi.mocked(updateProject).mockReset();
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-ws-test-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
 
     server = createServer();
     setupWebSocket(server);

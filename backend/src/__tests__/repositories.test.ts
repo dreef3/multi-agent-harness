@@ -11,9 +11,9 @@ describe("POST /api/repositories validation", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-repo-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     app = express();
     app.use(express.json());
     app.use("/api/repositories", createRepositoriesRouter());

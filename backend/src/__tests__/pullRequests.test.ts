@@ -18,9 +18,9 @@ import type { PullRequest, ReviewComment } from "../models/types.js";
 describe("pullRequests store", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-pr-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
 
   afterEach(() => {
@@ -80,9 +80,9 @@ describe("pullRequests store", () => {
 describe("reviewComments store", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-comment-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
 
   afterEach(() => {

@@ -44,8 +44,8 @@ describe("db", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("initializes and creates all required tables", () => {
-    initDb(tmpDir);
+  it("initializes and creates all required tables", async () => {
+    await initDb(tmpDir);
     const db = getDb();
     const tables = db
       .prepare(
@@ -57,13 +57,13 @@ describe("db", () => {
     expect(names).toContain("agent_sessions");
   });
 
-  it("is idempotent — running initDb twice does not throw", () => {
-    initDb(tmpDir);
-    expect(() => initDb(tmpDir)).not.toThrow();
+  it("is idempotent — running initDb twice does not throw", async () => {
+    await initDb(tmpDir);
+    await expect(initDb(tmpDir)).resolves.not.toThrow();
   });
 
-  it("creates projects and messages tables", () => {
-    initDb(tmpDir);
+  it("creates projects and messages tables", async () => {
+    await initDb(tmpDir);
     const db = getDb();
     const tables = db
       .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -73,8 +73,8 @@ describe("db", () => {
     expect(names).toContain("messages");
   });
 
-  it("creates pull_requests and review_comments tables", () => {
-    initDb(tmpDir);
+  it("creates pull_requests and review_comments tables", async () => {
+    await initDb(tmpDir);
     const db = getDb();
     const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[];
     expect(tables.map((t) => t.name)).toContain("pull_requests");
@@ -84,9 +84,9 @@ describe("db", () => {
 
 describe("repositories store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-repo-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
@@ -126,9 +126,9 @@ describe("repositories store", () => {
 
 describe("agent sessions store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-sess-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
@@ -164,9 +164,9 @@ describe("agent sessions store", () => {
 
 describe("updateTaskInPlan", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     insertProject(makeProject());
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
@@ -200,9 +200,9 @@ describe("updateTaskInPlan", () => {
 
 describe("agent_events table", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 

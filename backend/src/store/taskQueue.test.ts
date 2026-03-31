@@ -16,9 +16,9 @@ import {
 
 let tmpDir: string;
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
-  initDb(tmpDir);
+  await initDb(tmpDir);
 });
 
 afterEach(() => {

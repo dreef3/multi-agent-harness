@@ -54,9 +54,9 @@ function makeSession(id: string, projectId: string, status: AgentSession["status
 describe("RecoveryService", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-recovery-test-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     vi.resetAllMocks();
   });
 

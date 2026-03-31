@@ -15,4 +15,7 @@ export interface DbAdapter {
   exec(sql: string): void;
   transaction<T>(fn: () => T): T;
   pragma(statement: string): void;
+  execAsync(sql: string): Promise<void>;
+  query(sql: string, params?: unknown[]): Promise<DbRow[]>;
+  execute(sql: string, params?: unknown[]): Promise<void>;
 }

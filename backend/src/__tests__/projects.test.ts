@@ -46,9 +46,9 @@ vi.mock("../orchestrator/containerManager.js", () => ({
 
 describe("projects store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-proj-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
@@ -157,9 +157,9 @@ describe("projects store", () => {
 
 describe("messages store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-msg-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
@@ -389,9 +389,9 @@ function createTestProject(overrides: Partial<Omit<Project, "id">> = {}): Projec
   return project;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpHttpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-http-"));
-  initDb(tmpHttpDir);
+  await initDb(tmpHttpDir);
   app = express();
   app.use(express.json());
   app.use("/projects", createProjectsRouter("/tmp/test-data", {} as never));
@@ -660,9 +660,9 @@ describe("POST /api/projects validation", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-val-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     const docker = {} as Dockerode;
     app = express();
     app.use(express.json());
@@ -717,9 +717,9 @@ describe("POST /api/projects/:id/tasks validation", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-tasks-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     const docker = {} as Dockerode;
     app = express();
     app.use(express.json());
