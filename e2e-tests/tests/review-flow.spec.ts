@@ -1,72 +1,17 @@
 import { test, expect } from '@playwright/test';
-
-const API_BASE = process.env.HARNESS_API_URL || 'http://localhost:3000/api';
-const GH_TOKEN = process.env.GITHUB_TOKEN || '';
-const TEST_REPO_OWNER = 'dreef3';
-const TEST_REPO_NAME = 'multi-agent-harness-test-repo';
-const TEST_REPO_HTTPS_URL = `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}.git`;
-const GH_HEADERS = {
-  Authorization: `token ${GH_TOKEN}`,
-  'User-Agent': 'harness-e2e',
-  'Content-Type': 'application/json',
-};
-
-/**
- * Create a branch with one commit in the test repo and open a PR.
- * Returns the branch name, PR number, and PR URL.
- */
-async function createPlanningPr(suffix: string): Promise<{ branch: string; prNumber: number; prUrl: string }> {
-  const refRes = await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/main`,
-    { headers: GH_HEADERS }
-  );
-  const refData = await refRes.json() as { object: { sha: string } };
-  const sha = refData.object.sha;
-
-  const branch = `harness/e2e-plan-${suffix}`;
-
-  await fetch(`https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs`, {
-    method: 'POST',
-    headers: GH_HEADERS,
-    body: JSON.stringify({ ref: `refs/heads/${branch}`, sha }),
-  });
-
-  await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/contents/.harness/e2e-${suffix}.md`,
-    {
-      method: 'PUT',
-      headers: GH_HEADERS,
-      body: JSON.stringify({
-        message: 'chore: e2e test planning document',
-        content: Buffer.from('# E2E test plan').toString('base64'),
-        branch,
-      }),
-    }
-  );
-
-  const prRes = await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls`,
-    {
-      method: 'POST',
-      headers: GH_HEADERS,
-      body: JSON.stringify({ title: '[Harness] E2E Test', head: branch, base: 'main', body: 'E2E test' }),
-    }
-  );
-  const pr = await prRes.json() as { number: number; html_url: string };
-  return { branch, prNumber: pr.number, prUrl: pr.html_url };
-}
-
-/** Post a LGTM comment on a GitHub PR to trigger the harness polling flow. */
-async function postLgtmComment(prNumber: number): Promise<void> {
-  await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/${prNumber}/comments`,
-    {
-      method: 'POST',
-      headers: GH_HEADERS,
-      body: JSON.stringify({ body: 'LGTM' }),
-    }
-  );
-}
+import {
+  API_BASE,
+  GH_TOKEN,
+  GH_HEADERS,
+  TEST_REPO_OWNER,
+  TEST_REPO_NAME,
+  createPlanningPr,
+  postLgtmComment,
+  cleanupNewBranches,
+  seedTestRepo,
+  deleteTestRepo,
+  pollSubAgentStatus,
+} from './helpers';
 
 test.describe('Review Comment Fix-Run Flow', () => {
   let initialBranchNames: string[] = [];
@@ -84,45 +29,12 @@ test.describe('Review Comment Fix-Run Flow', () => {
       }
     }
 
-    await request.post(`${API_BASE}/repositories`, {
-      data: {
-        name: 'E2E Test Repo',
-        provider: 'github',
-        providerConfig: { owner: TEST_REPO_OWNER, repo: TEST_REPO_NAME },
-        defaultBranch: 'main',
-        cloneUrl: TEST_REPO_HTTPS_URL,
-      },
-    });
+    await seedTestRepo(request);
   });
 
   test.afterEach(async ({ request }) => {
-    const repos = await request.get(`${API_BASE}/repositories`);
-    if (repos.ok()) {
-      const data = await repos.json();
-      for (const repo of (data as { id: string; name: string }[])) {
-        if (repo.name === 'E2E Test Repo') {
-          await request.delete(`${API_BASE}/repositories/${repo.id}`);
-        }
-      }
-    }
-
-    // Clean up any GitHub branches created during the test to prevent accumulation.
-    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
-    const branchRes = await fetch(
-      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
-      { headers: ghHeaders }
-    );
-    if (branchRes.ok) {
-      const branches = await branchRes.json() as { name: string }[];
-      for (const branch of branches) {
-        if (!initialBranchNames.includes(branch.name)) {
-          await fetch(
-            `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch.name}`,
-            { method: 'DELETE', headers: ghHeaders }
-          );
-        }
-      }
-    }
+    await deleteTestRepo(request);
+    await cleanupNewBranches(initialBranchNames);
   });
 
   test('fix-run marks comments fixed and pushes new commit', async ({ request }) => {
@@ -185,16 +97,12 @@ test.describe('Review Comment Fix-Run Flow', () => {
       { timeout: 120000, intervals: [5000] }
     ).toBe(true);
 
-    // ── 6. Poll for sub-agent session completing ──────────────────────────────
+    // ── 6. Poll for sub-agent reaching a terminal state ───────────────────────
+    // Fails fast on auth/model errors instead of waiting the full 10 minutes.
     await expect.poll(
-      async () => {
-        const res = await request.get(`${API_BASE}/projects/${projectId}/agents`);
-        if (!res.ok()) return false;
-        const sessions = await res.json() as { type: string; status: string }[];
-        return sessions.some(s => s.type === 'sub' && s.status === 'completed');
-      },
+      pollSubAgentStatus(request, projectId),
       { timeout: 10 * 60 * 1000, intervals: [10000] }
-    ).toBe(true);
+    ).toBe('completed');
 
     // ── 7. Poll for PR to appear in harness ──────────────────────────────────
     let prId: string | undefined;

@@ -15,6 +15,7 @@ jobs:
   e2e-github-copilot:
     name: E2E with GitHub Copilot
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -180,6 +181,7 @@ jobs:
   planning-agent-isolation:
     name: Planning Agent Isolation Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - uses: actions/checkout@v4

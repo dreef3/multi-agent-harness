@@ -37,7 +37,7 @@ RUN bun install
 # If reload() >= 500ms and a cache directory is written, add a pre-init RUN step here.
 # SDK version is pinned to 0.61.1 (see package.json) for reproducible builds.
 
-RUN mkdir -p /workspace /pi-agent && chown bun:bun /workspace /pi-agent
+RUN mkdir -p /workspace /pi-agent /cache && chown bun:bun /workspace /pi-agent /cache
 
 ENV PI_CODING_AGENT_DIR=/pi-agent
 
