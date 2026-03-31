@@ -99,6 +99,17 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_agent_events_session
       ON agent_events (session_id);
+
+    CREATE TABLE IF NOT EXISTS task_queue (
+      id          TEXT PRIMARY KEY,
+      project_id  TEXT NOT NULL,
+      queued_at   TEXT NOT NULL,
+      priority    INTEGER NOT NULL DEFAULT 0,
+      status      TEXT NOT NULL DEFAULT 'queued'
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_queue_status
+      ON task_queue (status, priority DESC, queued_at ASC);
   `);
 
   // Run idempotent ALTER TABLE migrations

@@ -258,7 +258,7 @@ export default function Chat() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link to="/" aria-label="Back to projects" className="text-blue-400 hover:text-blue-300 focus:outline-none">
-            <span aria-hidden="true" className="mr-1">←</span>
+            <span aria-hidden="true">← </span>
             <span>Projects</span>
           </Link>
           <h1 className="text-2xl font-bold">Chat</h1>

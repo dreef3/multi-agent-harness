@@ -6,7 +6,7 @@ import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession, getAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector, ConnectorError } from "../connectors/types.js";
-import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus } from "../orchestrator/containerManager.js";
+import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus, watchContainerExit } from "../orchestrator/containerManager.js";
 import { config } from "../config.js";
 import { tracer } from "../telemetry.js";
 import { SpanStatusCode } from "@opentelemetry/api";
@@ -34,8 +34,6 @@ export function buildClosingRefs(githubIssues: string[]): string {
 }
 
 export class TaskDispatcher {
-  private activeTasks = new Map<string, Promise<TaskResult>>();
-
   private static readonly TASK_PREAMBLE = `You are a software engineering sub-agent. Follow this workflow exactly.
 
 ## Step 1 — Understand the Task
@@ -257,57 +255,55 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     containerId: string,
     timeoutMs = config.subAgentTimeoutMs
   ): Promise<boolean> {
-    const startTime = Date.now();
-
     return new Promise((resolve) => {
-      const checkInterval = setInterval(async () => {
-        const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      let settled = false;
+      const settle = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutHandle);
+        clearInterval(sessionPoll);
+        resolve(result);
+      };
 
-        // Check timeout
-        if (Date.now() - startTime > timeoutMs) {
-          console.warn(`[taskDispatcher] waitForCompletion: timeout after ${elapsedSec}s for container ${containerId}`);
-          clearInterval(checkInterval);
-          resolve(false);
-          return;
-        }
+      // Hard timeout fallback
+      const timeoutHandle = setTimeout(() => {
+        console.warn(
+          `[taskDispatcher] waitForCompletion: timeout after ${timeoutMs}ms for container ${containerId}`
+        );
+        settle(false);
+      }, timeoutMs);
 
-        // Check container status
-        const status = await getContainerStatus(docker, containerId);
-        console.log(`[taskDispatcher] waitForCompletion: elapsed=${elapsedSec}s container=${containerId} status=${status}`);
+      // Docker "die" event fires immediately when the container process exits
+      void watchContainerExit(
+        docker,
+        containerId,
+        (exitCode) => {
+          console.log(`[taskDispatcher] Container ${containerId} exited with code ${exitCode}`);
+          settle(exitCode === 0);
+        },
+        (_err) => {
+          // Stream error — fall back to session poll and timeout; do not settle here
+          console.warn(
+            `[taskDispatcher] Docker events stream error for ${containerId}, relying on session poll`
+          );
+        }
+      );
 
-        if (status === "exited") {
-          clearInterval(checkInterval);
-          resolve(true);
-          return;
-        }
-
-        if (status === "unknown" || status === "stopped") {
-          clearInterval(checkInterval);
-          resolve(false);
-          return;
-        }
-
-        // Check if session has been marked as completed via bridge
-        const session = await this.getSessionStatus(sessionId);
-        if (session === "completed") {
-          clearInterval(checkInterval);
-          resolve(true);
-          return;
-        }
-        if (session === "failed") {
-          clearInterval(checkInterval);
-          resolve(false);
-          return;
-        }
-      }, 5000); // Check every 5 seconds
+      // Session-status poll at 2-second cadence
+      // Handles bridge-based completion (sub-agent calls /api/sessions/:id/status)
+      // and acts as fallback if Docker events are unavailable
+      const sessionPoll = setInterval(() => {
+        const status = this.getSessionStatus(sessionId);
+        if (status === "completed") { settle(true); }
+        else if (status === "failed") { settle(false); }
+      }, 2000);
     });
   }
 
   /**
    * Get session status from store.
    */
-  private async getSessionStatus(sessionId: string): Promise<AgentSession["status"] | null> {
-    const { getAgentSession } = await import("../store/agents.js");
+  private getSessionStatus(sessionId: string): AgentSession["status"] | null {
     const session = getAgentSession(sessionId);
     return session?.status ?? null;
   }
@@ -515,10 +511,4 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     );
   }
 
-  /**
-   * Get active task count.
-   */
-  getActiveTaskCount(): number {
-    return this.activeTasks.size;
-  }
 }

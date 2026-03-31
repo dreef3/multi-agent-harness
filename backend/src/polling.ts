@@ -3,6 +3,7 @@ import { listPullRequestsByProject, upsertReviewComment, updatePullRequest, getP
 import { getRepository, listRepositories } from "./store/repositories.js";
 import { listProjects, listProjectsAwaitingLgtm, updateProject, getProject } from "./store/projects.js";
 import { getConnector } from "./connectors/types.js";
+import { getOrCreateTrace } from "./orchestrator/traceBuilder.js";
 import { getDebounceEngine } from "./api/webhooks.js";
 import { getRecoveryService } from "./orchestrator/recoveryService.js";
 import { getPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
@@ -212,12 +213,14 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       const planningManager = getPlanningAgentManager();
 
       if (project.status === "awaiting_spec_approval") {
+        const specApprovedAt = new Date().toISOString();
         updateProject(project.id, {
-          planningPr: { ...project.planningPr, specApprovedAt: new Date().toISOString() },
+          planningPr: { ...project.planningPr, specApprovedAt },
           status: "plan_in_progress",
         });
+        getOrCreateTrace(project.id, project.name).setSpecApproved(specApprovedAt);
         // Advance cursor to now so plan-phase polling only considers comments posted after spec approval
-        lgtmPollStates.set(project.id, new Date().toISOString());
+        lgtmPollStates.set(project.id, specApprovedAt);
         await planningManager.sendPrompt(
           project.id,
           '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
@@ -225,10 +228,12 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
           'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
         );
       } else if (project.status === "awaiting_plan_approval") {
+        const planApprovedAt = new Date().toISOString();
         updateProject(project.id, {
-          planningPr: { ...project.planningPr, planApprovedAt: new Date().toISOString() },
+          planningPr: { ...project.planningPr, planApprovedAt },
           status: "executing",
         });
+        getOrCreateTrace(project.id, project.name).setPlanApproved(planApprovedAt);
         lgtmPollStates.delete(project.id);
 
         // Commit plan file to non-primary repos (primary repo was committed by write_planning_document)

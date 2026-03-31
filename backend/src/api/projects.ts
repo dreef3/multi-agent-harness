@@ -6,12 +6,32 @@ import { getRepository, listRepositories } from "../store/repositories.js";
 import { listMessages } from "../store/messages.js";
 import { listAgentSessions } from "../store/agents.js";
 import type { Project } from "../models/types.js";
-import { preInitAgent } from "./websocket.js";
 import { getEvents } from "../store/agentEvents.js";
 import { getRecoveryService } from "../orchestrator/recoveryService.js";
 import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
 import { stopContainer, removeContainer } from "../orchestrator/containerManager.js";
 import { handleWritePlanningDocument } from "../agents/planningTool.js";
+import { Type } from "@sinclair/typebox";
+import { validateBody } from "./validate.js";
+
+const CreateProjectSchema = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 200 }),
+  description: Type.Optional(Type.String()),
+  source: Type.Optional(Type.Any()), // ProjectSource has two discriminated shapes; left as Any to avoid versioning churn
+  repositoryIds: Type.Array(Type.String(), { minItems: 1 }),
+  primaryRepositoryId: Type.Optional(Type.String()),
+});
+
+const UpsertTasksSchema = Type.Object({
+  tasks: Type.Array(
+    Type.Object({
+      id: Type.Optional(Type.String()),
+      repositoryId: Type.String({ minLength: 1 }),
+      description: Type.String({ minLength: 1 }),
+    }),
+    { minItems: 1 }
+  ),
+});
 
 export function createProjectsRouter(dataDir: string, docker: Dockerode): Router {
   const router = Router();
@@ -32,17 +52,8 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
   });
 
   // Create a new project
-  router.post("/", (req, res) => {
+  router.post("/", validateBody(CreateProjectSchema), (req, res) => {
     const { name, description, source, repositoryIds, primaryRepositoryId } = req.body;
-    if (!name) {
-      res.status(400).json({ error: "Missing required field: name" });
-      return;
-    }
-
-    if (!repositoryIds || (Array.isArray(repositoryIds) && repositoryIds.length === 0)) {
-      res.status(400).json({ error: "At least one repository is required" });
-      return;
-    }
 
     // GitHub Issues source requires all repositories to be GitHub-hosted
     if (source?.type === "github" && Array.isArray(repositoryIds) && repositoryIds.length > 0) {
@@ -80,8 +91,6 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
     };
 
     insertProject(project);
-    // Start agent initialization in background so it's ready when the WS connects
-    preInitAgent(project.id);
     res.status(201).json(project);
   });
 
@@ -209,12 +218,11 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
   });
 
   // POST /api/projects/:id/tasks — upsert tasks and dispatch (for planning agent dispatch_tasks tool)
-  router.post("/:id/tasks", async (req, res) => {
+  router.post("/:id/tasks", validateBody(UpsertTasksSchema), async (req, res) => {
     const project = getProject(req.params.id);
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
-    const { tasks } = req.body as { tasks?: Array<{ id?: string; repositoryId: string; description: string }> };
-    if (!Array.isArray(tasks)) { res.status(400).json({ error: "tasks must be an array" }); return; }
+    const { tasks } = req.body as { tasks: Array<{ id?: string; repositoryId: string; description: string }> };
 
     const existingTasks = project.plan?.tasks ?? [];
 

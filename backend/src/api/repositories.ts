@@ -3,6 +3,19 @@ import { randomUUID } from "crypto";
 import { Octokit } from "@octokit/rest";
 import { insertRepository, getRepository, listRepositories, updateRepository, deleteRepository } from "../store/repositories.js";
 import type { Repository } from "../models/types.js";
+import { Type } from "@sinclair/typebox";
+import { validateBody } from "./validate.js";
+
+const CreateRepositorySchema = Type.Object({
+  name: Type.String({ minLength: 1, maxLength: 200 }),
+  cloneUrl: Type.String({ minLength: 1 }),
+  provider: Type.Union([
+    Type.Literal("github"),
+    Type.Literal("bitbucket-server"),
+  ]),
+  providerConfig: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+  defaultBranch: Type.Optional(Type.String()),
+});
 
 export interface GitHubRepoInfo {
   name: string;
@@ -65,12 +78,8 @@ export function createRepositoriesRouter(): Router {
   });
 
   // Create a new repository
-  router.post("/", (req, res) => {
+  router.post("/", validateBody(CreateRepositorySchema), (req, res) => {
     const { name, cloneUrl, provider, providerConfig, defaultBranch } = req.body;
-    if (!name || !cloneUrl || !provider) {
-      res.status(400).json({ error: "Missing required fields: name, cloneUrl, provider" });
-      return;
-    }
 
     const now = new Date().toISOString();
     const repo: Repository = {

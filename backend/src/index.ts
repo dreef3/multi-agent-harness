@@ -1,5 +1,6 @@
 import "./telemetry.js"; // MUST be first — patches Node.js HTTP before any other import
 import express from "express";
+import helmet from "helmet";
 import { createServer } from "http";
 import Dockerode from "dockerode";
 import { config } from "./config.js";
@@ -7,11 +8,12 @@ import { initDb } from "./store/db.js";
 import { ensureSubAgentImage } from "./orchestrator/imageBuilder.js";
 import { createRouter } from "./api/routes.js";
 import { setupWebSocket } from "./api/websocket.js";
-import { startPolling } from "./polling.js";
+import { startPolling, stopPolling } from "./polling.js";
 import { DebounceEngine } from "./debounce/engine.js";
 import { setDebounceEngine } from "./api/webhooks.js";
 import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
 import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
+import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -46,7 +48,26 @@ async function main() {
   startPolling(docker);
 
   const app = express();
-  app.use(express.json());
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"],
+          connectSrc: ["'self'", "ws:", "wss:"],
+          imgSrc: ["'self'", "data:"],
+        },
+      },
+    })
+  );
+  app.use(
+    express.json({
+      verify: (_req, _res, buf) => {
+        (_req as import("express").Request & { rawBody: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use("/api", createRouter(config.dataDir, docker));
 
   const server = createServer(app);
@@ -55,6 +76,10 @@ async function main() {
   server.listen(config.port, () => {
     console.log(`[startup] Backend listening on port ${config.port}`);
   });
+
+  const shutdown = createShutdownHandler({ server, stopPolling, debounceEngine });
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT",  () => void shutdown("SIGINT"));
 }
 
 main().catch((err) => { console.error("[fatal]", err); process.exit(1); });

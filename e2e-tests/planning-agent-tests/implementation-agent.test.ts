@@ -46,9 +46,11 @@ afterAll(() => {
 
 /** Run a Node.js ESM snippet inside the container and return its stdout. */
 function nodeExec(snippet: string): string {
-  return execSync(
-    `docker exec ${CONTAINER_NAME} node --input-type=module -e ${JSON.stringify(snippet)}`
-  ).toString();
+  // Pass the snippet via stdin to avoid shell escaping issues with JSON.stringify.
+  // docker exec -i reads stdin; node --input-type=module reads ESM source from stdin.
+  return execSync(`docker exec -i ${CONTAINER_NAME} node --input-type=module`, {
+    input: snippet,
+  }).toString();
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────

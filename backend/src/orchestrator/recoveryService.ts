@@ -8,6 +8,15 @@ import { config } from "../config.js";
 import type { Project, PlanTask } from "../models/types.js";
 import { tracer, meter } from "../telemetry.js";
 import { SpanStatusCode } from "@opentelemetry/api";
+import { getOrCreateTrace } from "./traceBuilder.js";
+import {
+  enqueueTask,
+  markTaskDispatching,
+  removeFromQueue,
+  listQueuedTasks,
+  resetStaleDispatchingEntries,
+  removeTerminalTasks,
+} from "../store/taskQueue.js";
 
 const taskCounter = meter.createCounter("harness.tasks.dispatched", {
   description: "Number of tasks dispatched",
@@ -98,6 +107,10 @@ export class RecoveryService {
    * Registers all stale task IDs synchronously (before any await) then recovers each.
    */
   async recoverOnBoot(): Promise<void> {
+    // Reset any 'dispatching' queue entries from a previous crashed server instance.
+    // These tasks' containers are gone, so they need to be re-queued for dispatch.
+    resetStaleDispatchingEntries();
+
     const allSessions = listStaleAgentSessions();
     // Register all stale task IDs SYNCHRONOUSLY before any async work so that
     // the first poll cycle (fired immediately by startPolling) sees the guard populated.
@@ -110,6 +123,10 @@ export class RecoveryService {
     // Also recover executing projects that have no sessions at all
     // (e.g., dispatch missed due to server restart or empty task list)
     await this.recoverOrphanedExecutingProjects();
+
+    // Re-dispatch any tasks that were queued (waiting for a slot) when the server died.
+    // These are tasks whose containers never started, so they don't have stale sessions.
+    await this.redispatchQueuedTasks();
   }
 
   /**
@@ -199,6 +216,10 @@ export class RecoveryService {
     if (this.activeTaskIds.has(task.id)) return; // concurrency guard
     this.activeTaskIds.add(task.id);
 
+    // Persist to queue so restart recovery can re-dispatch if the server dies while waiting
+    const taskPriority = (task.retryCount ?? 0) > 0 ? 1 : 0; // retries get higher priority
+    enqueueTask(task.id, project.id, taskPriority);
+
     await this.acquireProjectSlot(project.id);
 
     await tracer.startActiveSpan("task.dispatch", async (span) => {
@@ -217,6 +238,7 @@ export class RecoveryService {
           span.setAttribute("task.attempt", localRetryCount + 1);
           const isRetry = localRetryCount > 0;
           updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
+          getOrCreateTrace(project.id, project.name).recordTaskAttempt(task.id, localRetryCount + 1);
           console.log(`[recoveryService] task ${task.id} attempt ${localRetryCount + 1}/${config.subAgentMaxRetries + 1}`);
 
           // On retry, inject a resume note into the task description
@@ -231,6 +253,7 @@ export class RecoveryService {
           // Acquire a concurrency slot before starting a container
           await this.acquireSlot();
           console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
+          markTaskDispatching(task.id);
           let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
           try {
             result = await this.dispatcher.runTask(
@@ -246,6 +269,7 @@ export class RecoveryService {
 
           if (result.success) {
             updateTaskInPlan(project.id, task.id, { status: "completed" });
+            getOrCreateTrace(project.id, project.name).recordTaskComplete(task.id);
             console.log(`[recoveryService] task ${task.id} completed successfully`);
             taskCounter.add(1, { "project.id": project.id, status: "success" });
             span.setAttributes({ "task.status": "success" });
@@ -256,6 +280,7 @@ export class RecoveryService {
           lastError = result.error;
           localRetryCount++;
           updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
+          getOrCreateTrace(project.id, project.name).recordTaskFailed(task.id);
           console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
         }
 
@@ -266,6 +291,7 @@ export class RecoveryService {
           retryCount: localRetryCount,
           errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
         });
+        getOrCreateTrace(project.id, project.name).recordTaskFailed(task.id);
         taskCounter.add(1, { "project.id": project.id, status: "failed" });
         span.setAttributes({ "task.status": "failed" });
         span.setStatus({ code: SpanStatusCode.ERROR, message: lastError });
@@ -277,6 +303,7 @@ export class RecoveryService {
         throw err;
       } finally {
         span.end();
+        removeFromQueue(task.id);
         this.activeTaskIds.delete(task.id);
         this.releaseProjectSlot(project.id);
       }
@@ -445,6 +472,58 @@ export class RecoveryService {
       );
       if (activeSessions.length > 0) continue; // sessions exist — handled elsewhere
       await this.recoverOrphanedProject(project);
+    }
+  }
+
+  /**
+   * Re-dispatch tasks that are in the task_queue with status 'queued'.
+   * These are tasks that were waiting for a concurrency slot when the server restarted.
+   * Without this, they would be stuck until the 60-second polling cycle fires.
+   */
+  private async redispatchQueuedTasks(): Promise<void> {
+    const queued = listQueuedTasks();
+    if (queued.length === 0) return;
+
+    console.log(`[recoveryService] Re-dispatching ${queued.length} queued task(s) from persistent queue`);
+
+    const terminalIds: string[] = [];
+    const terminal = new Set(["completed", "failed", "cancelled"]);
+
+    for (const entry of queued) {
+      if (this.activeTaskIds.has(entry.id)) continue; // already in-flight from session recovery
+
+      const project = getProject(entry.projectId);
+      if (!project?.plan) {
+        console.warn(`[recoveryService] Queued task ${entry.id} has no project/plan — removing from queue`);
+        terminalIds.push(entry.id);
+        continue;
+      }
+
+      const task = project.plan.tasks.find(t => t.id === entry.id);
+      if (!task) {
+        console.warn(`[recoveryService] Queued task ${entry.id} not found in plan — removing from queue`);
+        terminalIds.push(entry.id);
+        continue;
+      }
+
+      if (terminal.has(task.status)) {
+        console.log(`[recoveryService] Queued task ${entry.id} is already terminal (${task.status}) — removing from queue`);
+        terminalIds.push(entry.id);
+        continue;
+      }
+
+      // Reset to pending if stuck as 'executing' with no live container
+      if (task.status === "executing") {
+        updateTaskInPlan(entry.projectId, entry.id, { status: "pending" });
+      }
+
+      const freshProject = getProject(entry.projectId)!;
+      const freshTask = freshProject.plan!.tasks.find(t => t.id === entry.id) ?? task;
+      void this.dispatchWithRetry(freshProject, freshTask);
+    }
+
+    if (terminalIds.length > 0) {
+      removeTerminalTasks(terminalIds);
     }
   }
 }

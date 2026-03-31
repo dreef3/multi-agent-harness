@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createSubAgentContainer, startContainer, getContainerStatus } from "../orchestrator/containerManager.js";
+import { EventEmitter } from "events";
+import { createSubAgentContainer, startContainer, getContainerStatus, watchContainerExit } from "../orchestrator/containerManager.js";
 
 describe("imageBuilder", () => {
   beforeEach(() => { vi.resetModules(); });
@@ -49,5 +50,83 @@ describe("containerManager", () => {
   it("reports unknown for missing container", async () => {
     const mockDocker = { getContainer: vi.fn().mockReturnValue({ inspect: vi.fn().mockRejectedValue(new Error("No such container")) }) };
     expect(await getContainerStatus(mockDocker as never, "abc")).toBe("unknown");
+  });
+
+  it("includes CapDrop ALL and SecurityOpt no-new-privileges in HostConfig", async () => {
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-secure" });
+    await createSubAgentContainer({ createContainer: mockCreate } as never, {
+      sessionId: "sess-sec",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/proj-1/task-sec",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig as {
+      CapDrop: string[];
+      SecurityOpt: string[];
+    };
+    expect(hostConfig.CapDrop).toEqual(["ALL"]);
+    expect(hostConfig.SecurityOpt).toContain("no-new-privileges:true");
+  });
+
+  it("does not set ReadonlyRootfs when SUB_AGENT_READONLY_ROOTFS is not set", async () => {
+    delete process.env.SUB_AGENT_READONLY_ROOTFS;
+    vi.resetModules();
+    const { createSubAgentContainer: createFresh } = await import("../orchestrator/containerManager.js");
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-rw" });
+    await createFresh({ createContainer: mockCreate } as never, {
+      sessionId: "sess-rw",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/task-rw",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig;
+    expect(hostConfig.ReadonlyRootfs).toBeUndefined();
+    expect(hostConfig.Tmpfs).toBeUndefined();
+  });
+
+  it("sets ReadonlyRootfs and Tmpfs when SUB_AGENT_READONLY_ROOTFS=true", async () => {
+    process.env.SUB_AGENT_READONLY_ROOTFS = "true";
+    vi.resetModules();
+    const { createSubAgentContainer: createFresh } = await import("../orchestrator/containerManager.js");
+    const mockCreate = vi.fn().mockResolvedValue({ id: "container-ro" });
+    await createFresh({ createContainer: mockCreate } as never, {
+      sessionId: "sess-ro",
+      repoCloneUrl: "https://github.com/org/repo.git",
+      branchName: "agent/task-ro",
+    });
+    const hostConfig = mockCreate.mock.calls[0][0].HostConfig;
+    expect(hostConfig.ReadonlyRootfs).toBe(true);
+    expect(hostConfig.Tmpfs).toMatchObject({
+      "/tmp": expect.stringContaining("rw"),
+      "/workspace": expect.stringContaining("rw"),
+    });
+    delete process.env.SUB_AGENT_READONLY_ROOTFS;
+  });
+});
+
+describe("watchContainerExit", () => {
+  it("calls onExit with parsed exit code when die event fires", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onExit = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", onExit);
+    emitter.emit("data", Buffer.from(JSON.stringify({ Actor: { Attributes: { exitCode: "0" } } })));
+    expect(onExit).toHaveBeenCalledWith(0);
+  });
+
+  it("defaults exitCode to 1 when Attributes are missing", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onExit = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", onExit);
+    emitter.emit("data", Buffer.from(JSON.stringify({})));
+    expect(onExit).toHaveBeenCalledWith(1);
+  });
+
+  it("calls onError when the stream emits an error", async () => {
+    const emitter = new EventEmitter();
+    const mockDocker = { getEvents: vi.fn().mockResolvedValue(emitter) };
+    const onError = vi.fn();
+    await watchContainerExit(mockDocker as never, "container-abc", vi.fn(), onError);
+    emitter.emit("error", new Error("stream closed unexpectedly"));
+    expect(onError).toHaveBeenCalledWith(expect.any(Error));
   });
 });

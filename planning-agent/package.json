@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "^0.61.1",
+    "@mariozechner/pi-coding-agent": "0.61.1",
     "@sinclair/typebox": "^0.34.41",
     "superpowers": "github:obra/superpowers#v5.0.4"
   }

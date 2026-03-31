@@ -23,6 +23,20 @@ WORKDIR /app
 COPY sub-agent/package.json .
 RUN bun install
 
+# NOTE (2026-03-28): Extension pre-initialization was investigated.
+# DefaultResourceLoader.reload() could not be measured in this environment
+# (Docker images not pre-built). Investigation should be re-run with:
+#   docker run --rm multi-agent-harness/sub-agent:latest bun -e "
+#     const { DefaultResourceLoader, SettingsManager } = await import('@mariozechner/pi-coding-agent');
+#     const sm = SettingsManager.inMemory();
+#     const rl = new DefaultResourceLoader({ settingsManager: sm, noSkills: true,
+#       noPromptTemplates: true, noThemes: true });
+#     const t = Date.now(); await rl.reload();
+#     console.log('reload() elapsed ms:', Date.now() - t);
+#   "
+# If reload() >= 500ms and a cache directory is written, add a pre-init RUN step here.
+# SDK version is pinned to 0.61.1 (see package.json) for reproducible builds.
+
 RUN mkdir -p /workspace /pi-agent && chown bun:bun /workspace /pi-agent
 
 ENV PI_CODING_AGENT_DIR=/pi-agent

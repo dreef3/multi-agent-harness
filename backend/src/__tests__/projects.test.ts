@@ -12,9 +12,9 @@ import request from "supertest";
 import express from "express";
 import { createProjectsRouter } from "../api/projects.js";
 import { appendEvent } from "../store/agentEvents.js";
+import type Dockerode from "dockerode";
 
 vi.mock("../api/websocket.js", () => ({
-  preInitAgent: vi.fn(),
   setupWebSocket: vi.fn(),
 }));
 
@@ -403,7 +403,7 @@ afterEach(() => {
 
 describe("POST /projects/:id/tasks", () => {
   it("returns 404 for unknown project", async () => {
-    const res = await request(app).post("/projects/nonexistent/tasks").send({ tasks: [] });
+    const res = await request(app).post("/projects/nonexistent/tasks").send({ tasks: [{ repositoryId: "repo-1", description: "task" }] });
     expect(res.status).toBe(404);
   });
 
@@ -653,5 +653,110 @@ describe("DELETE /projects/:id", () => {
 
     await request(app).delete(`/projects/${project.id}`);
     expect(mockStopContainerFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/projects validation", () => {
+  let app: ReturnType<typeof express>;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-val-"));
+    initDb(tmpDir);
+    const docker = {} as Dockerode;
+    app = express();
+    app.use(express.json());
+    app.use("/api/projects", createProjectsRouter(tmpDir, docker));
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("returns 400 when name is missing", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ repositoryIds: ["repo-1"] });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ error: "Validation failed", details: expect.any(Array) });
+  });
+
+  it("returns 400 when name is empty string", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "", repositoryIds: ["repo-1"] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when repositoryIds is missing", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "My Project" });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when repositoryIds is empty array", async () => {
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "My Project", repositoryIds: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("accepts extra fields (TypeBox default passthrough)", async () => {
+    // Will fail at business logic (repository not found) not at validation
+    const res = await request(app)
+      .post("/api/projects")
+      .send({ name: "My Project", repositoryIds: ["repo-1"], unknownField: true });
+    // Should NOT be 400 validation error
+    expect(res.status).not.toBe(400);
+  });
+});
+
+describe("POST /api/projects/:id/tasks validation", () => {
+  let app: ReturnType<typeof express>;
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-tasks-"));
+    initDb(tmpDir);
+    const docker = {} as Dockerode;
+    app = express();
+    app.use(express.json());
+    app.use("/api/projects", createProjectsRouter(tmpDir, docker));
+  });
+
+  afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
+
+  it("returns 400 when tasks field is missing", async () => {
+    const res = await request(app)
+      .post("/api/projects/proj-1/tasks")
+      .send({});
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when tasks is empty array", async () => {
+    const res = await request(app)
+      .post("/api/projects/proj-1/tasks")
+      .send({ tasks: [] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when a task item is missing repositoryId", async () => {
+    const res = await request(app)
+      .post("/api/projects/proj-1/tasks")
+      .send({ tasks: [{ description: "Do something" }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
+  });
+
+  it("returns 400 when a task item is missing description", async () => {
+    const res = await request(app)
+      .post("/api/projects/proj-1/tasks")
+      .send({ tasks: [{ repositoryId: "repo-1" }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("Validation failed");
   });
 });

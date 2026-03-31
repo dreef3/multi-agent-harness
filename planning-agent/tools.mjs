@@ -53,6 +53,13 @@ function hasEmbeddedTokenUrl(tokens) {
   );
 }
 
+/**
+ * Returns true if any token in the command targets the .harness/ directory.
+ */
+function hasHarnessPath(tokens) {
+  return tokens.some(t => /(?:^|\/)\.harness(?:\/|$)/.test(t));
+}
+
 function makeGuardHook(patterns) {
   return function guardHook(context) {
     try {
@@ -63,6 +70,15 @@ function makeGuardHook(patterns) {
         return {
           ...context,
           command: `printf 'Blocked: git push with an embedded credential URL is not allowed.\\n' >&2; exit 1`,
+        };
+      }
+
+      if (hasHarnessPath(tokens)) {
+        const msg = "[GUARD] Access to .harness/ is prohibited. This directory is managed exclusively by the harness backend.";
+        const safe = msg.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+        return {
+          ...context,
+          command: `printf '${safe}\\n' >&2; exit 1`,
         };
       }
 

@@ -74,4 +74,10 @@ export const config = {
   harnessApiUrl: process.env.HARNESS_API_URL ?? "http://backend:3000",
   opencodeApiKey: process.env.OPENCODE_API_KEY,
   testRepoUrl: process.env.TEST_REPO_URL ?? "git@github.com:dreef3/multi-agent-harness-test-repo.git",
+  // Opt-in: mount sub-agent root filesystem as read-only.
+  // Requires tmpfs mounts for /tmp and /workspace.
+  subAgentReadOnlyRootfs: process.env.SUB_AGENT_READONLY_ROOTFS === "true",
+  // Named Docker volume for bare-repo cache shared across sub-agent containers.
+  // Set HARNESS_REPO_CACHE_VOLUME="" to disable caching entirely (fallback to git clone).
+  repoCacheVolume: process.env.HARNESS_REPO_CACHE_VOLUME ?? "harness-repo-cache",
 };

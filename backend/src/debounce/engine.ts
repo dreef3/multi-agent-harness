@@ -18,7 +18,6 @@ export class DebounceEngine {
 
   constructor(config?: Partial<DebounceConfig>) {
     this.config = {
-      strategy: "timer",
       delayMs: 10 * 60 * 1000, // 10 minutes default
       ...config,
     };
@@ -98,6 +97,14 @@ export class DebounceEngine {
    */
   getPendingCount(): number {
     return this.timers.size;
+  }
+
+  /**
+   * Shut down the engine: cancel all pending timers and the cleanup interval.
+   * Alias for dispose(); prefer this name in shutdown contexts.
+   */
+  shutdown(): void {
+    this.dispose();
   }
 
   /**

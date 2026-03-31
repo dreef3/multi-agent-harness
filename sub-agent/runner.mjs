@@ -13,7 +13,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { execSync, execFileSync } from "node:child_process";
-import { writeFileSync, appendFileSync, mkdirSync, copyFileSync, existsSync as fsExistsSync } from "node:fs";
+import { appendFileSync, existsSync as fsExistsSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { createGuardHook, createWebFetchTool } from "./tools.mjs";
@@ -39,6 +39,10 @@ const TASK_ID = process.env.TASK_ID ?? "unknown";
 // GIT_PUSH_URL is the authenticated push URL — consumed here and cleared from env
 // before the AI agent starts so the agent cannot use it for direct GitHub API calls.
 const GIT_PUSH_URL = process.env.GIT_PUSH_URL || REPO_CLONE_URL;
+
+// Repo cache dir — mounted from harness-repo-cache volume by containerManager.
+// Empty string means caching is disabled; fall back to regular git clone.
+const REPO_CACHE_DIR = process.env.REPO_CACHE_DIR ?? "";
 
 /** Configure git credential store and gh auth using the token in GIT_PUSH_URL. */
 function setupCredentials() {
@@ -89,11 +93,53 @@ const GIT_AUTHOR_EMAIL = process.env.GIT_COMMIT_AUTHOR_EMAIL ?? "harness@noreply
 git("config", "--global", "user.email", GIT_AUTHOR_EMAIL);
 git("config", "--global", "user.name", GIT_AUTHOR_NAME);
 
-// ── Clone & checkout ──────────────────────────────────────────────────────────
-console.log("[sub-agent] Cloning repository, branch:", BRANCH_NAME);
-git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles auth
-process.chdir("/workspace/repo");
-git("checkout", BRANCH_NAME);
+// ── Clone & checkout (cache-aware) ───────────────────────────────────────────
+// Sanitise clone URL to a filesystem-safe directory name for the bare repo.
+const repoId = REPO_CLONE_URL.replace(/[^a-zA-Z0-9._-]/g, "_").slice(-60);
+const cacheDir = REPO_CACHE_DIR ? `${REPO_CACHE_DIR}/${repoId}` : "";
+
+if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
+  // Cache hit — fetch latest and create a worktree
+  console.log("[sub-agent] Cache hit — fetching latest refs from origin...");
+  execSync(`git -C ${JSON.stringify(cacheDir)} fetch origin --prune`, { stdio: "inherit" });
+
+  // Attempt worktree add; on conflict, prune stale entries and retry once
+  try {
+    execSync(
+      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
+      { stdio: "inherit" }
+    );
+  } catch (addErr) {
+    console.warn("[sub-agent] worktree add failed, pruning and retrying:", addErr.message);
+    execSync(`git -C ${JSON.stringify(cacheDir)} worktree prune`, { stdio: "inherit" });
+    execSync(
+      `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
+      { stdio: "inherit" }
+    );
+  }
+  console.log("[sub-agent] Worktree created at /workspace/repo for branch:", BRANCH_NAME);
+} else if (cacheDir) {
+  // Cache miss — bare clone, then create a worktree
+  console.log("[sub-agent] Cache miss — bare cloning into cache...");
+  execSync(
+    `git clone --bare ${JSON.stringify(REPO_CLONE_URL)} ${JSON.stringify(cacheDir)}`,
+    { stdio: "inherit" }
+  );
+  execSync(
+    `git -C ${JSON.stringify(cacheDir)} worktree add /workspace/repo ${JSON.stringify(BRANCH_NAME)}`,
+    { stdio: "inherit" }
+  );
+  console.log("[sub-agent] Bare clone cached and worktree created at /workspace/repo");
+} else {
+  // No cache configured — fallback to regular clone
+  console.log("[sub-agent] No cache configured — cloning repository, branch:", BRANCH_NAME);
+  git("clone", REPO_CLONE_URL, "/workspace/repo");   // credential store handles auth
+  process.chdir("/workspace/repo");
+  git("checkout", BRANCH_NAME);
+}
+
+// When using a worktree the chdir must happen after worktree creation
+if (cacheDir) process.chdir("/workspace/repo");
 
 // ── Copilot auth bootstrap (PAT → auth.json) ──────────────────────────────────
 await setupCopilotAuth(PI_AGENT_DIR, "[sub-agent]");
@@ -241,16 +287,9 @@ try {
   git("add", "-A");
   const diff = execSync("git diff --cached --stat").toString().trim();
   if (!diff) {
-    const note = aiSucceeded
-      ? "AI agent completed but made no file changes."
-      : "AI agent unavailable; placeholder created.";
-    const fallbackLogDir = `.harness/logs/sub-agents/${TASK_ID}`;
-    mkdirSync(fallbackLogDir, { recursive: true });
-    writeFileSync(
-      `${fallbackLogDir}/task-output.md`,
-      `# Task Output\n\nTask: ${TASK_DESCRIPTION}\n\nNote: ${note}\nCompleted at: ${new Date().toISOString()}\n`
-    );
-    git("add", "-A");
+    // Legacy log commits removed — structured tracing handled by backend TraceBuilder.
+    // No file changes and no fallback log needed; exitCode remains aiSucceeded ? 0 : 1.
+    console.log("[sub-agent] No file changes to commit.");
   }
   const finalDiff = execSync("git diff --cached --stat").toString().trim();
   if (finalDiff) {
@@ -265,28 +304,24 @@ try {
   exitCode = 1;
 }
 
-// ── Commit session log ────────────────────────────────────────────────────────
-try {
-  const sessionJsonl = join(sessionDir, "session.jsonl");
-  const logDir = `.harness/logs/sub-agents/${TASK_ID}`;
-  const logDest = `${logDir}/session.jsonl`;
+// Legacy log commits removed — structured tracing handled by backend TraceBuilder.
 
-  if (fsExistsSync(sessionJsonl)) {
-    mkdirSync(logDir, { recursive: true });
-    copyFileSync(sessionJsonl, logDest);
-    git("add", logDest);
-    const logDiff = execSync("git diff --cached --stat").toString().trim();
-    if (logDiff) {
-      git("commit", "-m", `chore: add agent log for task ${TASK_ID}`);
-      execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
-      console.log("[sub-agent] Session log committed for task:", TASK_ID);
-    }
-  } else {
-    console.warn("[sub-agent] No session.jsonl found at:", sessionJsonl);
+// ── Worktree cleanup ──────────────────────────────────────────────────────────
+if (cacheDir && fsExistsSync(`${cacheDir}/HEAD`)) {
+  try {
+    execSync(
+      `git -C ${JSON.stringify(cacheDir)} worktree remove /workspace/repo --force`,
+      { stdio: "inherit" }
+    );
+    execSync(
+      `git -C ${JSON.stringify(cacheDir)} worktree prune`,
+      { stdio: "inherit" }
+    );
+    console.log("[sub-agent] Worktree removed from cache for task:", TASK_ID);
+  } catch (wtErr) {
+    // Non-fatal — container is about to exit anyway; the next run will handle a stale entry
+    console.warn("[sub-agent] Failed to remove worktree (non-fatal):", wtErr.message);
   }
-} catch (logErr) {
-  // Best-effort — do not change exit code
-  console.warn("[sub-agent] Failed to commit session log:", logErr.message);
 }
 
 console.log("[sub-agent] Done, exit code:", exitCode);

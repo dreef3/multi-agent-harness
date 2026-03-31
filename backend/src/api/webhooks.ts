@@ -60,7 +60,8 @@ export function createWebhooksRouter(): Router {
       return;
     }
 
-    const rawBody = JSON.stringify(req.body);
+    const rawBody = (req as import("express").Request & { rawBody: Buffer }).rawBody?.toString("utf8")
+      ?? JSON.stringify(req.body);
     if (!verifySignature(rawBody, signature, secret)) {
       res.status(401).json({ error: "Invalid signature" });
       return;

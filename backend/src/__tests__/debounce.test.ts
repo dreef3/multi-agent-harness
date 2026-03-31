@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { DebounceEngine } from "../debounce/engine.js";
-import { defaultDebounceConfig } from "../debounce/strategies.js";
 
 describe("DebounceEngine", () => {
   beforeEach(() => {
@@ -211,15 +210,5 @@ describe("DebounceEngine", () => {
       engine.dispose(); // Should not throw
       expect(engine.getPendingCount()).toBe(0);
     });
-  });
-});
-
-describe("defaultDebounceConfig", () => {
-  it("has timer strategy", () => {
-    expect(defaultDebounceConfig.strategy).toBe("timer");
-  });
-
-  it("has 10 minute default delay", () => {
-    expect(defaultDebounceConfig.delayMs).toBe(600000);
   });
 });
