@@ -19,7 +19,7 @@ function mockRes(status = 200) {
 const next = vi.fn() as unknown as NextFunction;
 
 describe("auditLog middleware", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => { vi.clearAllMocks(); });
 
   it("skips GET requests", async () => {
     const req = mockReq("GET", "/api/projects");

@@ -94,7 +94,7 @@ describe("verifyJwt middleware", () => {
         exp:   Math.floor(Date.now() / 1000) + 3600,
       },
       protectedHeader: { alg: "RS256" },
-    } as Awaited<ReturnType<typeof jwtVerify>>);
+    } as unknown as Awaited<ReturnType<typeof jwtVerify>>);
 
     const { req, res, next } = makeReqRes("Bearer valid-token");
     await verifyJwt()(req, res, next);
