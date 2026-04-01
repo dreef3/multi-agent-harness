@@ -16,7 +16,8 @@ describe("runMigrations", () => {
     expect(names).toContain("003_add_planning_columns");
     expect(names).toContain("004_add_last_error");
     expect(names).toContain("005_add_auth_tables");
-    expect(names.length).toBe(5);
+    expect(names).toContain("006_add_attribution_columns");
+    expect(names.length).toBe(6);
   });
 
   it("is idempotent — running twice does not error", async () => {
@@ -25,7 +26,7 @@ describe("runMigrations", () => {
     await runMigrations(adapter);
     await runMigrations(adapter); // second run should be no-op
     const rows = await adapter.query("SELECT name FROM schema_migrations");
-    expect(rows.length).toBe(5);
+    expect(rows.length).toBe(6);
   });
 
   it("skips already-applied migrations", async () => {
