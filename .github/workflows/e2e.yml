@@ -28,7 +28,6 @@ jobs:
           cat > .env << 'EOF'
           GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
           COPILOT_GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
-          GH_APPROVER_TOKEN=${{ secrets.GH_APPROVER_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
           SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
