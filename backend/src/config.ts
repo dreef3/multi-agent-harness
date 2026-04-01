@@ -80,4 +80,14 @@ export const config = {
   // Named Docker volume for bare-repo cache shared across sub-agent containers.
   // Set HARNESS_REPO_CACHE_VOLUME="" to disable caching entirely (fallback to git clone).
   repoCacheVolume: process.env.HARNESS_REPO_CACHE_VOLUME ?? "harness-repo-cache",
+
+  // Auth / OIDC
+  authEnabled:         process.env.AUTH_ENABLED === "true",
+  oidcIssuerUrl:       process.env.OIDC_ISSUER_URL ?? "",
+  oidcAudience:        process.env.OIDC_AUDIENCE ?? process.env.OIDC_CLIENT_ID ?? "",
+  oidcRoleClaim:       process.env.OIDC_ROLE_CLAIM ?? "roles",
+  oidcRoleMapAdmin:    process.env.OIDC_ROLE_MAP_ADMIN    ?? "harness-admins",
+  oidcRoleMapOperator: process.env.OIDC_ROLE_MAP_OPERATOR ?? "harness-operators",
+  oidcRoleMapReviewer: process.env.OIDC_ROLE_MAP_REVIEWER ?? "harness-reviewers",
+  oidcRoleMapViewer:   process.env.OIDC_ROLE_MAP_VIEWER   ?? "harness-viewers",
 };

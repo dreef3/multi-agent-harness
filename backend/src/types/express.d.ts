@@ -3,5 +3,6 @@
 declare namespace Express {
   interface Request {
     rawBody?: Buffer;
+    user?: import("../api/auth.js").AuthUser;
   }
 }
