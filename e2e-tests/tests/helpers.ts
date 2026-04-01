@@ -60,7 +60,7 @@ export async function createPlanningPr(suffix: string): Promise<{ branch: string
 }
 
 /** Submit a formal GitHub PR approval review to trigger the harness polling flow. */
-export async function postLgtmComment(prNumber: number): Promise<void> {
+export async function approvePlanningPr(prNumber: number): Promise<void> {
   await fetch(
     `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls/${prNumber}/reviews`,
     {
