@@ -33,7 +33,7 @@ const UpsertTasksSchema = Type.Object({
   ),
 });
 
-export function createProjectsRouter(dataDir: string, docker: Dockerode): Router {
+export function createProjectsRouter(dataDir: string, _docker?: Dockerode): Router {
   const router = Router();
   // List all projects
   router.get("/", async (_req, res) => {
@@ -178,8 +178,8 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       await Promise.allSettled(activeSessions.map(async (session) => {
         try {
           console.log(`[projects] Stopping sub-agent container ${session.containerId} (session ${session.id})`);
-          await stopContainer(docker, session.containerId!);
-          await removeContainer(docker, session.containerId!);
+          await stopContainer(session.containerId!);
+          await removeContainer(session.containerId!);
           console.log(`[projects] Stopped and removed container ${session.containerId}`);
         } catch (err) {
           console.warn(`[projects] Failed to stop sub-agent container ${session.containerId}:`, err);

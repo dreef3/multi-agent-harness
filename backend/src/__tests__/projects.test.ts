@@ -331,7 +331,8 @@ Some content without description header
 describe("TaskDispatcher.buildTaskPrompt", () => {
   it("prepends TDD preamble to the raw description", async () => {
     const { TaskDispatcher } = await import("../orchestrator/taskDispatcher.js");
-    const dispatcher = new TaskDispatcher();
+    const { MockContainerRuntime } = await import("../orchestrator/__tests__/mocks/mockContainerRuntime.js");
+    const dispatcher = new TaskDispatcher(new MockContainerRuntime());
     const prompt = dispatcher.buildTaskPrompt({ description: "Implement OAuth2 flow", id: "t1", repositoryId: "r1", status: "pending" });
     expect(prompt).toContain("Test-Driven Development");
     expect(prompt).toContain("Implement OAuth2 flow");
@@ -639,8 +640,8 @@ describe("DELETE /projects/:id", () => {
 
     expect(mockStopContainerFn).toHaveBeenCalledTimes(2);
     expect(mockRemoveContainerFn).toHaveBeenCalledTimes(2);
-    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-abc");
-    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-def");
+    expect(mockStopContainerFn).toHaveBeenCalledWith("container-abc");
+    expect(mockStopContainerFn).toHaveBeenCalledWith("container-def");
   });
 
   it("does not stop sub-agent containers that are already terminated", async () => {

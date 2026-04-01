@@ -90,4 +90,14 @@ export const config = {
   oidcRoleMapOperator: process.env.OIDC_ROLE_MAP_OPERATOR ?? "harness-operators",
   oidcRoleMapReviewer: process.env.OIDC_ROLE_MAP_REVIEWER ?? "harness-reviewers",
   oidcRoleMapViewer:   process.env.OIDC_ROLE_MAP_VIEWER   ?? "harness-viewers",
+
+  // Container runtime
+  containerRuntime: (() => {
+    const v = process.env.CONTAINER_RUNTIME ?? "docker";
+    if (v !== "docker" && v !== "kubernetes") {
+      throw new Error(`[config] Invalid CONTAINER_RUNTIME="${v}". Must be "docker" or "kubernetes".`);
+    }
+    return v;
+  })(),
+  k8sNamespace: process.env.K8S_NAMESPACE ?? "default",
 };
