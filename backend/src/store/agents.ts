@@ -1,5 +1,7 @@
-import { getDb } from "./db.js";
+import { getAdapter } from "./db.js";
 import type { AgentSession } from "../models/types.js";
+
+const db = () => getAdapter();
 
 interface AgentSessionRow {
   id: string; project_id: string; type: string; repository_id: string | null;
@@ -16,44 +18,49 @@ function fromRow(row: AgentSessionRow): AgentSession {
   };
 }
 
-export function insertAgentSession(session: AgentSession): void {
-  getDb()
-    .prepare(`INSERT INTO agent_sessions (id, project_id, type, repository_id, task_id, container_id, status, session_path, created_at, updated_at)
-     VALUES (@id, @projectId, @type, @repositoryId, @taskId, @containerId, @status, @sessionPath, @createdAt, @updatedAt)`)
-    .run({
-      id: session.id, projectId: session.projectId, type: session.type,
-      repositoryId: session.repositoryId ?? null, taskId: session.taskId ?? null,
-      containerId: session.containerId ?? null, status: session.status,
-      sessionPath: session.sessionPath ?? null, createdAt: session.createdAt, updatedAt: session.updatedAt,
-    });
+export async function insertAgentSession(session: AgentSession): Promise<void> {
+  await db().execute(
+    `INSERT INTO agent_sessions (id, project_id, type, repository_id, task_id, container_id, status, session_path, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id, session.projectId, session.type,
+      session.repositoryId ?? null, session.taskId ?? null,
+      session.containerId ?? null, session.status,
+      session.sessionPath ?? null, session.createdAt, session.updatedAt,
+    ]
+  );
 }
 
-export function getAgentSession(id: string): AgentSession | null {
-  const row = getDb().prepare("SELECT * FROM agent_sessions WHERE id = ?").get(id) as AgentSessionRow | undefined;
-  return row ? fromRow(row) : null;
+export async function getAgentSession(id: string): Promise<AgentSession | null> {
+  const rows = await db().query<AgentSessionRow>("SELECT * FROM agent_sessions WHERE id = ?", [id]);
+  return rows[0] ? fromRow(rows[0]) : null;
 }
 
-export function listAgentSessions(projectId: string): AgentSession[] {
-  const rows = getDb().prepare("SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY created_at DESC").all(projectId) as AgentSessionRow[];
+export async function listAgentSessions(projectId: string): Promise<AgentSession[]> {
+  const rows = await db().query<AgentSessionRow>(
+    "SELECT * FROM agent_sessions WHERE project_id = ? ORDER BY created_at DESC", [projectId]
+  );
   return rows.map(fromRow);
 }
 
-export function listStaleAgentSessions(): AgentSession[] {
-  const rows = getDb()
-    .prepare("SELECT * FROM agent_sessions WHERE status IN ('starting', 'running') AND type = 'sub'")
-    .all() as AgentSessionRow[];
+export async function listStaleAgentSessions(): Promise<AgentSession[]> {
+  const rows = await db().query<AgentSessionRow>(
+    "SELECT * FROM agent_sessions WHERE status IN ('starting', 'running') AND type = 'sub'"
+  );
   return rows.map(fromRow);
 }
 
-export function updateAgentSession(id: string, updates: Partial<Omit<AgentSession, "id" | "projectId" | "type">>): void {
-  const existing = getAgentSession(id);
+export async function updateAgentSession(id: string, updates: Partial<Omit<AgentSession, "id" | "projectId" | "type">>): Promise<void> {
+  const existing = await getAgentSession(id);
   if (!existing) throw new Error(`AgentSession not found: ${id}`);
   const merged = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
-  getDb()
-    .prepare(`UPDATE agent_sessions SET repository_id=@repositoryId, task_id=@taskId, container_id=@containerId,
-             status=@status, session_path=@sessionPath, updated_at=@updatedAt WHERE id=@id`)
-    .run({
-      id: merged.id, repositoryId: merged.repositoryId ?? null, taskId: merged.taskId ?? null,
-      containerId: merged.containerId ?? null, status: merged.status, sessionPath: merged.sessionPath ?? null, updatedAt: merged.updatedAt,
-    });
+  await db().execute(
+    `UPDATE agent_sessions SET repository_id=?, task_id=?, container_id=?,
+     status=?, session_path=?, updated_at=? WHERE id=?`,
+    [
+      merged.repositoryId ?? null, merged.taskId ?? null,
+      merged.containerId ?? null, merged.status, merged.sessionPath ?? null,
+      merged.updatedAt, merged.id,
+    ]
+  );
 }

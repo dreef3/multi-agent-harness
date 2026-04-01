@@ -1,5 +1,7 @@
-import { getDb } from "./db.js";
+import { getAdapter } from "./db.js";
 import type { Project, Plan } from "../models/types.js";
+
+const db = () => getAdapter();
 
 interface ProjectRow {
   id: string; name: string; status: string; source_type: string;
@@ -26,101 +28,107 @@ function fromRow(row: ProjectRow): Project {
   };
 }
 
-export function insertProject(project: Project): void {
-  getDb().prepare(`
+export async function insertProject(project: Project): Promise<void> {
+  await db().execute(`
     INSERT INTO projects
       (id, name, status, source_type, source_json, repository_ids, plan_json,
        master_session_path, primary_repository_id, planning_branch, planning_pr_json,
        last_error, created_at, updated_at)
     VALUES
-      (@id, @name, @status, @sourceType, @sourceJson, @repositoryIds, @planJson,
-       @masterSessionPath, @primaryRepositoryId, @planningBranch, @planningPrJson,
-       @lastError, @createdAt, @updatedAt)
-  `).run({
-    id: project.id, name: project.name, status: project.status,
-    sourceType: project.source.type, sourceJson: JSON.stringify(project.source),
-    repositoryIds: JSON.stringify(project.repositoryIds),
-    planJson: project.plan ? JSON.stringify(project.plan) : null,
-    masterSessionPath: project.masterSessionPath,
-    primaryRepositoryId: project.primaryRepositoryId ?? null,
-    planningBranch: project.planningBranch ?? null,
-    planningPrJson: project.planningPr ? JSON.stringify(project.planningPr) : null,
-    lastError: project.lastError ?? null,
-    createdAt: project.createdAt, updatedAt: project.updatedAt,
-  });
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    project.id, project.name, project.status,
+    project.source.type, JSON.stringify(project.source),
+    JSON.stringify(project.repositoryIds),
+    project.plan ? JSON.stringify(project.plan) : null,
+    project.masterSessionPath,
+    project.primaryRepositoryId ?? null,
+    project.planningBranch ?? null,
+    project.planningPr ? JSON.stringify(project.planningPr) : null,
+    project.lastError ?? null,
+    project.createdAt, project.updatedAt,
+  ]);
 }
 
-export function getProject(id: string): Project | null {
-  const row = getDb().prepare("SELECT * FROM projects WHERE id = ?").get(id) as ProjectRow | undefined;
-  return row ? fromRow(row) : null;
+export async function getProject(id: string): Promise<Project | null> {
+  const rows = await db().query<ProjectRow>("SELECT * FROM projects WHERE id = ?", [id]);
+  return rows[0] ? fromRow(rows[0]) : null;
 }
 
-export function listProjects(): Project[] {
-  return (getDb().prepare("SELECT * FROM projects ORDER BY created_at DESC").all() as ProjectRow[]).map(fromRow);
+export async function listProjects(): Promise<Project[]> {
+  const rows = await db().query<ProjectRow>("SELECT * FROM projects ORDER BY created_at DESC");
+  return rows.map(fromRow);
 }
 
-export function listProjectsAwaitingLgtm(): Project[] {
-  return (getDb().prepare(
+export async function listProjectsAwaitingLgtm(): Promise<Project[]> {
+  const rows = await db().query<ProjectRow>(
     "SELECT * FROM projects WHERE status IN ('awaiting_spec_approval', 'awaiting_plan_approval')"
-  ).all() as ProjectRow[]).map(fromRow);
+  );
+  return rows.map(fromRow);
 }
 
-export function listExecutingProjects(): Project[] {
-  return (getDb().prepare(
+export async function listExecutingProjects(): Promise<Project[]> {
+  const rows = await db().query<ProjectRow>(
     "SELECT * FROM projects WHERE status = 'executing'"
-  ).all() as ProjectRow[]).map(fromRow);
+  );
+  return rows.map(fromRow);
 }
 
-export function updateTaskInPlan(
+export async function updateTaskInPlan(
   projectId: string,
   taskId: string,
   updates: Partial<import("../models/types.js").PlanTask>
-): void {
-  const db = getDb();
-  db.transaction(() => {
-    const row = db.prepare("SELECT plan_json FROM projects WHERE id = ?").get(projectId) as { plan_json: string | null } | undefined;
+): Promise<void> {
+  await db().transactionAsync(async (tx) => {
+    const rows = await tx.query<{ plan_json: string | null }>(
+      "SELECT plan_json FROM projects WHERE id = ?", [projectId]
+    );
+    const row = rows[0];
     if (!row?.plan_json) return;
     const plan = JSON.parse(row.plan_json) as import("../models/types.js").Plan;
     const task = plan.tasks.find(t => t.id === taskId);
     if (task) Object.assign(task, updates);
-    db.prepare("UPDATE projects SET plan_json = ?, updated_at = ? WHERE id = ?")
-      .run(JSON.stringify(plan), new Date().toISOString(), projectId);
-  })();
+    await tx.execute(
+      "UPDATE projects SET plan_json = ?, updated_at = ? WHERE id = ?",
+      [JSON.stringify(plan), new Date().toISOString(), projectId]
+    );
+  });
 }
 
-export function deleteProject(id: string): void {
-  const db = getDb();
-  db.prepare("DELETE FROM messages WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM agent_sessions WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM pull_requests WHERE project_id = ?").run(id);
-  db.prepare("DELETE FROM projects WHERE id = ?").run(id);
+export async function deleteProject(id: string): Promise<void> {
+  const adapter = db();
+  await adapter.execute("DELETE FROM messages WHERE project_id = ?", [id]);
+  await adapter.execute("DELETE FROM agent_sessions WHERE project_id = ?", [id]);
+  await adapter.execute("DELETE FROM pull_requests WHERE project_id = ?", [id]);
+  await adapter.execute("DELETE FROM projects WHERE id = ?", [id]);
 }
 
-export function updateProject(id: string, updates: Partial<Omit<Project, "id">>): void {
-  const existing = getProject(id);
+export async function updateProject(id: string, updates: Partial<Omit<Project, "id">>): Promise<void> {
+  const existing = await getProject(id);
   if (!existing) throw new Error(`Project not found: ${id}`);
   const merged = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
-  getDb().prepare(`
+  await db().execute(`
     UPDATE projects
-    SET name=@name, status=@status, source_type=@sourceType, source_json=@sourceJson,
-        repository_ids=@repositoryIds, plan_json=@planJson,
-        master_session_path=@masterSessionPath,
-        primary_repository_id=@primaryRepositoryId,
-        planning_branch=@planningBranch,
-        planning_pr_json=@planningPrJson,
-        last_error=@lastError,
-        updated_at=@updatedAt
-    WHERE id=@id
-  `).run({
-    id: merged.id, name: merged.name, status: merged.status,
-    sourceType: merged.source.type, sourceJson: JSON.stringify(merged.source),
-    repositoryIds: JSON.stringify(merged.repositoryIds),
-    planJson: merged.plan ? JSON.stringify(merged.plan) : null,
-    masterSessionPath: merged.masterSessionPath,
-    primaryRepositoryId: merged.primaryRepositoryId ?? null,
-    planningBranch: merged.planningBranch ?? null,
-    planningPrJson: merged.planningPr ? JSON.stringify(merged.planningPr) : null,
-    lastError: merged.lastError ?? null,
-    updatedAt: merged.updatedAt,
-  });
+    SET name=?, status=?, source_type=?, source_json=?,
+        repository_ids=?, plan_json=?,
+        master_session_path=?,
+        primary_repository_id=?,
+        planning_branch=?,
+        planning_pr_json=?,
+        last_error=?,
+        updated_at=?
+    WHERE id=?
+  `, [
+    merged.name, merged.status,
+    merged.source.type, JSON.stringify(merged.source),
+    JSON.stringify(merged.repositoryIds),
+    merged.plan ? JSON.stringify(merged.plan) : null,
+    merged.masterSessionPath,
+    merged.primaryRepositoryId ?? null,
+    merged.planningBranch ?? null,
+    merged.planningPr ? JSON.stringify(merged.planningPr) : null,
+    merged.lastError ?? null,
+    merged.updatedAt,
+    merged.id,
+  ]);
 }

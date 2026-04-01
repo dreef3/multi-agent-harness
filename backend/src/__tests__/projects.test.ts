@@ -46,9 +46,9 @@ vi.mock("../orchestrator/containerManager.js", () => ({
 
 describe("projects store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-proj-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
@@ -59,58 +59,58 @@ describe("projects store", () => {
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 
-  it("inserts and retrieves a project", () => {
-    insertProject(baseProject);
-    const found = getProject("proj-1");
+  it("inserts and retrieves a project", async () => {
+    await insertProject(baseProject);
+    const found = await getProject("proj-1");
     expect(found).toMatchObject({ id: "proj-1", name: "Test Project" });
     expect(found?.source.type).toBe("freeform");
     expect(found?.repositoryIds).toEqual(["repo-1", "repo-2"]);
   });
 
-  it("returns null for a missing id", () => {
-    expect(getProject("nonexistent")).toBeNull();
+  it("returns null for a missing id", async () => {
+    expect(await getProject("nonexistent")).toBeNull();
   });
 
-  it("lists all projects ordered by createdAt desc", () => {
-    insertProject(baseProject);
+  it("lists all projects ordered by createdAt desc", async () => {
+    await insertProject(baseProject);
     const proj2 = { ...baseProject, id: "proj-2", name: "Second Project", createdAt: new Date(Date.now() + 1000).toISOString() };
-    insertProject(proj2);
-    const list = listProjects();
+    await insertProject(proj2);
+    const list = await listProjects();
     expect(list).toHaveLength(2);
     expect(list[0].id).toBe("proj-2");
     expect(list[1].id).toBe("proj-1");
   });
 
-  it("updates name and status", () => {
-    insertProject(baseProject);
-    updateProject("proj-1", { name: "Renamed Project", status: "executing" });
-    const found = getProject("proj-1");
+  it("updates name and status", async () => {
+    await insertProject(baseProject);
+    await updateProject("proj-1", { name: "Renamed Project", status: "executing" });
+    const found = await getProject("proj-1");
     expect(found?.name).toBe("Renamed Project");
     expect(found?.status).toBe("executing");
   });
 
-  it("updates plan", () => {
-    insertProject(baseProject);
+  it("updates plan", async () => {
+    await insertProject(baseProject);
     const plan: Plan = {
       id: "plan-1", projectId: "proj-1", content: "Plan content",
       tasks: [],
     };
-    updateProject("proj-1", { plan });
-    const found = getProject("proj-1");
+    await updateProject("proj-1", { plan });
+    const found = await getProject("proj-1");
     expect(found?.plan).toEqual(plan);
   });
 
-  it("updates masterSessionPath", () => {
-    insertProject(baseProject);
-    updateProject("proj-1", { masterSessionPath: "/path/to/session" });
-    expect(getProject("proj-1")?.masterSessionPath).toBe("/path/to/session");
+  it("updates masterSessionPath", async () => {
+    await insertProject(baseProject);
+    await updateProject("proj-1", { masterSessionPath: "/path/to/session" });
+    expect((await getProject("proj-1"))?.masterSessionPath).toBe("/path/to/session");
   });
 
-  it("throws when updating a nonexistent project", () => {
-    expect(() => updateProject("missing", { name: "x" })).toThrow("Project not found");
+  it("throws when updating a nonexistent project", async () => {
+    await expect(updateProject("missing", { name: "x" })).rejects.toThrow("Project not found");
   });
 
-  it("stores and retrieves primaryRepositoryId, planningBranch, planningPr", () => {
+  it("stores and retrieves primaryRepositoryId, planningBranch, planningPr", async () => {
     const proj: Project = {
       ...baseProject,
       id: "proj-pr",
@@ -118,14 +118,14 @@ describe("projects store", () => {
       planningBranch: "harness/add-auth-a3b2c",
       planningPr: { number: 7, url: "https://github.com/org/repo/pull/7" },
     };
-    insertProject(proj);
-    const found = getProject("proj-pr");
+    await insertProject(proj);
+    const found = await getProject("proj-pr");
     expect(found?.primaryRepositoryId).toBe("repo-1");
     expect(found?.planningBranch).toBe("harness/add-auth-a3b2c");
     expect(found?.planningPr).toEqual({ number: 7, url: "https://github.com/org/repo/pull/7" });
   });
 
-  it("stores planningPr with approval timestamps", () => {
+  it("stores planningPr with approval timestamps", async () => {
     const proj: Project = {
       ...baseProject,
       id: "proj-pr2",
@@ -137,80 +137,80 @@ describe("projects store", () => {
         planApprovedAt: "2026-03-22T12:00:00.000Z",
       },
     };
-    insertProject(proj);
-    const found = getProject("proj-pr2");
+    await insertProject(proj);
+    const found = await getProject("proj-pr2");
     expect(found?.planningPr?.specApprovedAt).toBe("2026-03-22T10:00:00.000Z");
     expect(found?.planningPr?.planApprovedAt).toBe("2026-03-22T12:00:00.000Z");
   });
 
-  it("listProjectsAwaitingLgtm returns only projects in awaiting states", () => {
-    insertProject({ ...baseProject, id: "p-brainstorm", status: "brainstorming" });
-    insertProject({ ...baseProject, id: "p-spec", status: "awaiting_spec_approval",
+  it("listProjectsAwaitingLgtm returns only projects in awaiting states", async () => {
+    await insertProject({ ...baseProject, id: "p-brainstorm", status: "brainstorming" });
+    await insertProject({ ...baseProject, id: "p-spec", status: "awaiting_spec_approval",
       primaryRepositoryId: "repo-1" });
-    insertProject({ ...baseProject, id: "p-plan", status: "awaiting_plan_approval",
+    await insertProject({ ...baseProject, id: "p-plan", status: "awaiting_plan_approval",
       primaryRepositoryId: "repo-1" });
-    insertProject({ ...baseProject, id: "p-exec", status: "executing" });
-    const waiting = listProjectsAwaitingLgtm();
+    await insertProject({ ...baseProject, id: "p-exec", status: "executing" });
+    const waiting = await listProjectsAwaitingLgtm();
     expect(waiting.map(p => p.id).sort()).toEqual(["p-plan", "p-spec"]);
   });
 });
 
 describe("messages store", () => {
   let tmpDir: string;
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-msg-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
-  it("appends messages with auto-incrementing seq_id", () => {
-    const msg1 = appendMessage("proj-1", "user", "Hello");
+  it("appends messages with auto-incrementing seq_id", async () => {
+    const msg1 = await appendMessage("proj-1", "user", "Hello");
     expect(msg1.seqId).toBe(1);
     expect(msg1.role).toBe("user");
     expect(msg1.content).toBe("Hello");
 
-    const msg2 = appendMessage("proj-1", "assistant", "Hi there");
+    const msg2 = await appendMessage("proj-1", "assistant", "Hi there");
     expect(msg2.seqId).toBe(2);
     expect(msg2.role).toBe("assistant");
 
-    const msg3 = appendMessage("proj-1", "user", "Another message");
+    const msg3 = await appendMessage("proj-1", "user", "Another message");
     expect(msg3.seqId).toBe(3);
   });
 
-  it("lists messages for a project in order", () => {
-    appendMessage("proj-1", "user", "First");
-    appendMessage("proj-1", "assistant", "Second");
-    appendMessage("proj-1", "user", "Third");
+  it("lists messages for a project in order", async () => {
+    await appendMessage("proj-1", "user", "First");
+    await appendMessage("proj-1", "assistant", "Second");
+    await appendMessage("proj-1", "user", "Third");
 
-    const list = listMessages("proj-1");
+    const list = await listMessages("proj-1");
     expect(list).toHaveLength(3);
     expect(list.map(m => m.content)).toEqual(["First", "Second", "Third"]);
     expect(list.map(m => m.seqId)).toEqual([1, 2, 3]);
   });
 
-  it("returns empty array for project with no messages", () => {
-    expect(listMessages("proj-1")).toEqual([]);
+  it("returns empty array for project with no messages", async () => {
+    expect(await listMessages("proj-1")).toEqual([]);
   });
 
-  it("lists messages since a given seq_id", () => {
-    appendMessage("proj-1", "user", "First");
-    appendMessage("proj-1", "assistant", "Second");
-    appendMessage("proj-1", "user", "Third");
-    appendMessage("proj-1", "assistant", "Fourth");
+  it("lists messages since a given seq_id", async () => {
+    await appendMessage("proj-1", "user", "First");
+    await appendMessage("proj-1", "assistant", "Second");
+    await appendMessage("proj-1", "user", "Third");
+    await appendMessage("proj-1", "assistant", "Fourth");
 
-    const list = listMessagesSince("proj-1", 2);
+    const list = await listMessagesSince("proj-1", 2);
     expect(list).toHaveLength(2);
     expect(list.map(m => m.content)).toEqual(["Third", "Fourth"]);
   });
 
-  it("isolates messages by project_id", () => {
-    appendMessage("proj-1", "user", "Project 1 message");
-    appendMessage("proj-2", "user", "Project 2 message");
+  it("isolates messages by project_id", async () => {
+    await appendMessage("proj-1", "user", "Project 1 message");
+    await appendMessage("proj-2", "user", "Project 2 message");
 
-    expect(listMessages("proj-1")).toHaveLength(1);
-    expect(listMessages("proj-1")[0].content).toBe("Project 1 message");
-    expect(listMessages("proj-2")).toHaveLength(1);
-    expect(listMessages("proj-2")[0].content).toBe("Project 2 message");
+    expect(await listMessages("proj-1")).toHaveLength(1);
+    expect((await listMessages("proj-1"))[0].content).toBe("Project 1 message");
+    expect(await listMessages("proj-2")).toHaveLength(1);
+    expect((await listMessages("proj-2"))[0].content).toBe("Project 2 message");
   });
 });
 
@@ -372,7 +372,7 @@ describe("buildClosingRefs", () => {
 let app: ReturnType<typeof express>;
 let tmpHttpDir: string;
 
-function createTestProject(overrides: Partial<Omit<Project, "id">> = {}): Project {
+async function createTestProject(overrides: Partial<Omit<Project, "id">> = {}): Promise<Project> {
   const now = new Date().toISOString();
   const project: Project = {
     id: `proj-${Math.random().toString(36).slice(2)}`,
@@ -385,13 +385,13 @@ function createTestProject(overrides: Partial<Omit<Project, "id">> = {}): Projec
     updatedAt: now,
     ...overrides,
   };
-  insertProject(project);
+  await insertProject(project);
   return project;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpHttpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-http-"));
-  initDb(tmpHttpDir);
+  await initDb(tmpHttpDir);
   app = express();
   app.use(express.json());
   app.use("/projects", createProjectsRouter("/tmp/test-data", {} as never));
@@ -408,15 +408,15 @@ describe("POST /projects/:id/tasks", () => {
   });
 
   it("returns 400 when tasks array is missing", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const res = await request(app).post(`/projects/${project.id}/tasks`).send({});
     expect(res.status).toBe(400);
   });
 
   it("upserts tasks into plan and returns dispatched count", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     // Seed a plan with one existing task
-    updateProject(project.id, {
+    await updateProject(project.id, {
       plan: { id: "plan-1", projectId: project.id, content: "", tasks: [
         { id: "task-1", repositoryId: "repo-1", description: "Old task", status: "failed", retryCount: 2, errorMessage: "prev error" }
       ]},
@@ -432,7 +432,7 @@ describe("POST /projects/:id/tasks", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.dispatched).toBe(2);
-    const updated = getProject(project.id)!;
+    const updated = (await getProject(project.id))!;
     const task1 = updated.plan!.tasks.find(t => t.id === "task-1")!;
     expect(task1.status).toBe("pending");
     expect(task1.retryCount).toBe(0);
@@ -448,15 +448,15 @@ describe("GET /projects/:id/tasks", () => {
   });
 
   it("returns empty tasks when no plan", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const res = await request(app).get(`/projects/${project.id}/tasks`);
     expect(res.status).toBe(200);
     expect(res.body.tasks).toEqual([]);
   });
 
   it("returns task list with errorMessage when plan exists", async () => {
-    const project = createTestProject();
-    updateProject(project.id, {
+    const project = await createTestProject();
+    await updateProject(project.id, {
       plan: { id: "plan-1", projectId: project.id, content: "", tasks: [
         { id: "t1", repositoryId: "repo-1", description: "Do A", status: "failed", errorMessage: "timeout" },
       ]},
@@ -474,14 +474,14 @@ describe("GET /projects/:id/master-events", () => {
   });
 
   it("returns empty array when no events recorded", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const res = await request(app).get(`/projects/${project.id}/master-events`);
     expect(res.status).toBe(200);
     expect(res.body).toEqual([]);
   });
 
   it("returns stored planning agent events", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     appendEvent(`master-${project.id}`, {
       type: "tool_call",
       payload: { toolName: "dispatch_tasks" },
@@ -498,8 +498,8 @@ describe("GET /projects/:id/master-events", () => {
 describe("POST /:id/tasks dedup", () => {
   it("does not create duplicate tasks when same tasks posted twice", async () => {
     // set up project with plan
-    const project = createTestProject();
-    updateProject(project.id, {
+    const project = await createTestProject();
+    await updateProject(project.id, {
       plan: { id: "plan-1", projectId: project.id, content: "", tasks: [] },
     });
 
@@ -513,13 +513,13 @@ describe("POST /:id/tasks dedup", () => {
     expect(res2.status).toBe(200);
     expect(res2.body.dispatched).toBe(0);
 
-    const updated = getProject(project.id)!;
+    const updated = (await getProject(project.id))!;
     expect(updated.plan!.tasks).toHaveLength(1);
   });
 
   it("treats same description with different repositoryId as distinct tasks", async () => {
-    const project = createTestProject();
-    updateProject(project.id, {
+    const project = await createTestProject();
+    await updateProject(project.id, {
       plan: { id: "plan-1", projectId: project.id, content: "", tasks: [] },
     });
 
@@ -531,12 +531,12 @@ describe("POST /:id/tasks dedup", () => {
     });
 
     expect(res.body.dispatched).toBe(1);
-    expect(getProject(project.id)!.plan!.tasks).toHaveLength(2);
+    expect((await getProject(project.id))!.plan!.tasks).toHaveLength(2);
   });
 
   it("allows re-posting a completed task (terminal tasks not blocked)", async () => {
-    const project = createTestProject();
-    updateProject(project.id, {
+    const project = await createTestProject();
+    await updateProject(project.id, {
       plan: {
         id: "plan-1", projectId: project.id, content: "",
         tasks: [{ id: "t1", repositoryId: "repo-1", description: "done task", status: "completed" }],
@@ -547,7 +547,7 @@ describe("POST /:id/tasks dedup", () => {
       tasks: [{ repositoryId: "repo-1", description: "done task" }],
     });
     expect(res.body.dispatched).toBe(1);
-    expect(getProject(project.id)!.plan!.tasks).toHaveLength(2);
+    expect((await getProject(project.id))!.plan!.tasks).toHaveLength(2);
   });
 });
 
@@ -558,14 +558,14 @@ describe("POST /api/projects/:id/retry", () => {
   });
 
   it("returns 400 when project is not in failed state", async () => {
-    const project = createTestProject({ status: "executing" });
+    const project = await createTestProject({ status: "executing" });
     const res = await request(app).post(`/projects/${project.id}/retry`);
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/not in a failed/i);
   });
 
   it("returns 200 and dispatched count for a failed project", async () => {
-    const project = createTestProject({
+    const project = await createTestProject({
       status: "failed",
       plan: {
         id: "plan-1",
@@ -583,7 +583,7 @@ describe("POST /api/projects/:id/retry", () => {
   });
 
   it("clears lastError on retry", async () => {
-    const project = createTestProject({ status: "failed", lastError: "disk full" });
+    const project = await createTestProject({ status: "failed", lastError: "disk full" });
     await request(app).post(`/projects/${project.id}/retry`);
     const updated = await request(app).get(`/projects/${project.id}`);
     expect(updated.body.lastError).toBeFalsy();
@@ -602,35 +602,35 @@ describe("DELETE /projects/:id", () => {
   });
 
   it("removes the project from DB", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const res = await request(app).delete(`/projects/${project.id}`);
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
-    expect(getProject(project.id)).toBeNull();
+    expect(await getProject(project.id)).toBeNull();
   });
 
   it("stops planning agent container when it is running", async () => {
     mockIsRunning.mockReturnValue(true);
-    const project = createTestProject();
+    const project = await createTestProject();
     await request(app).delete(`/projects/${project.id}`);
     expect(mockStopContainer).toHaveBeenCalledWith(project.id);
   });
 
   it("skips planning agent stop when it is not running", async () => {
     mockIsRunning.mockReturnValue(false);
-    const project = createTestProject();
+    const project = await createTestProject();
     await request(app).delete(`/projects/${project.id}`);
     expect(mockStopContainer).not.toHaveBeenCalled();
   });
 
   it("stops and removes active sub-agent containers", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const now = new Date().toISOString();
-    insertAgentSession({
+    await insertAgentSession({
       id: "sess-1", projectId: project.id, type: "sub", status: "running",
       containerId: "container-abc", createdAt: now, updatedAt: now,
     });
-    insertAgentSession({
+    await insertAgentSession({
       id: "sess-2", projectId: project.id, type: "sub", status: "starting",
       containerId: "container-def", createdAt: now, updatedAt: now,
     });
@@ -644,9 +644,9 @@ describe("DELETE /projects/:id", () => {
   });
 
   it("does not stop sub-agent containers that are already terminated", async () => {
-    const project = createTestProject();
+    const project = await createTestProject();
     const now = new Date().toISOString();
-    insertAgentSession({
+    await insertAgentSession({
       id: "sess-done", projectId: project.id, type: "sub", status: "completed",
       containerId: "container-xyz", createdAt: now, updatedAt: now,
     });
@@ -660,9 +660,9 @@ describe("POST /api/projects validation", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-val-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     const docker = {} as Dockerode;
     app = express();
     app.use(express.json());
@@ -717,9 +717,9 @@ describe("POST /api/projects/:id/tasks validation", () => {
   let app: ReturnType<typeof express>;
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-tasks-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     const docker = {} as Dockerode;
     app = express();
     app.use(express.json());

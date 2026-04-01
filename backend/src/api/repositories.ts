@@ -32,8 +32,8 @@ export function createRepositoriesRouter(): Router {
   const router = Router();
 
   // List all repositories
-  router.get("/", (_req, res) => {
-    const repos = listRepositories();
+  router.get("/", async (_req, res) => {
+    const repos = await listRepositories();
     res.json(repos);
   });
 
@@ -68,8 +68,8 @@ export function createRepositoriesRouter(): Router {
   });
 
   // Get a single repository by ID
-  router.get("/:id", (req, res) => {
-    const repo = getRepository(req.params.id);
+  router.get("/:id", async (req, res) => {
+    const repo = await getRepository(req.params.id);
     if (!repo) {
       res.status(404).json({ error: "Repository not found" });
       return;
@@ -78,7 +78,7 @@ export function createRepositoriesRouter(): Router {
   });
 
   // Create a new repository
-  router.post("/", validateBody(CreateRepositorySchema), (req, res) => {
+  router.post("/", validateBody(CreateRepositorySchema), async (req, res) => {
     const { name, cloneUrl, provider, providerConfig, defaultBranch } = req.body;
 
     const now = new Date().toISOString();
@@ -93,14 +93,14 @@ export function createRepositoriesRouter(): Router {
       updatedAt: now,
     };
 
-    insertRepository(repo);
+    await insertRepository(repo);
     res.status(201).json(repo);
   });
 
   // Update a repository
-  router.patch("/:id", (req, res) => {
+  router.patch("/:id", async (req, res) => {
     const { name, cloneUrl, provider, providerConfig, defaultBranch } = req.body;
-    const existing = getRepository(req.params.id);
+    const existing = await getRepository(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Repository not found" });
       return;
@@ -113,18 +113,18 @@ export function createRepositoriesRouter(): Router {
     if (providerConfig !== undefined) updates.providerConfig = providerConfig;
     if (defaultBranch !== undefined) updates.defaultBranch = defaultBranch;
 
-    updateRepository(req.params.id, updates);
-    res.json(getRepository(req.params.id));
+    await updateRepository(req.params.id, updates);
+    res.json(await getRepository(req.params.id));
   });
 
   // Delete a repository
-  router.delete("/:id", (req, res) => {
-    const existing = getRepository(req.params.id);
+  router.delete("/:id", async (req, res) => {
+    const existing = await getRepository(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Repository not found" });
       return;
     }
-    deleteRepository(req.params.id);
+    await deleteRepository(req.params.id);
     res.status(204).send();
   });
 

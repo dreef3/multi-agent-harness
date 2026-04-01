@@ -9,6 +9,8 @@ import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
 import { createSettingsRouter } from "./settings.js";
 import { config } from "../config.js";
+import { verifyJwt } from "./auth.js";
+import { auditLog } from "./auditMiddleware.js";
 
 export function createRouter(dataDir: string, docker: Dockerode): Router {
   const router = Router();
@@ -25,6 +27,10 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
       implementationModel: config.implementationModel,
     });
   });
+
+  // JWT verification for all protected routes
+  router.use(verifyJwt());
+  router.use(auditLog());
 
   // Mount sub-routers
   router.use("/projects", createProjectsRouter(dataDir, docker));

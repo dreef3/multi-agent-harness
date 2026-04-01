@@ -3,12 +3,15 @@ import { GitHubConnector } from "../connectors/github.js";
 import { BitbucketConnector } from "../connectors/bitbucket.js";
 import type { Repository } from "../models/types.js";
 import { ConnectorError } from "../connectors/types.js";
+import { detectLgtm } from "../polling.js";
 
 const mockCreateRef = vi.fn();
 const mockGetRef = vi.fn();
 const mockCreatePR = vi.fn();
 const mockGetPR = vi.fn();
 const mockListReviewComments = vi.fn();
+const mockListReviews = vi.fn();
+const mockListPRs = vi.fn();
 const mockListIssueComments = vi.fn();
 const mockCreateComment = vi.fn();
 const mockGetContent = vi.fn();
@@ -23,7 +26,9 @@ vi.mock("@octokit/rest", () => ({
     pulls: {
       create: mockCreatePR,
       get: mockGetPR,
+      list: mockListPRs,
       listReviewComments: mockListReviewComments,
+      listReviews: mockListReviews,
     },
     issues: {
       listComments: mockListIssueComments,
@@ -338,6 +343,54 @@ describe("GitHubConnector", () => {
       await expect(
         connector.commitFile(repo, "main", "docs/spec.md", "# Spec", "chore: add spec")
       ).rejects.toThrow(ConnectorError);
+    });
+  });
+
+  describe("getPrApprovals", () => {
+    it("maps APPROVED review state to 'approved'", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "alice" }, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" },
+        ],
+      });
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject({ userId: "alice", state: "approved", submittedAt: "2024-01-01T00:00:00Z" });
+    });
+
+    it("maps CHANGES_REQUESTED review state to 'changes_requested'", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "bob" }, state: "CHANGES_REQUESTED", submitted_at: "2024-01-02T00:00:00Z" },
+        ],
+      });
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals[0]).toMatchObject({ userId: "bob", state: "changes_requested" });
+    });
+
+    it("maps COMMENTED and DISMISSED review states to 'pending'", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [
+          { user: { login: "carol" }, state: "COMMENTED", submitted_at: "2024-01-03T00:00:00Z" },
+          { user: { login: "dave" }, state: "DISMISSED", submitted_at: "2024-01-04T00:00:00Z" },
+        ],
+      });
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals[0]).toMatchObject({ state: "pending" });
+      expect(approvals[1]).toMatchObject({ state: "pending" });
+    });
+
+    it("handles missing user login gracefully", async () => {
+      mockListReviews.mockResolvedValue({
+        data: [{ user: null, state: "APPROVED", submitted_at: "2024-01-01T00:00:00Z" }],
+      });
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals[0].userId).toBe("");
+    });
+
+    it("throws ConnectorError on API failure", async () => {
+      mockListReviews.mockRejectedValue(new Error("API error"));
+      await expect(connector.getPrApprovals(repo, "42")).rejects.toThrow(ConnectorError);
     });
   });
 
@@ -681,6 +734,47 @@ describe("BitbucketConnector", () => {
     });
   });
 
+  describe("getPrApprovals", () => {
+    it("maps APPROVED participant status to 'approved'", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          values: [{ user: { slug: "alice" }, role: "REVIEWER", approved: true, status: "APPROVED" }],
+        }),
+      } as unknown as Response);
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject({ userId: "alice", state: "approved" });
+    });
+
+    it("maps NEEDS_WORK participant status to 'changes_requested'", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          values: [{ user: { slug: "bob" }, role: "REVIEWER", approved: false, status: "NEEDS_WORK" }],
+        }),
+      } as unknown as Response);
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals[0]).toMatchObject({ userId: "bob", state: "changes_requested" });
+    });
+
+    it("maps UNAPPROVED participant status to 'pending'", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          values: [{ user: { slug: "carol" }, role: "REVIEWER", approved: false, status: "UNAPPROVED" }],
+        }),
+      } as unknown as Response);
+      const approvals = await connector.getPrApprovals(repo, "42");
+      expect(approvals[0]).toMatchObject({ userId: "carol", state: "pending" });
+    });
+
+    it("throws ConnectorError on API failure", async () => {
+      mockFetch.mockRejectedValue(new Error("Network error"));
+      await expect(connector.getPrApprovals(repo, "42")).rejects.toThrow(ConnectorError);
+    });
+  });
+
   describe("error handling", () => {
     it("throws when BITBUCKET_TOKEN is not set", async () => {
       delete process.env.BITBUCKET_TOKEN;
@@ -694,6 +788,28 @@ describe("BitbucketConnector", () => {
       };
       await expect(connector.createBranch(badRepo, "feature", "main")).rejects.toThrow(ConnectorError);
     });
+  });
+});
+
+describe("detectLgtm (backward compat)", () => {
+  it("returns true for 'LGTM' comment body", () => {
+    expect(detectLgtm("LGTM")).toBe(true);
+  });
+
+  it("returns true for 'lgtm' (case insensitive)", () => {
+    expect(detectLgtm("lgtm")).toBe(true);
+  });
+
+  it("returns true when LGTM is embedded in a sentence", () => {
+    expect(detectLgtm("Looks good, LGTM!")).toBe(true);
+  });
+
+  it("returns false for non-LGTM comment bodies", () => {
+    expect(detectLgtm("Please fix the indentation")).toBe(false);
+  });
+
+  it("returns false for partial matches (e.g. 'LGTMS' is not a word boundary)", () => {
+    expect(detectLgtm("LGTMS")).toBe(false);
   });
 });
 

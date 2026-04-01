@@ -20,9 +20,9 @@ const pendingMessages = new Map<string, {
 }>();
 
 /** Look up the human-readable task description for a session's taskId. */
-function resolveTaskDescription(session: AgentSession): string {
+async function resolveTaskDescription(session: AgentSession): Promise<string> {
   if (!session.taskId) return "unknown task";
-  const project = getProject(session.projectId);
+  const project = await getProject(session.projectId);
   const task = project?.plan?.tasks.find((t) => t.id === session.taskId);
   return task?.description?.slice(0, 80) ?? session.taskId;
 }
@@ -33,8 +33,8 @@ export function createAgentsRouter(): Router {
   // --- Existing CRUD endpoints ---
 
   // Get a single agent session by ID
-  router.get("/:id", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.get("/:id", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) {
       res.status(404).json({ error: "Agent session not found" });
       return;
@@ -43,7 +43,7 @@ export function createAgentsRouter(): Router {
   });
 
   // Create a new agent session (sub-agent)
-  router.post("/", (req: Request, res: Response) => {
+  router.post("/", async (req: Request, res: Response) => {
     const { projectId, type, repositoryId, taskId } = req.body as {
       projectId?: string;
       type?: string;
@@ -55,7 +55,7 @@ export function createAgentsRouter(): Router {
       return;
     }
 
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
@@ -73,12 +73,12 @@ export function createAgentsRouter(): Router {
       updatedAt: now,
     };
 
-    insertAgentSession(session);
+    await insertAgentSession(session);
     res.status(201).json(session);
   });
 
   // Update an agent session
-  router.patch("/:id", (req: Request, res: Response) => {
+  router.patch("/:id", async (req: Request, res: Response) => {
     const { repositoryId, taskId, containerId, status, sessionPath } = req.body as {
       repositoryId?: string;
       taskId?: string;
@@ -86,7 +86,7 @@ export function createAgentsRouter(): Router {
       status?: string;
       sessionPath?: string;
     };
-    const existing = getAgentSession(req.params.id);
+    const existing = await getAgentSession(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Agent session not found" });
       return;
@@ -99,19 +99,19 @@ export function createAgentsRouter(): Router {
     if (status !== undefined) updates.status = status as AgentSession["status"];
     if (sessionPath !== undefined) updates.sessionPath = sessionPath;
 
-    updateAgentSession(req.params.id, updates);
+    await updateAgentSession(req.params.id, updates);
 
     // Clear stuck timer when session reaches a terminal state
     if (status === "completed" || status === "failed" || status === "stopped") {
       clearHeartbeat(req.params.id);
     }
 
-    res.json(getAgentSession(req.params.id));
+    res.json(await getAgentSession(req.params.id));
   });
 
   // Stop an agent session
-  router.post("/:id/stop", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.post("/:id/stop", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) {
       res.status(404).json({ error: "Agent session not found" });
       return;
@@ -121,25 +121,25 @@ export function createAgentsRouter(): Router {
       return;
     }
 
-    updateAgentSession(req.params.id, { status: "stopped" });
+    await updateAgentSession(req.params.id, { status: "stopped" });
     clearHeartbeat(req.params.id);
     res.json({ success: true, status: "stopped" });
   });
 
   // --- New: sub-agent blocking message request ---
   router.post("/:id/message", async (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+    const session = await getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
     const { question } = req.body as { question?: string };
     if (!question) { res.status(400).json({ error: "Missing question" }); return; }
 
     const msgId = randomUUID();
-    const taskDesc = resolveTaskDescription(session);
+    const taskDesc = await resolveTaskDescription(session);
     const TIMEOUT_MS = 5 * 60 * 1000;
 
     // Store the question as an outbound message event on the sub-agent's feed
     const ts = new Date().toISOString();
-    appendEvent(req.params.id, {
+    await appendEvent(req.params.id, {
       type: "message_out",
       payload: { text: question },
       timestamp: ts,
@@ -182,7 +182,7 @@ export function createAgentsRouter(): Router {
 
     // Store the reply as an inbound message event
     const replyTs = new Date().toISOString();
-    appendEvent(req.params.id, {
+    await appendEvent(req.params.id, {
       type: "message_in",
       payload: { text: reply, from: "Planning Agent" },
       timestamp: replyTs,
@@ -197,8 +197,8 @@ export function createAgentsRouter(): Router {
   });
 
   // --- New: planning agent delivers reply ---
-  router.post("/:id/message/:msgId/reply", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.post("/:id/message/:msgId/reply", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
     const { msgId } = req.params;
     const { reply } = req.body as { reply?: string };
@@ -214,8 +214,8 @@ export function createAgentsRouter(): Router {
   });
 
   // --- New: sub-agent posts activity event ---
-  router.post("/:id/events", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.post("/:id/events", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
     const event = req.body as { type?: string; payload?: Record<string, unknown>; timestamp?: string };
     if (!event.type || typeof event.type !== "string") {
@@ -223,23 +223,23 @@ export function createAgentsRouter(): Router {
       return;
     }
     const validEvent = { type: event.type, payload: event.payload ?? {}, timestamp: event.timestamp ?? new Date().toISOString() };
-    appendEvent(req.params.id, validEvent);
+    await appendEvent(req.params.id, validEvent);
     broadcastAgentActivity(session.projectId, req.params.id, validEvent);
     res.json({ ok: true });
   });
 
   // --- New: fetch accumulated events ---
-  router.get("/:id/events", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.get("/:id/events", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-    res.json(getEvents(req.params.id));
+    res.json(await getEvents(req.params.id));
   });
 
   // --- New: heartbeat ---
-  router.post("/:id/heartbeat", (req: Request, res: Response) => {
-    const session = getAgentSession(req.params.id);
+  router.post("/:id/heartbeat", async (req: Request, res: Response) => {
+    const session = await getAgentSession(req.params.id);
     if (!session) { res.status(404).json({ error: "Session not found" }); return; }
-    const taskDesc = resolveTaskDescription(session);
+    const taskDesc = await resolveTaskDescription(session);
     resetHeartbeat(req.params.id, session.projectId, taskDesc);
     res.json({ ok: true });
   });

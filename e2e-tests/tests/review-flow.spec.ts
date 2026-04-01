@@ -6,7 +6,7 @@ import {
   TEST_REPO_OWNER,
   TEST_REPO_NAME,
   createPlanningPr,
-  postLgtmComment,
+  approvePlanningPr,
   cleanupNewBranches,
   seedTestRepo,
   deleteTestRepo,
@@ -87,10 +87,10 @@ test.describe('Review Comment Fix-Run Flow', () => {
       },
     });
 
-    // ── 4. Post LGTM — triggers polling to detect plan approval and dispatch ──
-    await postLgtmComment(prNumber);
+    // ── 4. Approve planning PR — triggers polling to detect plan approval and dispatch ──
+    await approvePlanningPr(prNumber);
 
-    // ── 5. Wait for polling to detect LGTM and transition to executing ────────
+    // ── 5. Wait for polling to detect approval and transition to executing ────────
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);

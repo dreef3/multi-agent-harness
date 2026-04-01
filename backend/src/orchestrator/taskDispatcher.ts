@@ -93,7 +93,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     task: PlanTask,
     existingSessionId?: string,
   ): Promise<TaskResult> {
-    const repository = getRepository(task.repositoryId);
+    const repository = await getRepository(task.repositoryId);
     if (!repository) {
       return {
         taskId: task.id,
@@ -121,14 +121,14 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    if (isRetry && getAgentSession(sessionId)) {
-      updateAgentSession(sessionId, {
+    if (isRetry && await getAgentSession(sessionId)) {
+      await updateAgentSession(sessionId, {
         status: "starting",
         containerId: undefined,
         updatedAt: new Date().toISOString(),
       });
     } else {
-      insertAgentSession(agentSession);
+      await insertAgentSession(agentSession);
     }
 
     return tracer.startActiveSpan("container.run", async (span) => {
@@ -166,7 +166,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         });
 
         // Update session with container ID and record span attributes
-        updateAgentSession(sessionId, { containerId, status: "running" });
+        await updateAgentSession(sessionId, { containerId, status: "running" });
         span.setAttributes({
           "container.id": containerId,
           "branch.name": branchName,
@@ -190,7 +190,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         }
 
         // Update session status
-        updateAgentSession(sessionId, { status: "completed" });
+        await updateAgentSession(sessionId, { status: "completed" });
         span.setStatus({ code: SpanStatusCode.OK });
 
         // Try to create PR — non-fatal since the branch might have no new commits
@@ -213,7 +213,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`[taskDispatcher] Task ${task.id} failed:`, errorMessage);
-        updateAgentSession(sessionId, { status: "failed" });
+        await updateAgentSession(sessionId, { status: "failed" });
         span.setStatus({ code: SpanStatusCode.ERROR, message: errorMessage });
         span.recordException(error instanceof Error ? error : new Error(errorMessage));
 
@@ -293,9 +293,10 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       // Handles bridge-based completion (sub-agent calls /api/sessions/:id/status)
       // and acts as fallback if Docker events are unavailable
       const sessionPoll = setInterval(() => {
-        const status = this.getSessionStatus(sessionId);
-        if (status === "completed") { settle(true); }
-        else if (status === "failed") { settle(false); }
+        void this.getSessionStatus(sessionId).then(status => {
+          if (status === "completed") { settle(true); }
+          else if (status === "failed") { settle(false); }
+        });
       }, 2000);
     });
   }
@@ -303,8 +304,8 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
   /**
    * Get session status from store.
    */
-  private getSessionStatus(sessionId: string): AgentSession["status"] | null {
-    const session = getAgentSession(sessionId);
+  private async getSessionStatus(sessionId: string): Promise<AgentSession["status"] | null> {
+    const session = await getAgentSession(sessionId);
     return session?.status ?? null;
   }
 
@@ -360,7 +361,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       updatedAt: new Date().toISOString(),
     };
 
-    insertPullRequest(pullRequest);
+    await insertPullRequest(pullRequest);
 
     return pullRequest;
   }
@@ -375,18 +376,18 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     pullRequestId: string,
     comments: Array<{ body: string; filePath?: string; lineNumber?: number }>
   ): Promise<TaskResult> {
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) {
       throw new Error(`Project not found: ${projectId}`);
     }
 
     const { getPullRequest } = await import("../store/pullRequests.js");
-    const pr = getPullRequest(pullRequestId);
+    const pr = await getPullRequest(pullRequestId);
     if (!pr) {
       throw new Error(`Pull request not found: ${pullRequestId}`);
     }
 
-    const repository = getRepository(pr.repositoryId);
+    const repository = await getRepository(pr.repositoryId);
     if (!repository) {
       throw new Error(`Repository not found: ${pr.repositoryId}`);
     }
@@ -414,7 +415,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    insertAgentSession(agentSession);
+    await insertAgentSession(agentSession);
 
     let containerId: string | undefined;
 
@@ -444,7 +445,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         taskId: `fix-${sessionId.slice(0, 8)}`,
       });
 
-      updateAgentSession(sessionId, { containerId, status: "running" });
+      await updateAgentSession(sessionId, { containerId, status: "running" });
       await startContainer(docker, containerId);
 
       // Stream container logs to backend stdout for observability
@@ -457,7 +458,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         throw new Error("Fix-run timed out or container failed");
       }
 
-      updateAgentSession(sessionId, { status: "completed" });
+      await updateAgentSession(sessionId, { status: "completed" });
 
       // Update PR with comment about fixes
       const connector = getConnector(repository.provider);
@@ -471,7 +472,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
       };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      updateAgentSession(sessionId, { status: "failed" });
+      await updateAgentSession(sessionId, { status: "failed" });
 
       return {
         taskId: sessionId,

@@ -5,6 +5,6 @@
   "dependencies": {
     "@mariozechner/pi-coding-agent": "0.61.1",
     "@sinclair/typebox": "^0.34.41",
-    "superpowers": "github:obra/superpowers#v5.0.4"
+    "superpowers": "github:obra/superpowers#v5.0.7"
   }
 }

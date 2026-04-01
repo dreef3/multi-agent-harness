@@ -17,7 +17,8 @@ export function createGitHubIssuesRouter(): Router {
     }
 
     const ids = repositoryIds.split(",").map(id => id.trim()).filter(Boolean);
-    const repos = ids.map(id => getRepository(id)).filter((r): r is NonNullable<typeof r> => r != null);
+    const repoResults = await Promise.all(ids.map(id => getRepository(id)));
+    const repos = repoResults.filter((r): r is NonNullable<typeof r> => r != null);
 
     if (repos.length === 0) {
       res.status(400).json({ error: "None of the provided repositoryIds were found" });

@@ -54,9 +54,9 @@ function makeSession(id: string, projectId: string, status: AgentSession["status
 describe("RecoveryService", () => {
   let tmpDir: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-recovery-test-"));
-    initDb(tmpDir);
+    await initDb(tmpDir);
     vi.resetAllMocks();
   });
 
@@ -67,7 +67,7 @@ describe("RecoveryService", () => {
 
   describe("dispatchWithRetry", () => {
     it("succeeds on first attempt — marks task completed and clears activeTaskIds", async () => {
-      insertProject(makeProject("proj-1"));
+      await insertProject(makeProject("proj-1"));
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockDocker = {} as never;
       const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: true });
@@ -78,18 +78,18 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       svc.notifyMaster = mockNotify;
 
-      const project = getProject("proj-1")!;
+      const project = (await getProject("proj-1"))!;
       await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
 
       expect(mockRunTask).toHaveBeenCalledTimes(1);
-      const updated = getProject("proj-1")!;
+      const updated = (await getProject("proj-1"))!;
       expect(updated.plan!.tasks[0].status).toBe("completed");
       // @ts-expect-error accessing private for test
       expect(svc.activeTaskIds.has("task-1")).toBe(false);
     });
 
     it("retries once on failure — succeeds on second attempt", async () => {
-      insertProject(makeProject("proj-2"));
+      await insertProject(makeProject("proj-2"));
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockDocker = {} as never;
       const mockRunTask = vi.fn()
@@ -102,18 +102,18 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       svc.notifyMaster = mockNotify;
 
-      const project = getProject("proj-2")!;
+      const project = (await getProject("proj-2"))!;
       await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
 
       expect(mockRunTask).toHaveBeenCalledTimes(2);
-      expect(getProject("proj-2")!.plan!.tasks[0].status).toBe("completed");
+      expect((await getProject("proj-2"))!.plan!.tasks[0].status).toBe("completed");
       // notifyMaster called once for project completion, NOT for failure
       expect(mockNotify).toHaveBeenCalledWith("proj-2", expect.stringContaining("complete"));
       expect(mockNotify).toHaveBeenCalledTimes(1);
     });
 
     it("permanently fails after all retries — notifies master and clears activeTaskIds", async () => {
-      insertProject(makeProject("proj-3"));
+      await insertProject(makeProject("proj-3"));
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockDocker = {} as never;
       const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: false, error: "crash" });
@@ -124,19 +124,19 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       svc.notifyMaster = mockNotify;
 
-      const project = getProject("proj-3")!;
+      const project = (await getProject("proj-3"))!;
       await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
 
       // subAgentMaxRetries = 1 → 2 total attempts
       expect(mockRunTask).toHaveBeenCalledTimes(2);
-      expect(getProject("proj-3")!.plan!.tasks[0].status).toBe("failed");
+      expect((await getProject("proj-3"))!.plan!.tasks[0].status).toBe("failed");
       expect(mockNotify).toHaveBeenCalled();
       // @ts-expect-error accessing private for test
       expect(svc.activeTaskIds.has("task-1")).toBe(false);
     });
 
     it("skips if task already in activeTaskIds", async () => {
-      insertProject(makeProject("proj-4"));
+      await insertProject(makeProject("proj-4"));
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: true });
       const svc = new RecoveryService({} as never);
@@ -145,7 +145,7 @@ describe("RecoveryService", () => {
       // @ts-expect-error accessing private for test
       svc.activeTaskIds.add("task-1");
 
-      const project = getProject("proj-4")!;
+      const project = (await getProject("proj-4"))!;
       await svc.dispatchWithRetry(project, project.plan!.tasks[0]);
 
       expect(mockRunTask).not.toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe("RecoveryService", () => {
     it("leaves project as executing (not completed) when all tasks succeeded — completed is owned by PR-merge polling", async () => {
       const proj = makeProject("proj-5");
       proj.plan!.tasks[0].status = "completed";
-      insertProject(proj);
+      await insertProject(proj);
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockNotify = vi.fn().mockResolvedValue(undefined);
       const svc = new RecoveryService({} as never);
@@ -166,7 +166,7 @@ describe("RecoveryService", () => {
       await svc.checkAllTerminal("proj-5");
       // Project must NOT be set to "completed" here — the polling loop does that
       // when implementation PRs are merged, to avoid premature closure.
-      expect(getProject("proj-5")!.status).toBe("executing");
+      expect((await getProject("proj-5"))!.status).toBe("executing");
       expect(mockNotify).toHaveBeenCalledWith("proj-5", expect.stringContaining("complete"));
     });
 
@@ -176,7 +176,7 @@ describe("RecoveryService", () => {
         { id: "task-1", repositoryId: "repo-1", description: "", status: "completed" },
         { id: "task-2", repositoryId: "repo-1", description: "", status: "executing" },
       ];
-      insertProject(proj);
+      await insertProject(proj);
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockNotify = vi.fn().mockResolvedValue(undefined);
       const svc = new RecoveryService({} as never);
@@ -184,7 +184,7 @@ describe("RecoveryService", () => {
       svc.notifyMaster = mockNotify;
       // @ts-expect-error accessing private for test
       await svc.checkAllTerminal("proj-6");
-      expect(getProject("proj-6")!.status).toBe("executing"); // unchanged
+      expect((await getProject("proj-6"))!.status).toBe("executing"); // unchanged
       expect(mockNotify).not.toHaveBeenCalled();
     });
   });
@@ -194,7 +194,7 @@ describe("RecoveryService", () => {
       const proj = makeProject("proj-7");
       proj.plan!.tasks[0].status = "failed";
       proj.plan!.tasks[0].retryCount = 2;
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -204,15 +204,15 @@ describe("RecoveryService", () => {
 
       expect(dispatchSpy).toHaveBeenCalledTimes(1);
       // retryCount reset to 0
-      expect(getProject("proj-7")!.plan!.tasks[0].retryCount).toBe(0);
-      expect(getProject("proj-7")!.plan!.tasks[0].status).toBe("pending");
-      expect(getProject("proj-7")!.status).toBe("executing");
+      expect((await getProject("proj-7"))!.plan!.tasks[0].retryCount).toBe(0);
+      expect((await getProject("proj-7"))!.plan!.tasks[0].status).toBe("pending");
+      expect((await getProject("proj-7"))!.status).toBe("executing");
     });
 
     it("skips tasks already in activeTaskIds", async () => {
       const proj = makeProject("proj-8");
       proj.plan!.tasks[0].status = "failed";
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -236,7 +236,7 @@ describe("RecoveryService", () => {
         { id: "old-failed",    repositoryId: "repo-1", description: "Failed task", status: "failed" },
         { id: "new-pending",   repositoryId: "repo-1", description: "New E2E fix", status: "pending" },
       ];
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -257,7 +257,7 @@ describe("RecoveryService", () => {
         { id: "done-1", repositoryId: "repo-1", description: "Done", status: "completed" },
         { id: "done-2", repositoryId: "repo-1", description: "Also done", status: "completed" },
       ];
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -271,8 +271,8 @@ describe("RecoveryService", () => {
 
   describe("recoverOnBoot", () => {
     it("registers taskIds synchronously before async container checks", async () => {
-      insertProject(makeProject("proj-9"));
-      insertAgentSession(makeSession("sess-1", "proj-9", "running"));
+      await insertProject(makeProject("proj-9"));
+      await insertAgentSession(makeSession("sess-1", "proj-9", "running"));
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockGetContainerStatus = vi.fn().mockResolvedValue("exited");
@@ -304,8 +304,8 @@ describe("RecoveryService", () => {
 
   describe("recoverExecutingProjects", () => {
     it("skips tasks in activeTaskIds (concurrency guard)", async () => {
-      insertProject(makeProject("proj-10"));
-      insertAgentSession(makeSession("sess-2", "proj-10", "running", "task-1", 40));
+      await insertProject(makeProject("proj-10"));
+      await insertAgentSession(makeSession("sess-2", "proj-10", "running", "task-1", 40));
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -321,9 +321,9 @@ describe("RecoveryService", () => {
     });
 
     it("does not flag sessions updated within staleSessionThresholdMs", async () => {
-      insertProject(makeProject("proj-11"));
+      await insertProject(makeProject("proj-11"));
       // 5 minutes ago — well within 35-min threshold
-      insertAgentSession(makeSession("sess-3", "proj-11", "running", "task-1", 5));
+      await insertAgentSession(makeSession("sess-3", "proj-11", "running", "task-1", 5));
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -337,8 +337,8 @@ describe("RecoveryService", () => {
     });
 
     it("skips recovery when container is still running", async () => {
-      insertProject(makeProject("proj-12"));
-      insertAgentSession(makeSession("sess-4", "proj-12", "running", "task-1", 40));
+      await insertProject(makeProject("proj-12"));
+      await insertAgentSession(makeSession("sess-4", "proj-12", "running", "task-1", 40));
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -356,7 +356,7 @@ describe("RecoveryService", () => {
     it("notifies master when project is executing with no tasks", async () => {
       const proj = makeProject("proj-orphan-1");
       proj.plan!.tasks = [];
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockNotify = vi.fn().mockResolvedValue(undefined);
@@ -368,13 +368,13 @@ describe("RecoveryService", () => {
       await svc.recoverOrphanedProject(proj);
 
       expect(mockNotify).toHaveBeenCalledWith("proj-orphan-1", expect.stringContaining("awaiting_plan_approval"));
-      expect(getProject("proj-orphan-1")!.status).toBe("awaiting_plan_approval"); // reverted
+      expect((await getProject("proj-orphan-1"))!.status).toBe("awaiting_plan_approval"); // reverted
     });
 
     it("calls checkAllTerminal when all tasks are already terminal", async () => {
       const proj = makeProject("proj-orphan-2");
       proj.plan!.tasks[0].status = "completed";
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockNotify = vi.fn().mockResolvedValue(undefined);
@@ -386,14 +386,14 @@ describe("RecoveryService", () => {
       await svc.recoverOrphanedProject(proj);
 
       // checkAllTerminal should notify but leave status as "executing" — "completed" is owned by PR-merge polling
-      expect(getProject("proj-orphan-2")!.status).toBe("executing");
+      expect((await getProject("proj-orphan-2"))!.status).toBe("executing");
       expect(mockNotify).toHaveBeenCalledWith("proj-orphan-2", expect.stringContaining("complete"));
     });
 
     it("re-dispatches pending tasks when no active sessions", async () => {
       const proj = makeProject("proj-orphan-3");
       proj.plan!.tasks[0].status = "pending";
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -408,7 +408,7 @@ describe("RecoveryService", () => {
     it("skips tasks already in activeTaskIds when re-dispatching", async () => {
       const proj = makeProject("proj-orphan-4");
       proj.plan!.tasks[0].status = "pending";
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -425,7 +425,7 @@ describe("RecoveryService", () => {
     it("resets executing tasks to pending before re-dispatch when no session", async () => {
       const proj = makeProject("proj-orphan-5");
       proj.plan!.tasks[0].status = "executing";
-      insertProject(proj);
+      await insertProject(proj);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -436,7 +436,7 @@ describe("RecoveryService", () => {
 
       expect(dispatchSpy).toHaveBeenCalledTimes(1);
       // task should have been reset to pending before dispatch
-      expect(getProject("proj-orphan-5")!.plan!.tasks[0].status).toBe("pending");
+      expect((await getProject("proj-orphan-5"))!.plan!.tasks[0].status).toBe("pending");
     });
   });
 
@@ -444,7 +444,7 @@ describe("RecoveryService", () => {
     it("calls recoverOrphanedProject when project has no active sessions", async () => {
       const proj = makeProject("proj-orphan-6");
       proj.plan!.tasks[0].status = "pending";
-      insertProject(proj);
+      await insertProject(proj);
       // No sessions inserted
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
@@ -457,9 +457,9 @@ describe("RecoveryService", () => {
     });
 
     it("does NOT call recoverOrphanedProject when active sessions exist", async () => {
-      insertProject(makeProject("proj-orphan-7"));
+      await insertProject(makeProject("proj-orphan-7"));
       // Insert a fresh session (5 min ago — not stale)
-      insertAgentSession(makeSession("sess-orphan", "proj-orphan-7", "running", "task-1", 5));
+      await insertAgentSession(makeSession("sess-orphan", "proj-orphan-7", "running", "task-1", 5));
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const svc = new RecoveryService({} as never);
@@ -506,7 +506,7 @@ describe("RecoveryService", () => {
           { id: "t3", repositoryId: "r1", description: "task 3", status: "pending" },
         ],
       };
-      insertProject(project);
+      await insertProject(project);
 
       await svc.dispatchTasksForProject("p1");
       expect(maxConcurrent).toBe(1);
@@ -538,7 +538,7 @@ describe("RecoveryService", () => {
           id: `plan-${pid}`, projectId: pid, content: "",
           tasks: [{ id: `${pid}-t1`, repositoryId: "r1", description: "task", status: "pending" }],
         };
-        insertProject(p);
+        await insertProject(p);
       }
 
       await Promise.all([
@@ -576,7 +576,7 @@ describe("RecoveryService", () => {
         id: "plan-retry", projectId: "p-retry", content: "",
         tasks: [{ id: "t-retry", repositoryId: "r1", description: "retry task", status: "pending" }],
       };
-      insertProject(project);
+      await insertProject(project);
 
       await svc.dispatchTasksForProject("p-retry");
 
@@ -592,7 +592,7 @@ describe("RecoveryService", () => {
 
   describe("errorMessage population", () => {
     it("sets errorMessage on task when permanently failed via dispatchWithRetry", async () => {
-      insertProject(makeProject("proj-err"));
+      await insertProject(makeProject("proj-err"));
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockDocker = {} as never;
       const mockRunTask = vi.fn().mockResolvedValue({ taskId: "task-1", success: false, error: "container exited 1" });
@@ -607,13 +607,13 @@ describe("RecoveryService", () => {
       const originalMaxRetries = config.subAgentMaxRetries;
       config.subAgentMaxRetries = 0;
       try {
-        const freshProject = getProject("proj-err")!;
+        const freshProject = (await getProject("proj-err"))!;
         await svc.dispatchWithRetry(freshProject, freshProject.plan!.tasks[0]);
       } finally {
         config.subAgentMaxRetries = originalMaxRetries;
       }
 
-      const updated = getProject("proj-err")!;
+      const updated = (await getProject("proj-err"))!;
       const updatedTask = updated.plan!.tasks[0];
       expect(updatedTask.status).toBe("failed");
       expect(updatedTask.errorMessage).toContain("container exited 1");
@@ -621,9 +621,9 @@ describe("RecoveryService", () => {
 
     it("sets errorMessage on task when recoverSession exhausts retries", async () => {
       const project = makeProject("proj-recover");
-      insertProject(project);
+      await insertProject(project);
       const session = makeSession("sess-recover", "proj-recover", "running");
-      insertAgentSession(session);
+      await insertAgentSession(session);
 
       const { RecoveryService } = await import("../orchestrator/recoveryService.js");
       const mockDocker = {
@@ -640,12 +640,12 @@ describe("RecoveryService", () => {
 
       // Manually update task retryCount to match so the exhaustion branch is triggered
       const { updateTaskInPlan } = await import("../store/projects.js");
-      updateTaskInPlan("proj-recover", "task-1", { retryCount: config.subAgentMaxRetries });
+      await updateTaskInPlan("proj-recover", "task-1", { retryCount: config.subAgentMaxRetries });
 
       // @ts-expect-error accessing private for test
       await svc.recoverSession(session);
 
-      const updated = getProject("proj-recover")!;
+      const updated = (await getProject("proj-recover"))!;
       const updatedTask = updated.plan!.tasks.find(t => t.id === "task-1")!;
       expect(updatedTask.status).toBe("failed");
       expect(updatedTask.errorMessage).toContain("Permanently failed");

@@ -6,9 +6,23 @@ import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
+import { verifyWsToken, LOCAL_USER } from "./auth.js";
+import type { AuthUser } from "./auth.js";
+import { config } from "../config.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
 interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error"; [key: string]: unknown; }
+
+// ── resolveWsUser ─────────────────────────────────────────────────────────────
+// Extracted for testability. Returns the resolved AuthUser or throws on failure.
+
+export async function resolveWsUser(token: string | null, authEnabled: boolean): Promise<AuthUser> {
+  if (!authEnabled) return LOCAL_USER;
+  if (!token) throw new Error("No token provided");
+  const user = await verifyWsToken(token);
+  if (!user) throw new Error("Invalid or expired token");
+  return user;
+}
 
 function send(ws: WebSocket, msg: WsServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -112,7 +126,7 @@ async function ensureRunningWithRetry(
       } else {
         // All retries exhausted — persist the error and close
         try {
-          updateProject(projectId, { lastError: msg });
+          await updateProject(projectId, { lastError: msg });
         } catch { /* ignore */ }
         send(ws, {
           type: "error",
@@ -127,7 +141,31 @@ async function ensureRunningWithRetry(
 }
 
 export function setupWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Handle the HTTP upgrade and authenticate before passing to wss
+  server.on("upgrade", async (req, socket, head) => {
+    const url = new URL(req.url ?? "", "http://localhost");
+    if (url.pathname !== "/ws") {
+      socket.destroy();
+      return;
+    }
+    const token = url.searchParams.get("token");
+
+    let wsUser: AuthUser;
+    try {
+      wsUser = await resolveWsUser(token, config.authEnabled);
+    } catch {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      (ws as WebSocket & { user: AuthUser }).user = wsUser;
+      wss.emit("connection", ws, req);
+    });
+  });
 
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
@@ -138,7 +176,7 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) {
       ws.close(1008, "Project not found");
       return;
@@ -150,7 +188,7 @@ export function setupWebSocket(server: Server) {
 
     const manager = getPlanningAgentManager();
     const ghToken = process.env.GITHUB_TOKEN;
-    const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+    const allRepos = (await listRepositories()).filter((r) => project.repositoryIds.includes(r.id));
     const repoUrls = allRepos.map((r) => ({
       id: r.id,
       name: r.name,
@@ -192,11 +230,9 @@ export function setupWebSocket(server: Server) {
         } else if (event.type === "message_complete") {
           const buffer = projectMessageBuffers.get(projectId) ?? "";
           if (buffer) {
-            try {
-              appendMessage(projectId, "assistant", buffer);
-            } catch (err) {
+            appendMessage(projectId, "assistant", buffer).catch(err => {
               console.error(`[ws] Failed to persist assistant message for ${projectId}:`, err);
-            }
+            });
           }
           projectMessageBuffers.delete(projectId);
         }
@@ -223,14 +259,14 @@ export function setupWebSocket(server: Server) {
           console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
 
           // Reactivate completed projects when the user sends a new message
-          const currentProject = getProject(projectId);
+          const currentProject = await getProject(projectId);
           if (currentProject?.status === "completed") {
-            updateProject(projectId, { status: "executing" });
+            await updateProject(projectId, { status: "executing" });
             console.log(`[ws] Reactivating completed project ${projectId} → executing on user prompt`);
           }
 
           try {
-            appendMessage(projectId, "user", msg.text);
+            await appendMessage(projectId, "user", msg.text);
           } catch (err) {
             console.error(`[ws] Failed to persist user message for ${projectId}:`, err);
           }
@@ -244,7 +280,7 @@ export function setupWebSocket(server: Server) {
           await manager.sendPrompt(projectId, msg.text);
         } else if (msg.type === "resume" && msg.lastSeqId !== undefined) {
           // Replay missed messages
-          const missed = listMessagesSince(projectId, msg.lastSeqId);
+          const missed = await listMessagesSince(projectId, msg.lastSeqId);
           if (missed.length > 0) {
             send(ws, { type: "replay", messages: missed });
           }

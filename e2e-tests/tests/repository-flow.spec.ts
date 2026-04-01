@@ -5,7 +5,7 @@ import {
   TEST_REPO_OWNER,
   TEST_REPO_NAME,
   createPlanningPr,
-  postLgtmComment,
+  approvePlanningPr,
   cleanupNewBranches,
   seedTestRepo,
   deleteTestRepo,
@@ -150,10 +150,10 @@ test.describe('Repository Configuration Flow', () => {
       planningPrNumber = prNumber;
     }
 
-    // Post LGTM comment on the planning PR — triggers the polling cycle to dispatch tasks
-    await postLgtmComment(planningPrNumber);
+    // Approve the planning PR — triggers the polling cycle to dispatch tasks
+    await approvePlanningPr(planningPrNumber);
 
-    // Wait for polling to detect LGTM and transition project to executing (up to 120s)
+    // Wait for polling to detect approval and transition project to executing (up to 120s)
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);

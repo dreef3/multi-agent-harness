@@ -1,8 +1,8 @@
 import { Router } from "express";
 import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
-import { 
-  listPullRequestsByProject, 
+import {
+  listPullRequestsByProject,
   getPullRequest,
   getPendingComments,
   upsertReviewComment,
@@ -18,45 +18,45 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
   const taskDispatcher = new TaskDispatcher();
 
   // List all PRs for a project
-  router.get("/project/:projectId", (req, res) => {
+  router.get("/project/:projectId", async (req, res) => {
     const { projectId } = req.params;
-    const prs = listPullRequestsByProject(projectId);
+    const prs = await listPullRequestsByProject(projectId);
     res.json(prs);
   });
 
   // Get a single PR with its comments
-  router.get("/:id", (req, res) => {
-    const pr = getPullRequest(req.params.id);
+  router.get("/:id", async (req, res) => {
+    const pr = await getPullRequest(req.params.id);
     if (!pr) {
       res.status(404).json({ error: "Pull request not found" });
       return;
     }
 
-    const comments = getPendingComments(req.params.id);
+    const comments = await getPendingComments(req.params.id);
     res.json({ ...pr, comments });
   });
 
   // Get comments for a PR
-  router.get("/:id/comments", (req, res) => {
-    const pr = getPullRequest(req.params.id);
+  router.get("/:id/comments", async (req, res) => {
+    const pr = await getPullRequest(req.params.id);
     if (!pr) {
       res.status(404).json({ error: "Pull request not found" });
       return;
     }
 
-    const comments = getPendingComments(req.params.id);
+    const comments = await getPendingComments(req.params.id);
     res.json(comments);
   });
 
   // Sync comments from VCS provider
   router.post("/:id/sync", async (req, res) => {
-    const pr = getPullRequest(req.params.id);
+    const pr = await getPullRequest(req.params.id);
     if (!pr) {
       res.status(404).json({ error: "Pull request not found" });
       return;
     }
 
-    const repository = getRepository(pr.repositoryId);
+    const repository = await getRepository(pr.repositoryId);
     if (!repository) {
       res.status(404).json({ error: "Repository not found" });
       return;
@@ -80,18 +80,18 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
           receivedAt: comment.createdAt,
           updatedAt: new Date().toISOString(),
         };
-        upsertReviewComment(reviewComment);
+        await upsertReviewComment(reviewComment);
       }
 
-      const pendingComments = getPendingComments(pr.id);
-      res.json({ 
-        success: true, 
+      const pendingComments = await getPendingComments(pr.id);
+      res.json({
+        success: true,
         synced: comments.length,
-        pending: pendingComments.length 
+        pending: pendingComments.length
       });
     } catch (error) {
       console.error(`[pullRequests] Sync failed for ${req.params.id}:`, error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to sync comments",
         details: error instanceof Error ? error.message : String(error)
       });
@@ -100,16 +100,17 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
 
   // Trigger manual fix run for a PR
   router.post("/:id/fix", async (req, res) => {
-    const pr = getPullRequest(req.params.id);
+    const pr = await getPullRequest(req.params.id);
     if (!pr) {
       res.status(404).json({ error: "Pull request not found" });
       return;
     }
 
     const { commentIds } = req.body;
-    const commentsToFix = commentIds 
-      ? getPendingComments(pr.id).filter(c => commentIds.includes(c.id))
-      : getPendingComments(pr.id);
+    const allPending = await getPendingComments(pr.id);
+    const commentsToFix = commentIds
+      ? allPending.filter(c => commentIds.includes(c.id))
+      : allPending;
 
     if (commentsToFix.length === 0) {
       res.status(400).json({ error: "No pending comments to fix" });
@@ -118,7 +119,7 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
 
     try {
       // Mark comments as fixing
-      markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "fixing");
+      await markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "fixing");
 
       // Run fix via task dispatcher
       const result = await taskDispatcher.runFixRun(
@@ -133,18 +134,18 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
       );
 
       if (result.success) {
-        markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "fixed");
+        await markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "fixed");
         res.json({ success: true, fixed: commentsToFix.length });
       } else {
-        markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "pending");
-        res.status(500).json({ 
+        await markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "pending");
+        res.status(500).json({
           error: "Fix run failed",
-          details: result.error 
+          details: result.error
         });
       }
     } catch (error) {
       console.error(`[pullRequests] Fix run failed for ${req.params.id}:`, error);
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to run fix",
         details: error instanceof Error ? error.message : String(error)
       });
@@ -152,7 +153,7 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
   });
 
   // Update comment status (ignore, pending, etc.)
-  router.patch("/:id/comments/:commentId", (req, res) => {
+  router.patch("/:id/comments/:commentId", async (req, res) => {
     const { id, commentId } = req.params;
     const { status } = req.body;
 
@@ -161,17 +162,17 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
       return;
     }
 
-    const pr = getPullRequest(id);
+    const pr = await getPullRequest(id);
     if (!pr) {
       res.status(404).json({ error: "Pull request not found" });
       return;
     }
 
     try {
-      markCommentsStatus(id, [commentId], status as ReviewComment["status"]);
+      await markCommentsStatus(id, [commentId], status as ReviewComment["status"]);
       res.json({ success: true });
     } catch (error) {
-      res.status(500).json({ 
+      res.status(500).json({
         error: "Failed to update comment status",
         details: error instanceof Error ? error.message : String(error)
       });

@@ -132,6 +132,7 @@ jobs:
         env:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_APPROVER_TOKEN: ${{ secrets.GH_APPROVER_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
         run: bunx playwright test
 

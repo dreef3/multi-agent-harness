@@ -57,6 +57,24 @@ services:
     profiles:
       - build-only  # prevents this from being started by docker compose up
 
+  postgres:
+    image: postgres:16-alpine
+    profiles:
+      - enterprise
+    environment:
+      POSTGRES_DB: harness
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-harness}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness -d harness"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - harness-postgres:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+
 networks:
   harness-agents:
     driver: bridge
@@ -69,3 +87,4 @@ volumes:
     name: harness-pi-auth
   harness-repo-cache:
     name: harness-repo-cache
+  harness-postgres:
