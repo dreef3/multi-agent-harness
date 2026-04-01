@@ -96,7 +96,7 @@ describe("WebSocket message persistence", () => {
 
   // Each test uses its own unique projectId to avoid cross-test broadcaster contamination
   // (projectBroadcasters is module-level state)
-  function makeProject(status: Project["status"] = "brainstorming"): { projectId: string; project: Project } {
+  async function makeProject(status: Project["status"] = "brainstorming"): Promise<{ projectId: string; project: Project }> {
     const projectId = randomUUID();
     const project: Project = {
       id: projectId,
@@ -108,7 +108,7 @@ describe("WebSocket message persistence", () => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    insertProject(project);
+    await insertProject(project);
     return { projectId, project };
   }
 
@@ -122,20 +122,20 @@ describe("WebSocket message persistence", () => {
   }
 
   it("persists user message to DB when prompt is sent", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Fix the build please" }));
     await sleep(50);
     ws.close();
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     expect(msgs).toHaveLength(1);
     expect(msgs[0].role).toBe("user");
     expect(msgs[0].content).toBe("Fix the build please");
   });
 
   it("persists assistant message to DB after streaming completes", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Hello" }));
     await sleep(20);
@@ -148,14 +148,14 @@ describe("WebSocket message persistence", () => {
     ws.close();
     await sleep(20);
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     const assistant = msgs.filter((m) => m.role === "assistant");
     expect(assistant).toHaveLength(1);
     expect(assistant[0].content).toBe("Hello world!");
   });
 
   it("accumulates multiple deltas into a single assistant message", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
     await sleep(20);
@@ -169,14 +169,14 @@ describe("WebSocket message persistence", () => {
     ws.close();
     await sleep(20);
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     const assistant = msgs.filter((m) => m.role === "assistant");
     expect(assistant).toHaveLength(1);
     expect(assistant[0].content).toBe("The answer is 42.");
   });
 
   it("saves separate assistant messages for each message_complete", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Multi-turn" }));
     await sleep(20);
@@ -196,7 +196,7 @@ describe("WebSocket message persistence", () => {
     ws.close();
     await sleep(20);
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     const assistant = msgs.filter((m) => m.role === "assistant");
     expect(assistant).toHaveLength(2);
     expect(assistant[0].content).toBe("First response.");
@@ -204,7 +204,7 @@ describe("WebSocket message persistence", () => {
   });
 
   it("buffers messages sent before container is ready and replays them after startup", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
 
     // Simulate slow container startup — ensureRunning resolves after 50ms
     let resolveEnsure!: () => void;
@@ -232,14 +232,14 @@ describe("WebSocket message persistence", () => {
     expect(mockManager.sendPrompt).toHaveBeenCalledOnce();
     expect(mockManager.sendPrompt.mock.calls[0][1]).toBe("Early message");
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     const user = msgs.filter((m) => m.role === "user");
     expect(user).toHaveLength(1);
     expect(user[0].content).toBe("Early message");
   });
 
   it("does not save empty assistant message when no deltas precede message_complete", async () => {
-    const { projectId } = makeProject();
+    const { projectId } = await makeProject();
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
     await sleep(20);
@@ -251,13 +251,13 @@ describe("WebSocket message persistence", () => {
     ws.close();
     await sleep(20);
 
-    const msgs = listMessages(projectId);
+    const msgs = await listMessages(projectId);
     const assistant = msgs.filter((m) => m.role === "assistant");
     expect(assistant).toHaveLength(0);
   });
 
   it("reactivates a completed project to executing when user sends a prompt", async () => {
-    const { projectId } = makeProject("completed");
+    const { projectId } = await makeProject("completed");
     const ws = await connectWs(projectId);
 
     ws.send(JSON.stringify({ type: "prompt", text: "What changed?" }));
@@ -268,7 +268,7 @@ describe("WebSocket message persistence", () => {
   });
 
   it("does not reactivate a project that is already executing on user prompt", async () => {
-    const { projectId } = makeProject("executing");
+    const { projectId } = await makeProject("executing");
     const ws = await connectWs(projectId);
 
     ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
@@ -279,7 +279,7 @@ describe("WebSocket message persistence", () => {
   });
 
   it("does not reactivate on steer or resume messages", async () => {
-    const { projectId } = makeProject("completed");
+    const { projectId } = await makeProject("completed");
     const ws = await connectWs(projectId);
 
     ws.send(JSON.stringify({ type: "steer", text: "Actually, stop" }));
