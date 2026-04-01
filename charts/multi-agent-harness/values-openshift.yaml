@@ -11,14 +11,7 @@ route:
     insecureEdgeTerminationPolicy: Redirect
 
 # OpenShift assigns arbitrary UIDs — do not set runAsUser
-# runAsNonRoot: true is still valid
-backend:
-  podSecurityContext:
-    runAsNonRoot: true
-
-frontend:
-  podSecurityContext:
-    runAsNonRoot: true
+# Deployments already hardcode runAsNonRoot: true in pod securityContext
 
 # OpenShift uses oc-managed StorageClasses
 persistence:

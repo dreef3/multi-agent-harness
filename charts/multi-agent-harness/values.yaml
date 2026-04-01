@@ -1,9 +1,10 @@
 # Image configuration
 image:
-  # Corporate registry prefix — empty = use Docker Hub / GHCR
+  # Default registry (host); set to corporate registry to override.
   # Example: corp-artifactory.example.com/docker-local
-  registry: ""
-  prefix: "ghcr.io/dreef3/multi-agent-harness"
+  registry: "ghcr.io"
+  # Repository path appended after registry
+  prefix: "dreef3/multi-agent-harness"
   tag: "latest"
   pullPolicy: IfNotPresent
   pullSecrets: []
