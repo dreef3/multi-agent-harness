@@ -41,39 +41,39 @@ describe("pullRequests store", () => {
     updatedAt: new Date().toISOString(),
   };
 
-  it("inserts and retrieves a pull request", () => {
-    insertPullRequest(pr);
-    const found = getPullRequest("pr-1");
+  it("inserts and retrieves a pull request", async () => {
+    await insertPullRequest(pr);
+    const found = await getPullRequest("pr-1");
     expect(found).toMatchObject({ id: "pr-1", status: "open" });
     expect(found?.url).toBe("https://github.com/org/repo/pull/123");
   });
 
-  it("returns null for a missing id", () => {
-    expect(getPullRequest("nonexistent")).toBeNull();
+  it("returns null for a missing id", async () => {
+    expect(await getPullRequest("nonexistent")).toBeNull();
   });
 
-  it("lists pull requests by projectId", () => {
-    insertPullRequest(pr);
-    const list = listPullRequestsByProject("project-1");
+  it("lists pull requests by projectId", async () => {
+    await insertPullRequest(pr);
+    const list = await listPullRequestsByProject("project-1");
     expect(list).toHaveLength(1);
     expect(list[0].id).toBe("pr-1");
   });
 
-  it("returns empty list for project with no pull requests", () => {
-    const list = listPullRequestsByProject("project-no-prs");
+  it("returns empty list for project with no pull requests", async () => {
+    const list = await listPullRequestsByProject("project-no-prs");
     expect(list).toHaveLength(0);
   });
 
-  it("updates status and branch", () => {
-    insertPullRequest(pr);
-    updatePullRequest("pr-1", { status: "merged", branch: "feature/test-renamed" });
-    const found = getPullRequest("pr-1");
+  it("updates status and branch", async () => {
+    await insertPullRequest(pr);
+    await updatePullRequest("pr-1", { status: "merged", branch: "feature/test-renamed" });
+    const found = await getPullRequest("pr-1");
     expect(found?.status).toBe("merged");
     expect(found?.branch).toBe("feature/test-renamed");
   });
 
-  it("throws when updating a nonexistent pull request", () => {
-    expect(() => updatePullRequest("missing", { status: "merged" })).toThrow("PullRequest not found");
+  it("throws when updating a nonexistent pull request", async () => {
+    await expect(updatePullRequest("missing", { status: "merged" })).rejects.toThrow("PullRequest not found");
   });
 });
 
@@ -102,54 +102,54 @@ describe("reviewComments store", () => {
     updatedAt: new Date().toISOString(),
   };
 
-  it("inserts and retrieves a review comment", () => {
-    upsertReviewComment(comment);
-    const pending = getPendingComments("pr-1");
+  it("inserts and retrieves a review comment", async () => {
+    await upsertReviewComment(comment);
+    const pending = await getPendingComments("pr-1");
     expect(pending).toHaveLength(1);
     expect(pending[0]).toMatchObject({ id: "comment-1", body: "This needs work" });
     expect(pending[0].filePath).toBe("src/file.ts");
     expect(pending[0].lineNumber).toBe(42);
   });
 
-  it("returns empty list for PR with no pending comments", () => {
-    const pending = getPendingComments("pr-no-comments");
+  it("returns empty list for PR with no pending comments", async () => {
+    const pending = await getPendingComments("pr-no-comments");
     expect(pending).toHaveLength(0);
   });
 
-  it("returns true when inserting a new comment", () => {
-    const isNew = upsertReviewComment(comment);
+  it("returns true when inserting a new comment", async () => {
+    const isNew = await upsertReviewComment(comment);
     expect(isNew).toBe(true);
   });
 
-  it("returns false when upserting an existing comment (same externalId)", () => {
-    upsertReviewComment(comment);
-    const isNew = upsertReviewComment({ ...comment, body: "Updated body" });
+  it("returns false when upserting an existing comment (same externalId)", async () => {
+    await upsertReviewComment(comment);
+    const isNew = await upsertReviewComment({ ...comment, body: "Updated body" });
     expect(isNew).toBe(false);
   });
 
-  it("updates existing comment by externalId", () => {
-    upsertReviewComment(comment);
+  it("updates existing comment by externalId", async () => {
+    await upsertReviewComment(comment);
     const updatedComment: ReviewComment = {
       ...comment,
       body: "Updated body",
       status: "batched",
     };
-    upsertReviewComment(updatedComment);
-    const pending = getPendingComments("pr-1");
+    await upsertReviewComment(updatedComment);
+    const pending = await getPendingComments("pr-1");
     expect(pending).toHaveLength(0);
-    const allPending = listAllPendingComments();
+    const allPending = await listAllPendingComments();
     expect(allPending).toHaveLength(0);
   });
 
-  it("marks comments status", () => {
-    upsertReviewComment(comment);
-    markCommentsStatus("pr-1", ["comment-1"], "fixing");
-    const pending = getPendingComments("pr-1");
+  it("marks comments status", async () => {
+    await upsertReviewComment(comment);
+    await markCommentsStatus("pr-1", ["comment-1"], "fixing");
+    const pending = await getPendingComments("pr-1");
     expect(pending).toHaveLength(0);
   });
 
-  it("lists all pending comments across all PRs", () => {
-    upsertReviewComment(comment);
+  it("lists all pending comments across all PRs", async () => {
+    await upsertReviewComment(comment);
     const comment2: ReviewComment = {
       id: "comment-2",
       pullRequestId: "pr-2",
@@ -160,13 +160,13 @@ describe("reviewComments store", () => {
       receivedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    upsertReviewComment(comment2);
-    const allPending = listAllPendingComments();
+    await upsertReviewComment(comment2);
+    const allPending = await listAllPendingComments();
     expect(allPending).toHaveLength(2);
   });
 
-  it("filters pending comments correctly", () => {
-    upsertReviewComment(comment);
+  it("filters pending comments correctly", async () => {
+    await upsertReviewComment(comment);
     const fixedComment: ReviewComment = {
       id: "comment-2",
       pullRequestId: "pr-1",
@@ -177,8 +177,8 @@ describe("reviewComments store", () => {
       receivedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    upsertReviewComment(fixedComment);
-    const pending = getPendingComments("pr-1");
+    await upsertReviewComment(fixedComment);
+    const pending = await getPendingComments("pr-1");
     expect(pending).toHaveLength(1);
     expect(pending[0].id).toBe("comment-1");
   });

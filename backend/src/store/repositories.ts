@@ -27,43 +27,37 @@ function fromRow(row: RepositoryRow): Repository {
   };
 }
 
-export function insertRepository(repo: Repository): void {
-  db()
-    .prepare(
-      `INSERT INTO repositories (id, name, clone_url, provider, provider_config, default_branch, created_at, updated_at)
-       VALUES (@id, @name, @cloneUrl, @provider, @providerConfig, @defaultBranch, @createdAt, @updatedAt)`
-    )
-    .run({
-      id: repo.id, name: repo.name, cloneUrl: repo.cloneUrl,
-      provider: repo.provider, providerConfig: JSON.stringify(repo.providerConfig),
-      defaultBranch: repo.defaultBranch, createdAt: repo.createdAt, updatedAt: repo.updatedAt,
-    });
+export async function insertRepository(repo: Repository): Promise<void> {
+  await db().execute(
+    `INSERT INTO repositories (id, name, clone_url, provider, provider_config, default_branch, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [repo.id, repo.name, repo.cloneUrl, repo.provider, JSON.stringify(repo.providerConfig),
+     repo.defaultBranch, repo.createdAt, repo.updatedAt]
+  );
 }
 
-export function getRepository(id: string): Repository | null {
-  const row = db().prepare("SELECT * FROM repositories WHERE id = ?").get(id) as RepositoryRow | null;
-  return row ? fromRow(row) : null;
+export async function getRepository(id: string): Promise<Repository | null> {
+  const rows = await db().query<RepositoryRow>("SELECT * FROM repositories WHERE id = ?", [id]);
+  return rows[0] ? fromRow(rows[0]) : null;
 }
 
-export function listRepositories(): Repository[] {
-  const rows = db().prepare("SELECT * FROM repositories ORDER BY created_at DESC").all() as unknown as RepositoryRow[];
+export async function listRepositories(): Promise<Repository[]> {
+  const rows = await db().query<RepositoryRow>("SELECT * FROM repositories ORDER BY created_at DESC");
   return rows.map(fromRow);
 }
 
-export function updateRepository(id: string, updates: Partial<Omit<Repository, "id">>): void {
-  const existing = getRepository(id);
+export async function updateRepository(id: string, updates: Partial<Omit<Repository, "id">>): Promise<void> {
+  const existing = await getRepository(id);
   if (!existing) throw new Error(`Repository not found: ${id}`);
   const merged = { ...existing, ...updates, id, updatedAt: new Date().toISOString() };
-  db()
-    .prepare(`UPDATE repositories SET name=@name, clone_url=@cloneUrl, provider=@provider,
-             provider_config=@providerConfig, default_branch=@defaultBranch, updated_at=@updatedAt WHERE id=@id`)
-    .run({
-      id: merged.id, name: merged.name, cloneUrl: merged.cloneUrl,
-      provider: merged.provider, providerConfig: JSON.stringify(merged.providerConfig),
-      defaultBranch: merged.defaultBranch, updatedAt: merged.updatedAt,
-    });
+  await db().execute(
+    `UPDATE repositories SET name=?, clone_url=?, provider=?,
+     provider_config=?, default_branch=?, updated_at=? WHERE id=?`,
+    [merged.name, merged.cloneUrl, merged.provider, JSON.stringify(merged.providerConfig),
+     merged.defaultBranch, merged.updatedAt, merged.id]
+  );
 }
 
-export function deleteRepository(id: string): void {
-  db().prepare("DELETE FROM repositories WHERE id = ?").run(id);
+export async function deleteRepository(id: string): Promise<void> {
+  await db().execute("DELETE FROM repositories WHERE id = ?", [id]);
 }

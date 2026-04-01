@@ -30,7 +30,7 @@ export async function pollPullRequest(
   docker: Dockerode,
   pr: PullRequest
 ): Promise<number> {
-  const repository = getRepository(pr.repositoryId);
+  const repository = await getRepository(pr.repositoryId);
   if (!repository) {
     console.warn(`[polling] Repository not found for PR ${pr.id}`);
     return 0;
@@ -45,17 +45,17 @@ export async function pollPullRequest(
     // Sync the live PR status — implementation PRs never get updated locally when merged.
     const prInfo = await connector.getPullRequest(repository, pr.externalId);
     if (prInfo.status !== "open") {
-      updatePullRequest(pr.id, { status: prInfo.status });
+      await updatePullRequest(pr.id, { status: prInfo.status });
       console.log(`[polling] PR ${pr.id} is ${prInfo.status} on remote — updated local status, skipping comment poll`);
 
       // When a PR is merged, check if all project PRs are now terminal → mark project completed
       if (prInfo.status === "merged") {
-        const project = getProject(pr.projectId);
+        const project = await getProject(pr.projectId);
         if (project && project.status !== "completed" && project.status !== "cancelled") {
-          const allPrs = listPullRequestsByProject(pr.projectId);
+          const allPrs = await listPullRequestsByProject(pr.projectId);
           const allTerminal = allPrs.length > 0 && allPrs.every(p => p.status === "merged" || p.status === "declined");
           if (allTerminal) {
-            updateProject(pr.projectId, { status: "completed" });
+            await updateProject(pr.projectId, { status: "completed" });
             console.log(`[polling] All PRs for project ${pr.projectId} are terminal — marking project completed`);
           }
         }
@@ -82,7 +82,7 @@ export async function pollPullRequest(
         updatedAt: new Date().toISOString(),
       };
 
-      const isNew = upsertReviewComment(reviewComment);
+      const isNew = await upsertReviewComment(reviewComment);
       if (isNew) newComments++;
     }
 
@@ -96,20 +96,20 @@ export async function pollPullRequest(
         debounceEngine.notify(pr.id, async (prId) => {
           console.log(`[debounce] Timer fired for PR ${prId}, triggering fix run`);
 
-          const prToFix = getPullRequest(prId);
+          const prToFix = await getPullRequest(prId);
           if (!prToFix) {
             console.warn(`[debounce] PR ${prId} not found for fix run`);
             return;
           }
 
-          const pendingComments = getPendingComments(prId);
+          const pendingComments = await getPendingComments(prId);
           if (pendingComments.length === 0) {
             console.log(`[debounce] No pending comments for PR ${prId}`);
             return;
           }
 
           // Mark comments as fixing
-          markCommentsStatus(prId, pendingComments.map(c => c.id), "fixing");
+          await markCommentsStatus(prId, pendingComments.map(c => c.id), "fixing");
 
           const dispatcher = new TaskDispatcher();
           const result = await dispatcher.runFixRun(
@@ -124,10 +124,10 @@ export async function pollPullRequest(
           );
 
           if (result.success) {
-            markCommentsStatus(prId, pendingComments.map(c => c.id), "fixed");
+            await markCommentsStatus(prId, pendingComments.map(c => c.id), "fixed");
             console.log(`[debounce] Fix run completed for PR ${prId}`);
           } else {
-            markCommentsStatus(prId, pendingComments.map(c => c.id), "pending");
+            await markCommentsStatus(prId, pendingComments.map(c => c.id), "pending");
             console.error(`[debounce] Fix run failed for PR ${prId}:`, result.error);
           }
         });
@@ -159,7 +159,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
 
   let projects: Project[];
   try {
-    projects = listProjectsAwaitingLgtm();
+    projects = await listProjectsAwaitingLgtm();
   } catch (error) {
     console.error("[polling] Failed to list projects awaiting LGTM:", error);
     return;
@@ -175,7 +175,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       console.warn(`[polling] project ${project.id} skipped — missing planningPr or primaryRepositoryId`);
       continue;
     }
-    const repo = getRepository(project.primaryRepositoryId);
+    const repo = await getRepository(project.primaryRepositoryId);
     if (!repo) continue;
 
     try {
@@ -185,7 +185,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       const prInfo = await connector.getPullRequest(repo, String(project.planningPr.number));
       if (prInfo.status !== "open") {
         console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
-        updateProject(project.id, { status: "failed" });
+        await updateProject(project.id, { status: "failed" });
         approvalPollStates.delete(project.id);
         await getPlanningAgentManager().sendPrompt(
           project.id,
@@ -200,7 +200,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
       if (!hasApproval) continue;
 
       // Re-fetch to confirm status hasn't changed
-      const currentProject = getProject(project.id);
+      const currentProject = await getProject(project.id);
       if (!currentProject || currentProject.status !== project.status) continue;
 
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
@@ -209,7 +209,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
 
       if (project.status === "awaiting_spec_approval") {
         const specApprovedAt = new Date().toISOString();
-        updateProject(project.id, {
+        await updateProject(project.id, {
           planningPr: { ...project.planningPr, specApprovedAt },
           status: "plan_in_progress",
         });
@@ -222,7 +222,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         );
       } else if (project.status === "awaiting_plan_approval") {
         const planApprovedAt = new Date().toISOString();
-        updateProject(project.id, {
+        await updateProject(project.id, {
           planningPr: { ...project.planningPr, planApprovedAt },
           status: "executing",
         });
@@ -230,9 +230,9 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
         approvalPollStates.delete(project.id);
 
         // Commit plan file to non-primary repos (primary repo was committed by write_planning_document)
-        const freshProject = getProject(project.id);
+        const freshProject = await getProject(project.id);
         if (freshProject?.plan?.content && freshProject.planningBranch) {
-          const allRepos = listRepositories();
+          const allRepos = await listRepositories();
           const date = freshProject.createdAt.slice(0, 10);
           const slug = slugify(freshProject.name);
           const planFilePath = buildPlanningFilePath("plan", date, slug);
@@ -282,13 +282,13 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
     // Recover any stale sub-agent sessions
     await getRecoveryService().recoverExecutingProjects();
 
-    const projects = listProjects();
+    const projects = await listProjects();
 
     let totalNewComments = 0;
     const openPrIds = new Set<string>();
 
     for (const project of projects) {
-      const prs = listPullRequestsByProject(project.id);
+      const prs = await listPullRequestsByProject(project.id);
 
       // Only poll open PRs
       const openPrs = prs.filter(pr => pr.status === "open");

@@ -8,20 +8,18 @@ export interface AgentEvent {
   timestamp: string;
 }
 
-export function appendEvent(sessionId: string, event: AgentEvent): void {
-  db()
-    .prepare(
-      "INSERT INTO agent_events (session_id, type, payload, timestamp) VALUES (?, ?, ?, ?)"
-    )
-    .run(sessionId, event.type, JSON.stringify(event.payload), event.timestamp);
+export async function appendEvent(sessionId: string, event: AgentEvent): Promise<void> {
+  await db().execute(
+    "INSERT INTO agent_events (session_id, type, payload, timestamp) VALUES (?, ?, ?, ?)",
+    [sessionId, event.type, JSON.stringify(event.payload), event.timestamp]
+  );
 }
 
-export function getEvents(sessionId: string): AgentEvent[] {
-  const rows = db()
-    .prepare(
-      "SELECT type, payload, timestamp FROM agent_events WHERE session_id = ? ORDER BY rowid"
-    )
-    .all(sessionId) as Array<{ type: string; payload: string; timestamp: string }>;
+export async function getEvents(sessionId: string): Promise<AgentEvent[]> {
+  const rows = await db().query<{ type: string; payload: string; timestamp: string }>(
+    "SELECT type, payload, timestamp FROM agent_events WHERE session_id = ? ORDER BY rowid",
+    [sessionId]
+  );
   return rows.map((r) => ({
     type: r.type,
     payload: JSON.parse(r.payload) as Record<string, unknown>,
@@ -29,8 +27,6 @@ export function getEvents(sessionId: string): AgentEvent[] {
   }));
 }
 
-export function clearEvents(sessionId: string): void {
-  db()
-    .prepare("DELETE FROM agent_events WHERE session_id = ?")
-    .run(sessionId);
+export async function clearEvents(sessionId: string): Promise<void> {
+  await db().execute("DELETE FROM agent_events WHERE session_id = ?", [sessionId]);
 }

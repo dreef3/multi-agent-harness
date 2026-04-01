@@ -36,14 +36,14 @@ const UpsertTasksSchema = Type.Object({
 export function createProjectsRouter(dataDir: string, docker: Dockerode): Router {
   const router = Router();
   // List all projects
-  router.get("/", (_req, res) => {
-    const projects = listProjects();
+  router.get("/", async (_req, res) => {
+    const projects = await listProjects();
     res.json(projects);
   });
 
   // Get a single project by ID
-  router.get("/:id", (req, res) => {
-    const project = getProject(req.params.id);
+  router.get("/:id", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
@@ -52,13 +52,13 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
   });
 
   // Create a new project
-  router.post("/", validateBody(CreateProjectSchema), (req, res) => {
+  router.post("/", validateBody(CreateProjectSchema), async (req, res) => {
     const { name, description, source, repositoryIds, primaryRepositoryId } = req.body;
 
     // GitHub Issues source requires all repositories to be GitHub-hosted
     if (source?.type === "github" && Array.isArray(repositoryIds) && repositoryIds.length > 0) {
-      const nonGithubRepos = repositoryIds
-        .map((id: string) => getRepository(id))
+      const repoResults = await Promise.all((repositoryIds as string[]).map((id: string) => getRepository(id)));
+      const nonGithubRepos = repoResults
         .filter((r): r is NonNullable<typeof r> => r != null)
         .filter(r => r.provider !== "github");
       if (nonGithubRepos.length > 0) {
@@ -90,14 +90,14 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       updatedAt: now,
     };
 
-    insertProject(project);
+    await insertProject(project);
     res.status(201).json(project);
   });
 
   // Update a project
-  router.patch("/:id", (req, res) => {
+  router.patch("/:id", async (req, res) => {
     const { name, source, repositoryIds, plan, status, planningBranch, planningPr } = req.body;
-    const existing = getProject(req.params.id);
+    const existing = await getProject(req.params.id);
     if (!existing) {
       res.status(404).json({ error: "Project not found" });
       return;
@@ -112,44 +112,44 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
     if (planningBranch !== undefined) updates.planningBranch = planningBranch;
     if (planningPr !== undefined) updates.planningPr = planningPr;
 
-    updateProject(req.params.id, updates);
-    res.json(getProject(req.params.id));
+    await updateProject(req.params.id, updates);
+    res.json(await getProject(req.params.id));
   });
 
   // Get project messages
-  router.get("/:id/messages", (req, res) => {
-    const project = getProject(req.params.id);
+  router.get("/:id/messages", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    const messages = listMessages(req.params.id);
+    const messages = await listMessages(req.params.id);
     res.json(messages);
   });
 
   // Get project agent sessions
-  router.get("/:id/agents", (req, res) => {
-    const project = getProject(req.params.id);
+  router.get("/:id/agents", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    const sessions = listAgentSessions(req.params.id);
+    const sessions = await listAgentSessions(req.params.id);
     res.json(sessions);
   });
 
-  router.get("/:id/master-events", (req, res) => {
-    const project = getProject(req.params.id);
+  router.get("/:id/master-events", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
     }
-    res.json(getEvents(`master-${req.params.id}`));
+    res.json(await getEvents(`master-${req.params.id}`));
   });
 
   // Delete project
   router.delete("/:id", async (req, res) => {
-    const project = getProject(req.params.id);
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
@@ -170,7 +170,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
     }
 
     // Stop all active sub-agent containers for this project
-    const activeSessions = listAgentSessions(req.params.id).filter(
+    const activeSessions = (await listAgentSessions(req.params.id)).filter(
       s => s.type === "sub" && (s.status === "starting" || s.status === "running") && s.containerId
     );
     if (activeSessions.length > 0) {
@@ -189,14 +189,14 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       console.log(`[projects] No active sub-agent containers for project ${req.params.id}`);
     }
 
-    deleteProject(req.params.id);
+    await deleteProject(req.params.id);
     console.log(`[projects] Project ${req.params.id} ("${project.name}") deleted successfully`);
     res.json({ success: true });
   });
 
   // Cancel project
-  router.post("/:id/cancel", (req, res) => {
-    const project = getProject(req.params.id);
+  router.post("/:id/cancel", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) {
       res.status(404).json({ error: "Project not found" });
       return;
@@ -206,20 +206,20 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       return;
     }
 
-    updateProject(req.params.id, { status: "cancelled" });
+    await updateProject(req.params.id, { status: "cancelled" });
     res.json({ success: true, status: "cancelled" });
   });
 
   // GET /api/projects/:id/tasks — return task list for planning agent get_task_status tool
-  router.get("/:id/tasks", (req, res) => {
-    const project = getProject(req.params.id);
+  router.get("/:id/tasks", async (req, res) => {
+    const project = await getProject(req.params.id);
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
     res.json({ tasks: project.plan?.tasks ?? [] });
   });
 
   // POST /api/projects/:id/tasks — upsert tasks and dispatch (for planning agent dispatch_tasks tool)
   router.post("/:id/tasks", validateBody(UpsertTasksSchema), async (req, res) => {
-    const project = getProject(req.params.id);
+    const project = await getProject(req.params.id);
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
     const { tasks } = req.body as { tasks: Array<{ id?: string; repositoryId: string; description: string }> };
@@ -264,7 +264,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       ? { ...project.plan, tasks: updatedTasks }
       : { id: randomUUID(), projectId: project.id, content: "", tasks: updatedTasks };
 
-    updateProject(project.id, { plan, status: "executing" });
+    await updateProject(project.id, { plan, status: "executing" });
 
     try {
       await getRecoveryService().dispatchTasksForProject(project.id);
@@ -279,7 +279,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
 
   // Write planning document (spec or plan) — called by the planning agent container
   router.post("/:id/planning-document", async (req, res) => {
-    const project = getProject(req.params.id);
+    const project = await getProject(req.params.id);
     if (!project) { res.status(404).json({ error: "Project not found" }); return; }
 
     const { type, content } = req.body as { type?: string; content?: string };
@@ -300,7 +300,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
   // Retry a failed/errored project — resets failed tasks and restarts the planning agent
   router.post("/:id/retry", async (req, res) => {
     console.log(`[projects] Received retry request for project ${req.params.id}`);
-    const project = getProject(req.params.id);
+    const project = await getProject(req.params.id);
     if (!project) {
       console.warn(`[projects] retry: project ${req.params.id} not found`);
       res.status(404).json({ error: "Project not found" });
@@ -312,7 +312,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       return;
     }
 
-    updateProject(req.params.id, { lastError: undefined, status: "executing" });
+    await updateProject(req.params.id, { lastError: undefined, status: "executing" });
 
     let dispatched = 0;
     try {
@@ -329,7 +329,7 @@ export function createProjectsRouter(dataDir: string, docker: Dockerode): Router
       const manager = getPlanningAgentManager();
       if (!manager.isRunning(req.params.id)) {
         console.log(`[projects] retry: planning agent not running, ensuring start...`);
-        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const allRepos = (await listRepositories()).filter((r) => project.repositoryIds.includes(r.id));
         const ghToken = process.env.GITHUB_TOKEN;
         const repoUrls = allRepos.map((r) => ({
           id: r.id,

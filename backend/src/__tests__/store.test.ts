@@ -96,31 +96,31 @@ describe("repositories store", () => {
     defaultBranch: "main", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 
-  it("inserts and retrieves a repository", () => {
-    insertRepository(repo);
-    const found = getRepository("repo-1");
+  it("inserts and retrieves a repository", async () => {
+    await insertRepository(repo);
+    const found = await getRepository("repo-1");
     expect(found).toMatchObject({ id: "repo-1", name: "my-service" });
     expect(found?.providerConfig).toEqual({ owner: "org", repo: "my-service" });
   });
-  it("returns null for a missing id", () => { expect(getRepository("nonexistent")).toBeNull(); });
-  it("lists all repositories ordered by createdAt desc", () => {
-    insertRepository(repo);
-    const list = listRepositories();
+  it("returns null for a missing id", async () => { expect(await getRepository("nonexistent")).toBeNull(); });
+  it("lists all repositories ordered by createdAt desc", async () => {
+    await insertRepository(repo);
+    const list = await listRepositories();
     expect(list).toHaveLength(1);
     expect(list[0].id).toBe("repo-1");
   });
-  it("updates name", () => {
-    insertRepository(repo);
-    updateRepository("repo-1", { name: "renamed-service" });
-    expect(getRepository("repo-1")?.name).toBe("renamed-service");
+  it("updates name", async () => {
+    await insertRepository(repo);
+    await updateRepository("repo-1", { name: "renamed-service" });
+    expect((await getRepository("repo-1"))?.name).toBe("renamed-service");
   });
-  it("deletes a repository", () => {
-    insertRepository(repo);
-    deleteRepository("repo-1");
-    expect(getRepository("repo-1")).toBeNull();
+  it("deletes a repository", async () => {
+    await insertRepository(repo);
+    await deleteRepository("repo-1");
+    expect(await getRepository("repo-1")).toBeNull();
   });
-  it("throws when updating a nonexistent repository", () => {
-    expect(() => updateRepository("missing", { name: "x" })).toThrow("Repository not found");
+  it("throws when updating a nonexistent repository", async () => {
+    await expect(updateRepository("missing", { name: "x" })).rejects.toThrow("Repository not found");
   });
 });
 
@@ -137,28 +137,28 @@ describe("agent sessions store", () => {
     taskId: "task-1", status: "starting", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
   };
 
-  it("inserts and retrieves a session", () => {
-    insertAgentSession(session);
-    const found = getAgentSession("session-1");
+  it("inserts and retrieves a session", async () => {
+    await insertAgentSession(session);
+    const found = await getAgentSession("session-1");
     expect(found).toMatchObject({ id: "session-1", status: "starting" });
     expect(found?.repositoryId).toBe("repo-1");
   });
-  it("returns null for a missing id", () => { expect(getAgentSession("missing")).toBeNull(); });
-  it("lists sessions by projectId", () => {
-    insertAgentSession(session);
-    const list = listAgentSessions("project-1");
+  it("returns null for a missing id", async () => { expect(await getAgentSession("missing")).toBeNull(); });
+  it("lists sessions by projectId", async () => {
+    await insertAgentSession(session);
+    const list = await listAgentSessions("project-1");
     expect(list).toHaveLength(1);
     expect(list[0].id).toBe("session-1");
   });
-  it("updates status and containerId", () => {
-    insertAgentSession(session);
-    updateAgentSession("session-1", { status: "running", containerId: "container-abc" });
-    const found = getAgentSession("session-1");
+  it("updates status and containerId", async () => {
+    await insertAgentSession(session);
+    await updateAgentSession("session-1", { status: "running", containerId: "container-abc" });
+    const found = await getAgentSession("session-1");
     expect(found?.status).toBe("running");
     expect(found?.containerId).toBe("container-abc");
   });
-  it("throws when updating a nonexistent session", () => {
-    expect(() => updateAgentSession("missing", { status: "failed" })).toThrow("AgentSession not found");
+  it("throws when updating a nonexistent session", async () => {
+    await expect(updateAgentSession("missing", { status: "failed" })).rejects.toThrow("AgentSession not found");
   });
 });
 
@@ -167,13 +167,13 @@ describe("updateTaskInPlan", () => {
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harness-test-"));
     await initDb(tmpDir);
-    insertProject(makeProject());
+    await insertProject(makeProject());
   });
   afterEach(() => { fs.rmSync(tmpDir, { recursive: true, force: true }); });
 
-  it("updates the target task without touching sibling tasks", () => {
-    updateTaskInPlan("proj-1", "task-1", { status: "executing", retryCount: 0 });
-    const project = getProject("proj-1")!;
+  it("updates the target task without touching sibling tasks", async () => {
+    await updateTaskInPlan("proj-1", "task-1", { status: "executing", retryCount: 0 });
+    const project = (await getProject("proj-1"))!;
     const t1 = project.plan!.tasks.find(t => t.id === "task-1")!;
     const t2 = project.plan!.tasks.find(t => t.id === "task-2")!;
     expect(t1.status).toBe("executing");
@@ -181,20 +181,20 @@ describe("updateTaskInPlan", () => {
     expect(t2.status).toBe("pending");
   });
 
-  it("does nothing when project has no plan", () => {
+  it("does nothing when project has no plan", async () => {
     const proj2: Project = { ...makeProject(), id: "proj-2", plan: undefined };
-    insertProject(proj2);
-    expect(() => updateTaskInPlan("proj-2", "task-1", { status: "completed" })).not.toThrow();
+    await insertProject(proj2);
+    await expect(updateTaskInPlan("proj-2", "task-1", { status: "completed" })).resolves.not.toThrow();
   });
 
-  it("does nothing when taskId is not found", () => {
-    expect(() => updateTaskInPlan("proj-1", "nonexistent", { status: "completed" })).not.toThrow();
-    const project = getProject("proj-1")!;
+  it("does nothing when taskId is not found", async () => {
+    await expect(updateTaskInPlan("proj-1", "nonexistent", { status: "completed" })).resolves.not.toThrow();
+    const project = (await getProject("proj-1"))!;
     expect(project.plan!.tasks[0].status).toBe("pending");
   });
 
-  it("does nothing when project does not exist", () => {
-    expect(() => updateTaskInPlan("nonexistent-project", "task-1", { status: "completed" })).not.toThrow();
+  it("does nothing when project does not exist", async () => {
+    await expect(updateTaskInPlan("nonexistent-project", "task-1", { status: "completed" })).resolves.not.toThrow();
   });
 });
 

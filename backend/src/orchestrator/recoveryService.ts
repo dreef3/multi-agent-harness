@@ -109,9 +109,9 @@ export class RecoveryService {
   async recoverOnBoot(): Promise<void> {
     // Reset any 'dispatching' queue entries from a previous crashed server instance.
     // These tasks' containers are gone, so they need to be re-queued for dispatch.
-    resetStaleDispatchingEntries();
+    await resetStaleDispatchingEntries();
 
-    const allSessions = listStaleAgentSessions();
+    const allSessions = await listStaleAgentSessions();
     // Register all stale task IDs SYNCHRONOUSLY before any async work so that
     // the first poll cycle (fired immediately by startPolling) sees the guard populated.
     for (const s of allSessions) {
@@ -134,14 +134,14 @@ export class RecoveryService {
    * Detects sessions stuck beyond staleSessionThresholdMs and recovers them.
    */
   async recoverExecutingProjects(): Promise<void> {
-    const projects = listExecutingProjects();
+    const projects = await listExecutingProjects();
     const thresholdMs = config.staleSessionThresholdMs;
     const now = Date.now();
 
     for (const project of projects) {
       if (!project.plan) continue;
       console.log(`[recoveryService] Checking executing project ${project.id} (${project.name})`);
-      const sessions = listAgentSessions(project.id).filter(
+      const sessions = (await listAgentSessions(project.id)).filter(
         s => s.type === "sub" && (s.status === "starting" || s.status === "running")
       );
 
@@ -169,7 +169,7 @@ export class RecoveryService {
    * Called by the dispatch_tasks tool handler (POST /api/projects/:id/tasks).
    */
   async dispatchTasksForProject(projectId: string): Promise<void> {
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project?.plan?.tasks?.length) return;
     const pendingTasks = project.plan.tasks.filter(t => t.status === "pending");
     if (!pendingTasks.length) return;
@@ -183,7 +183,7 @@ export class RecoveryService {
    * Called by the restart_failed_tasks master-agent tool.
    */
   async dispatchFailedTasks(projectId: string): Promise<{ count: number }> {
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project?.plan) return { count: 0 };
 
     const failed = project.plan.tasks.filter(t => t.status === "failed");
@@ -191,13 +191,13 @@ export class RecoveryService {
 
     for (const task of failed) {
       if (this.activeTaskIds.has(task.id)) continue; // already in-flight
-      updateTaskInPlan(projectId, task.id, { status: "pending", retryCount: 0 });
+      await updateTaskInPlan(projectId, task.id, { status: "pending", retryCount: 0 });
       count++;
     }
 
     if (count > 0) {
-      updateProject(projectId, { status: "executing" });
-      const freshProject = getProject(projectId)!;
+      await updateProject(projectId, { status: "executing" });
+      const freshProject = (await getProject(projectId))!;
       for (const task of freshProject.plan!.tasks.filter(t => t.status === "pending")) {
         void this.dispatchWithRetry(freshProject, task); // fire-and-forget
       }
@@ -218,7 +218,7 @@ export class RecoveryService {
 
     // Persist to queue so restart recovery can re-dispatch if the server dies while waiting
     const taskPriority = (task.retryCount ?? 0) > 0 ? 1 : 0; // retries get higher priority
-    enqueueTask(task.id, project.id, taskPriority);
+    await enqueueTask(task.id, project.id, taskPriority);
 
     await this.acquireProjectSlot(project.id);
 
@@ -237,7 +237,7 @@ export class RecoveryService {
         while (localRetryCount <= config.subAgentMaxRetries) {
           span.setAttribute("task.attempt", localRetryCount + 1);
           const isRetry = localRetryCount > 0;
-          updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
+          await updateTaskInPlan(project.id, task.id, { status: "executing", retryCount: localRetryCount });
           getOrCreateTrace(project.id, project.name).recordTaskAttempt(task.id, localRetryCount + 1);
           console.log(`[recoveryService] task ${task.id} attempt ${localRetryCount + 1}/${config.subAgentMaxRetries + 1}`);
 
@@ -249,11 +249,11 @@ export class RecoveryService {
               }
             : task;
 
-          const freshProject = getProject(project.id)!;
+          const freshProject = (await getProject(project.id))!;
           // Acquire a concurrency slot before starting a container
           await this.acquireSlot();
           console.log(`[recoveryService] slot acquired for task ${task.id} (${config.maxConcurrentSubAgents - this.slots}/${config.maxConcurrentSubAgents} slots in use)`);
-          markTaskDispatching(task.id);
+          await markTaskDispatching(task.id);
           let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
           try {
             result = await this.dispatcher.runTask(
@@ -268,7 +268,7 @@ export class RecoveryService {
           console.log(`[recoveryService] slot released for task ${task.id}`);
 
           if (result.success) {
-            updateTaskInPlan(project.id, task.id, { status: "completed" });
+            await updateTaskInPlan(project.id, task.id, { status: "completed" });
             getOrCreateTrace(project.id, project.name).recordTaskComplete(task.id);
             console.log(`[recoveryService] task ${task.id} completed successfully`);
             taskCounter.add(1, { "project.id": project.id, status: "success" });
@@ -279,14 +279,14 @@ export class RecoveryService {
 
           lastError = result.error;
           localRetryCount++;
-          updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
+          await updateTaskInPlan(project.id, task.id, { status: "failed", retryCount: localRetryCount });
           getOrCreateTrace(project.id, project.name).recordTaskFailed(task.id);
           console.warn(`[recoveryService] task ${task.id} attempt failed: ${result.error}. retryCount=${localRetryCount}`);
         }
 
         // All attempts exhausted
         console.error(`[recoveryService] task ${task.id} permanently failed after ${localRetryCount} attempt(s)`);
-        updateTaskInPlan(project.id, task.id, {
+        await updateTaskInPlan(project.id, task.id, {
           status: "failed",
           retryCount: localRetryCount,
           errorMessage: `Permanently failed after ${localRetryCount} attempt(s). Last error: ${lastError ?? "unknown"}`,
@@ -303,7 +303,7 @@ export class RecoveryService {
         throw err;
       } finally {
         span.end();
-        removeFromQueue(task.id);
+        await removeFromQueue(task.id);
         this.activeTaskIds.delete(task.id);
         this.releaseProjectSlot(project.id);
       }
@@ -317,7 +317,7 @@ export class RecoveryService {
    * If so, updates project status and notifies the master agent.
    */
   private async checkAllTerminal(projectId: string): Promise<void> {
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project?.plan) return;
 
     const terminal = new Set(["completed", "failed", "cancelled"]);
@@ -330,7 +330,7 @@ export class RecoveryService {
     // merged (and so a second dispatch_tasks call after partial completion doesn't
     // get surprised by an already-"completed" project).
     if (anyFailed) {
-      updateProject(projectId, { status: "failed" });
+      await updateProject(projectId, { status: "failed" });
     }
 
     const succeeded = project.plan.tasks.filter(t => t.status === "completed").map(t => t.description.slice(0, 40));
@@ -377,19 +377,19 @@ export class RecoveryService {
 
     // Mark session failed
     try {
-      updateAgentSession(session.id, { status: "failed" });
+      await updateAgentSession(session.id, { status: "failed" });
     } catch {
       // Session may not exist in DB; ignore
     }
 
-    const project = getProject(session.projectId);
+    const project = await getProject(session.projectId);
     if (!project?.plan) return;
 
     const task = project.plan.tasks.find(t => t.id === session.taskId);
     if (!task) return;
 
     const currentRetryCount = (task.retryCount ?? 0) + 1;
-    updateTaskInPlan(session.projectId, session.taskId, { status: "failed", retryCount: currentRetryCount });
+    await updateTaskInPlan(session.projectId, session.taskId, { status: "failed", retryCount: currentRetryCount });
 
     if (currentRetryCount <= config.subAgentMaxRetries) {
       console.log(`[recoveryService] Re-dispatching task ${session.taskId} (retry ${currentRetryCount})`);
@@ -397,7 +397,7 @@ export class RecoveryService {
       void this.dispatchWithRetry(project, freshTask); // fire-and-forget
     } else {
       console.error(`[recoveryService] Task ${session.taskId} exhausted retries during recovery`);
-      updateTaskInPlan(session.projectId, session.taskId, {
+      await updateTaskInPlan(session.projectId, session.taskId, {
         status: "failed",
         retryCount: currentRetryCount,
         errorMessage: `Permanently failed after recovery (${currentRetryCount} attempt(s)). Container was stale.`,
@@ -423,7 +423,7 @@ export class RecoveryService {
     console.log(`[recoveryService] Checking orphaned project ${project.id}`);
     if (!project.plan?.tasks?.length) {
       console.warn(`[recoveryService] Project ${project.id} is stuck in "executing" with no tasks — reverting to "awaiting_plan_approval"`);
-      updateProject(project.id, { status: "awaiting_plan_approval" });
+      await updateProject(project.id, { status: "awaiting_plan_approval" });
       await this.notifyMaster(
         project.id,
         `[SYSTEM] This project was stuck in "executing" state with no tasks in its plan. ` +
@@ -454,20 +454,20 @@ export class RecoveryService {
 
       // Tasks stuck as "executing" with no session — reset to pending before dispatch
       if (task.status === "executing") {
-        updateTaskInPlan(project.id, task.id, { status: "pending" });
+        await updateTaskInPlan(project.id, task.id, { status: "pending" });
       }
 
       // Read fresh task state after potential update
-      const freshProject = getProject(project.id);
+      const freshProject = await getProject(project.id);
       const freshTask = freshProject?.plan?.tasks.find(t => t.id === task.id) ?? task;
       void this.dispatchWithRetry(freshProject ?? project, freshTask);
     }
   }
 
   private async recoverOrphanedExecutingProjects(): Promise<void> {
-    const projects = listExecutingProjects();
+    const projects = await listExecutingProjects();
     for (const project of projects) {
-      const activeSessions = listAgentSessions(project.id).filter(
+      const activeSessions = (await listAgentSessions(project.id)).filter(
         s => s.type === "sub" && (s.status === "starting" || s.status === "running")
       );
       if (activeSessions.length > 0) continue; // sessions exist — handled elsewhere
@@ -481,7 +481,7 @@ export class RecoveryService {
    * Without this, they would be stuck until the 60-second polling cycle fires.
    */
   private async redispatchQueuedTasks(): Promise<void> {
-    const queued = listQueuedTasks();
+    const queued = await listQueuedTasks();
     if (queued.length === 0) return;
 
     console.log(`[recoveryService] Re-dispatching ${queued.length} queued task(s) from persistent queue`);
@@ -492,7 +492,7 @@ export class RecoveryService {
     for (const entry of queued) {
       if (this.activeTaskIds.has(entry.id)) continue; // already in-flight from session recovery
 
-      const project = getProject(entry.projectId);
+      const project = await getProject(entry.projectId);
       if (!project?.plan) {
         console.warn(`[recoveryService] Queued task ${entry.id} has no project/plan — removing from queue`);
         terminalIds.push(entry.id);
@@ -514,16 +514,16 @@ export class RecoveryService {
 
       // Reset to pending if stuck as 'executing' with no live container
       if (task.status === "executing") {
-        updateTaskInPlan(entry.projectId, entry.id, { status: "pending" });
+        await updateTaskInPlan(entry.projectId, entry.id, { status: "pending" });
       }
 
-      const freshProject = getProject(entry.projectId)!;
+      const freshProject = (await getProject(entry.projectId))!;
       const freshTask = freshProject.plan!.tasks.find(t => t.id === entry.id) ?? task;
       void this.dispatchWithRetry(freshProject, freshTask);
     }
 
     if (terminalIds.length > 0) {
-      removeTerminalTasks(terminalIds);
+      await removeTerminalTasks(terminalIds);
     }
   }
 }

@@ -13,8 +13,10 @@ export function createSubAgentStatusTool(projectId: string): ToolDefinition<type
       "Returns the current status of all sub-agent sessions for this project, including which tasks are running, completed, or failed. Call this when the user asks about sub-agent progress.",
     parameters: SubAgentStatusParams,
     async execute(_toolCallId, _args) {
-      const project = getProject(projectId);
-      const sessions = listAgentSessions(projectId);
+      const [project, sessions] = await Promise.all([
+        getProject(projectId),
+        listAgentSessions(projectId),
+      ]);
 
       const subSessions = sessions.filter(s => s.type === "sub");
       const summary = {

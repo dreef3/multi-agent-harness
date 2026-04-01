@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { createSqliteAdapter } from "./sqliteAdapter.js";
+import { createPostgresAdapter } from "./postgresAdapter.js";
 import type { DbAdapter } from "./adapter.js";
 import { migrations } from "./migrations/index.js";
 
@@ -36,7 +37,7 @@ export async function runMigrations(db: DbAdapter): Promise<void> {
       console.log(`[db] Applying migration: ${migration.name}`);
       await migration.up(db);
       await db.execute(
-        "INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)",
+        "INSERT OR IGNORE INTO schema_migrations (name, applied_at) VALUES (?, ?)",
         [migration.name, new Date().toISOString()]
       );
       console.log(`[db] Migration applied: ${migration.name}`);
@@ -45,10 +46,21 @@ export async function runMigrations(db: DbAdapter): Promise<void> {
 }
 
 export async function initDb(dataDir: string): Promise<void> {
-  fs.mkdirSync(dataDir, { recursive: true });
-  db = new Database(path.join(dataDir, "harness.db"));
-  _adapter = createSqliteAdapter(db);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  await runMigrations(_adapter);
+  const dbType = process.env.DATABASE_TYPE;
+
+  if (dbType === "postgresql") {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL is required when DATABASE_TYPE=postgresql");
+    }
+    _adapter = createPostgresAdapter(connectionString);
+    await runMigrations(_adapter);
+  } else {
+    fs.mkdirSync(dataDir, { recursive: true });
+    db = new Database(path.join(dataDir, "harness.db"));
+    _adapter = createSqliteAdapter(db);
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    await runMigrations(_adapter);
+  }
 }

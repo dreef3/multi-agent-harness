@@ -93,13 +93,13 @@ export async function handleWritePlanningDocument(
   content: string,
   dataDir: string
 ): Promise<{ prUrl: string } | { error: string }> {
-  const project = getProject(projectId);
+  const project = await getProject(projectId);
   if (!project) return { error: `Project not found: ${projectId}` };
 
   const primaryRepoId = project.primaryRepositoryId ?? project.repositoryIds[0];
   if (!primaryRepoId) return { error: "Project has no primary repository" };
 
-  const repo = getRepository(primaryRepoId);
+  const repo = await getRepository(primaryRepoId);
   if (!repo) return { error: `Repository not found: ${primaryRepoId}` };
 
   const connector = getConnector(repo.provider);
@@ -153,7 +153,7 @@ export async function handleWritePlanningDocument(
         return { error: `Failed to create PR: ${prErr instanceof Error ? prErr.message : String(prErr)}` };
       }
 
-      updateProject(projectId, {
+      await updateProject(projectId, {
         primaryRepositoryId: primaryRepoId,
         planningBranch: branch,
         planningPr: { number: prNumber, url: prUrl },
@@ -192,7 +192,7 @@ export async function handleWritePlanningDocument(
         tasks: project.plan?.tasks ?? [],
       };
 
-      updateProject(projectId, { plan: planRecord, status: "awaiting_plan_approval" });
+      await updateProject(projectId, { plan: planRecord, status: "awaiting_plan_approval" });
 
       return { prUrl: project.planningPr.url };
     }

@@ -479,7 +479,7 @@ export class PlanningAgentManager extends EventEmitter {
     }
     this.emit(projectId, event);
     const { type, ...payload } = event;
-    appendEvent(`master-${projectId}`, { type, payload: payload as Record<string, unknown>, timestamp: new Date().toISOString() });
+    void appendEvent(`master-${projectId}`, { type, payload: payload as Record<string, unknown>, timestamp: new Date().toISOString() });
   }
 
   private checkStop(projectId: string, state: ProjectState): void {
@@ -503,12 +503,12 @@ export class PlanningAgentManager extends EventEmitter {
       try {
         const { getProject } = await import("../store/projects.js");
         const { listRepositories } = await import("../store/repositories.js");
-        const project = getProject(projectId);
+        const project = await getProject(projectId);
         if (!project) {
           console.warn(`[PlanningAgentManager] sendPrompt: project ${projectId} not found, cannot restart`);
           return;
         }
-        const allRepos = listRepositories().filter(r => project.repositoryIds.includes(r.id));
+        const allRepos = (await listRepositories()).filter((r: import("../models/types.js").Repository) => project.repositoryIds.includes(r.id));
         const ghToken = process.env.GITHUB_TOKEN;
         const repos = allRepos.map(r => ({
           id: r.id,
@@ -549,15 +549,15 @@ export class PlanningAgentManager extends EventEmitter {
     if (!this.projects.has(projectId)) {
       console.log(`[PlanningAgentManager] injectMessage: no container for ${projectId}, restarting...`);
       try {
-        const { getProject } = await import("../store/projects.js");
+        const { getProject: getProj } = await import("../store/projects.js");
         const { listRepositories } = await import("../store/repositories.js");
-        const project = getProject(projectId);
+        const project = await getProj(projectId);
         if (!project) {
           console.warn(`[PlanningAgentManager] injectMessage: project ${projectId} not found, cannot restart`);
           return;
         }
         const ghToken = process.env.GITHUB_TOKEN;
-        const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+        const allRepos = (await listRepositories()).filter((r: import("../models/types.js").Repository) => project.repositoryIds.includes(r.id));
         const repoUrls = allRepos.map((r) => ({
           id: r.id,
           name: r.name,
@@ -632,8 +632,8 @@ export class PlanningAgentManager extends EventEmitter {
             // Running container — check if it belongs to a known session/project
             const sessionId = c.Labels?.["harness.session-id"];
             if (sessionId) {
-              const session = getAgentSession(sessionId);
-              if (!session || !getProject(session.projectId)) {
+              const session = await getAgentSession(sessionId);
+              if (!session || !(await getProject(session.projectId))) {
                 // Orphan: session or project no longer exists in DB
                 console.log(`[PlanningAgentManager] stopping orphan sub-agent container ${name} (session=${sessionId})`);
                 await this.docker.getContainer(c.Id).stop({ t: 5 });
@@ -672,14 +672,14 @@ export class PlanningAgentManager extends EventEmitter {
       }
 
       const { getProject } = await import("../store/projects.js");
-      const project = getProject(projectId);
+      const project = await getProject(projectId);
       if (!project?.primaryRepositoryId) {
         console.warn(`[PlanningAgentManager] no primary repository for ${projectId}, skipping session log commit`);
         return;
       }
 
       const { getRepository } = await import("../store/repositories.js");
-      const repo = getRepository(project.primaryRepositoryId);
+      const repo = await getRepository(project.primaryRepositoryId);
       if (!repo || repo.provider !== "github") {
         console.warn(`[PlanningAgentManager] primary repo for ${projectId} is not GitHub, skipping`);
         return;

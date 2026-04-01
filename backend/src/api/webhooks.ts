@@ -77,7 +77,7 @@ export function createWebhooksRouter(): Router {
         return;
       }
 
-      const pr = getPullRequestByExternalId(prNumber.toString());
+      const pr = await getPullRequestByExternalId(prNumber.toString());
       if (!pr) {
         console.warn(`[webhook] PR #${prNumber} not found in database`);
         res.status(404).json({ error: "Pull request not found" });
@@ -88,7 +88,7 @@ export function createWebhooksRouter(): Router {
 
       // Insert review as a comment and notify debounce engine
       if (payload.review?.body) {
-        insertCommentAndNotify(
+        void insertCommentAndNotify(
           pr.id,
           payload.review.id.toString(),
           payload.review.user.login,
@@ -112,7 +112,7 @@ export function createWebhooksRouter(): Router {
       }
 
       const prNumber = payload.pull_request.number;
-      const pr = getPullRequestByExternalId(prNumber.toString());
+      const pr = await getPullRequestByExternalId(prNumber.toString());
       if (!pr) {
         console.warn(`[webhook] PR #${prNumber} not found in database`);
         res.status(404).json({ error: "Pull request not found" });
@@ -122,7 +122,7 @@ export function createWebhooksRouter(): Router {
       console.log(`[webhook] PR review comment received for PR #${prNumber} (id: ${pr.id})`);
 
       // Insert comment and notify debounce engine
-      insertCommentAndNotify(
+      void insertCommentAndNotify(
         pr.id,
         payload.comment.id.toString(),
         payload.comment.user.login,
@@ -136,7 +136,7 @@ export function createWebhooksRouter(): Router {
     if (eventType === "pull_request" && (payload.action === "closed" || payload.action === "merged")) {
       const prNumber = payload.pull_request?.number;
       if (prNumber) {
-        const pr = getPullRequestByExternalId(prNumber.toString());
+        const pr = await getPullRequestByExternalId(prNumber.toString());
         if (pr && debounceEngine) {
           debounceEngine.cancel(pr.id);
           console.log(`[webhook] Cancelled debounce timer for closed PR #${prNumber}`);
@@ -158,14 +158,14 @@ export function createWebhooksRouter(): Router {
 }
 
 // Helper to insert a comment from webhook/polling and trigger debounce
-export function insertCommentAndNotify(
+export async function insertCommentAndNotify(
   pullRequestId: string,
   externalCommentId: string,
   author: string,
   body: string,
   filePath?: string,
   lineNumber?: number
-): void {
+): Promise<void> {
   const comment: ReviewComment = {
     id: randomUUID(),
     pullRequestId,
@@ -179,7 +179,7 @@ export function insertCommentAndNotify(
     updatedAt: new Date().toISOString(),
   };
 
-  upsertReviewComment(comment);
+  await upsertReviewComment(comment);
 
   // Notify debounce engine
   if (debounceEngine) {

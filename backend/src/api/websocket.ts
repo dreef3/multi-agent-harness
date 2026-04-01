@@ -112,7 +112,7 @@ async function ensureRunningWithRetry(
       } else {
         // All retries exhausted — persist the error and close
         try {
-          updateProject(projectId, { lastError: msg });
+          await updateProject(projectId, { lastError: msg });
         } catch { /* ignore */ }
         send(ws, {
           type: "error",
@@ -138,7 +138,7 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    const project = getProject(projectId);
+    const project = await getProject(projectId);
     if (!project) {
       ws.close(1008, "Project not found");
       return;
@@ -150,7 +150,7 @@ export function setupWebSocket(server: Server) {
 
     const manager = getPlanningAgentManager();
     const ghToken = process.env.GITHUB_TOKEN;
-    const allRepos = listRepositories().filter((r) => project.repositoryIds.includes(r.id));
+    const allRepos = (await listRepositories()).filter((r) => project.repositoryIds.includes(r.id));
     const repoUrls = allRepos.map((r) => ({
       id: r.id,
       name: r.name,
@@ -192,11 +192,9 @@ export function setupWebSocket(server: Server) {
         } else if (event.type === "message_complete") {
           const buffer = projectMessageBuffers.get(projectId) ?? "";
           if (buffer) {
-            try {
-              appendMessage(projectId, "assistant", buffer);
-            } catch (err) {
+            appendMessage(projectId, "assistant", buffer).catch(err => {
               console.error(`[ws] Failed to persist assistant message for ${projectId}:`, err);
-            }
+            });
           }
           projectMessageBuffers.delete(projectId);
         }
@@ -223,14 +221,14 @@ export function setupWebSocket(server: Server) {
           console.log(`[ws] Received prompt for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
 
           // Reactivate completed projects when the user sends a new message
-          const currentProject = getProject(projectId);
+          const currentProject = await getProject(projectId);
           if (currentProject?.status === "completed") {
-            updateProject(projectId, { status: "executing" });
+            await updateProject(projectId, { status: "executing" });
             console.log(`[ws] Reactivating completed project ${projectId} → executing on user prompt`);
           }
 
           try {
-            appendMessage(projectId, "user", msg.text);
+            await appendMessage(projectId, "user", msg.text);
           } catch (err) {
             console.error(`[ws] Failed to persist user message for ${projectId}:`, err);
           }
@@ -244,7 +242,7 @@ export function setupWebSocket(server: Server) {
           await manager.sendPrompt(projectId, msg.text);
         } else if (msg.type === "resume" && msg.lastSeqId !== undefined) {
           // Replay missed messages
-          const missed = listMessagesSince(projectId, msg.lastSeqId);
+          const missed = await listMessagesSince(projectId, msg.lastSeqId);
           if (missed.length > 0) {
             send(ws, { type: "replay", messages: missed });
           }
