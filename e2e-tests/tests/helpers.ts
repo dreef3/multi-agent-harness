@@ -5,6 +5,7 @@ import type { APIRequestContext } from '@playwright/test';
 
 export const API_BASE = process.env.HARNESS_API_URL || 'http://localhost:3000/api';
 export const GH_TOKEN = process.env.GITHUB_TOKEN || '';
+export const GH_APPROVER_TOKEN = process.env.GH_APPROVER_TOKEN || GH_TOKEN;
 export const TEST_REPO_OWNER = 'dreef3';
 export const TEST_REPO_NAME = 'multi-agent-harness-test-repo';
 export const TEST_REPO_HTTPS_URL = `https://github.com/${TEST_REPO_OWNER}/${TEST_REPO_NAME}.git`;
@@ -59,13 +60,19 @@ export async function createPlanningPr(suffix: string): Promise<{ branch: string
   return { branch, prNumber: pr.number, prUrl: pr.html_url };
 }
 
-/** Submit a formal GitHub PR approval review to trigger the harness polling flow. */
+/** Submit a formal GitHub PR approval review to trigger the harness polling flow.
+ *  Uses GH_APPROVER_TOKEN (a different account) to avoid GitHub's self-approval restriction.
+ */
 export async function approvePlanningPr(prNumber: number): Promise<void> {
   await fetch(
     `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls/${prNumber}/reviews`,
     {
       method: 'POST',
-      headers: GH_HEADERS,
+      headers: {
+        Authorization: `token ${GH_APPROVER_TOKEN}`,
+        'User-Agent': 'harness-e2e',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ event: 'APPROVE' }),
     }
   );
