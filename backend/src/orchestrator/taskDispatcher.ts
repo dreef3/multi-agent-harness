@@ -234,12 +234,17 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
             ...taskEnv,
             ...providerEnv,
           ],
+          // On Docker: host path is a named volume or absolute path.
+          // On Kubernetes (CONTAINER_RUNTIME=kubernetes): host path is treated as a PVC claim name.
           binds: [
             `${config.piAgentVolume}:/pi-agent`,
             ...(config.repoCacheVolume ? [`${config.repoCacheVolume}:/cache`] : []),
           ],
           memoryBytes: config.subAgentMemoryBytes,
           nanoCpus: config.subAgentCpuCount * 1_000_000_000,
+          // On Docker: used to attach container to the harness bridge network.
+          // On Kubernetes: ignored — pods communicate via cluster networking (Pod IPs).
+          // Getting the planning agent's Pod IP for pod-to-pod comms is a follow-up task.
           networkMode: config.subAgentNetwork,
           capDrop: ["ALL"],
           securityOpt: ["no-new-privileges:true"],
@@ -541,12 +546,17 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           ...(config.repoCacheVolume ? [`REPO_CACHE_DIR=/cache`] : []),
           ...providerEnv,
         ],
+        // On Docker: host path is a named volume or absolute path.
+        // On Kubernetes (CONTAINER_RUNTIME=kubernetes): host path is treated as a PVC claim name.
         binds: [
           `${config.piAgentVolume}:/pi-agent`,
           ...(config.repoCacheVolume ? [`${config.repoCacheVolume}:/cache`] : []),
         ],
         memoryBytes: config.subAgentMemoryBytes,
         nanoCpus: config.subAgentCpuCount * 1_000_000_000,
+        // On Docker: used to attach container to the harness bridge network.
+        // On Kubernetes: ignored — pods communicate via cluster networking (Pod IPs).
+        // Getting the planning agent's Pod IP for pod-to-pod comms is a follow-up task.
         networkMode: config.subAgentNetwork,
         capDrop: ["ALL"],
         securityOpt: ["no-new-privileges:true"],

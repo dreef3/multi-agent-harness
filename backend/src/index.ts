@@ -15,6 +15,7 @@ import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryServ
 import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
 import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
 import { DockerContainerRuntime } from "./orchestrator/dockerRuntime.js";
+import { KubernetesContainerRuntime } from "./orchestrator/kubernetesRuntime.js";
 import type { ContainerRuntime } from "./orchestrator/containerRuntime.js";
 
 async function main() {
@@ -25,7 +26,18 @@ async function main() {
   const dockerUrl = new URL(config.dockerProxyUrl);
   console.log(`[startup]   Docker host=${dockerUrl.hostname} port=${dockerUrl.port}`);
   const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port, 10) });
-  const containerRuntime: ContainerRuntime = new DockerContainerRuntime(docker);
+
+  let containerRuntime: ContainerRuntime;
+  if (config.containerRuntime === "kubernetes") {
+    console.log(`[startup] Using Kubernetes runtime (namespace: ${config.k8sNamespace})`);
+    containerRuntime = new KubernetesContainerRuntime(config.k8sNamespace);
+  } else {
+    if (config.containerRuntime !== "docker") {
+      console.warn(`[startup] Unknown CONTAINER_RUNTIME="${config.containerRuntime}", defaulting to docker`);
+    }
+    console.log("[startup] Using Docker runtime");
+    containerRuntime = new DockerContainerRuntime(docker);
+  }
 
   console.log("[startup] Ensuring sub-agent image exists...");
   try { await ensureSubAgentImage(docker, config.subAgentImage); }

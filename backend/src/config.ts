@@ -90,4 +90,8 @@ export const config = {
   oidcRoleMapOperator: process.env.OIDC_ROLE_MAP_OPERATOR ?? "harness-operators",
   oidcRoleMapReviewer: process.env.OIDC_ROLE_MAP_REVIEWER ?? "harness-reviewers",
   oidcRoleMapViewer:   process.env.OIDC_ROLE_MAP_VIEWER   ?? "harness-viewers",
+
+  // Container runtime
+  containerRuntime: (process.env.CONTAINER_RUNTIME ?? "docker") as "docker" | "kubernetes",
+  k8sNamespace: process.env.K8S_NAMESPACE ?? "default",
 };
