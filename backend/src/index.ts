@@ -32,9 +32,6 @@ async function main() {
     console.log(`[startup] Using Kubernetes runtime (namespace: ${config.k8sNamespace})`);
     containerRuntime = new KubernetesContainerRuntime(config.k8sNamespace);
   } else {
-    if (config.containerRuntime !== "docker") {
-      console.warn(`[startup] Unknown CONTAINER_RUNTIME="${config.containerRuntime}", defaulting to docker`);
-    }
     console.log("[startup] Using Docker runtime");
     containerRuntime = new DockerContainerRuntime(docker);
   }

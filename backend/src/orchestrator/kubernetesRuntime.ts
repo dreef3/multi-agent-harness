@@ -1,6 +1,7 @@
 // backend/src/orchestrator/kubernetesRuntime.ts
 
 import * as k8s from "@kubernetes/client-node";
+import type { IncomingMessage } from "node:http";
 import type { AgentContainerSpec, ContainerRuntime } from "./containerRuntime.js";
 
 /** Maximum length for a Kubernetes Job name (DNS subdomain rules: 63 chars) */
@@ -32,6 +33,9 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
 
   async createContainer(spec: AgentContainerSpec): Promise<string> {
     const jobName = toK8sName(spec.name);
+    if (!jobName) {
+      throw new Error(`[kubernetesRuntime] Cannot derive valid Kubernetes name from: "${spec.name}"`);
+    }
 
     const job: k8s.V1Job = {
       apiVersion: "batch/v1",
@@ -87,6 +91,10 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
                   const mountPath = parts[1] ?? parts[0];
                   return { name: `vol-${i}`, mountPath };
                 }),
+                // Note: AgentContainerSpec.capDrop, securityOpt, readonlyRootfs, tmpfs, and workingDir
+                // are not applied here. The Kubernetes equivalents would be pod/container securityContext
+                // fields. Implement securityContext mapping as a follow-up when Kubernetes deployments
+                // require security hardening parity with the Docker runtime.
               },
             ],
             volumes: spec.binds.map((bind, i) => {
@@ -164,6 +172,13 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
     onExit: (exitCode: number) => void
   ): Promise<void> {
     const watch = new k8s.Watch(this.kc);
+    let settled = false;
+
+    const settle = (exitCode: number): void => {
+      if (settled) return;
+      settled = true;
+      onExit(exitCode);
+    };
 
     await new Promise<void>((resolve, reject) => {
       watch
@@ -171,31 +186,49 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
           `/apis/batch/v1/namespaces/${this.namespace}/jobs`,
           { fieldSelector: `metadata.name=${containerId}` },
           (type: string, job: k8s.V1Job) => {
+            if (settled) return;
             if (type === "MODIFIED" || type === "ADDED") {
               const status = job.status ?? {};
               if (status.succeeded && status.succeeded > 0) {
-                onExit(0);
+                settle(0);
                 resolve();
               } else if (status.failed && status.failed > 0) {
-                // Attempt to get actual exit code from pod
                 this.getPodExitCode(containerId)
                   .then((code) => {
-                    onExit(code ?? 1);
+                    settle(code ?? 1);
                     resolve();
                   })
                   .catch(() => {
-                    onExit(1);
+                    settle(1);
                     resolve();
                   });
               }
             } else if (type === "DELETED") {
-              onExit(-1); // Container removed before natural exit
+              settle(-1);
               resolve();
             }
           },
           (err: Error | null) => {
-            if (err) reject(err);
-            else resolve();
+            if (err) {
+              reject(err);
+            } else {
+              // Watch connection closed (EOF/reconnect) — poll for final status
+              if (!settled) {
+                this.getStatus(containerId)
+                  .then((status) => {
+                    if (status === "exited") {
+                      settle(0);
+                    } else if (status === "stopped") {
+                      settle(1);
+                    }
+                    // If still running/unknown, don't call onExit — caller must retry watchExit
+                    resolve();
+                  })
+                  .catch(() => resolve());
+              } else {
+                resolve();
+              }
+            }
           }
         )
         .catch(reject);
@@ -231,7 +264,7 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
 
     // Streaming mode
     await new Promise<void>((resolve, reject) => {
-      const stream = response as unknown as NodeJS.ReadableStream;
+      const stream = response as unknown as IncomingMessage;
       let buffer = "";
 
       stream.on("data", (chunk: Buffer | string) => {
@@ -299,10 +332,11 @@ export class KubernetesContainerRuntime implements ContainerRuntime {
 }
 
 function isNotFoundError(e: unknown): boolean {
-  return (
-    e instanceof Error &&
-    (e.message.includes("Not Found") ||
-      e.message.includes("404") ||
-      (e as { statusCode?: number }).statusCode === 404)
-  );
+  if (!(e instanceof Error)) return false;
+  if (e.message.includes("Not Found") || e.message.includes("404")) return true;
+  if ((e as { statusCode?: number }).statusCode === 404) return true;
+  // k8s client sometimes wraps the API response in a body property
+  const body = (e as { body?: { code?: number; reason?: string } }).body;
+  if (body?.code === 404 || body?.reason === "NotFound") return true;
+  return false;
 }
