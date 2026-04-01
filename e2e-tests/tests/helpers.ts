@@ -59,14 +59,14 @@ export async function createPlanningPr(suffix: string): Promise<{ branch: string
   return { branch, prNumber: pr.number, prUrl: pr.html_url };
 }
 
-/** Post a LGTM comment on a GitHub PR to trigger the harness polling flow. */
+/** Submit a formal GitHub PR approval review to trigger the harness polling flow. */
 export async function postLgtmComment(prNumber: number): Promise<void> {
   await fetch(
-    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/issues/${prNumber}/comments`,
+    `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/pulls/${prNumber}/reviews`,
     {
       method: 'POST',
       headers: GH_HEADERS,
-      body: JSON.stringify({ body: 'LGTM' }),
+      body: JSON.stringify({ event: 'APPROVE' }),
     }
   );
 }
