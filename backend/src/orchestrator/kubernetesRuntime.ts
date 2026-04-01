@@ -12,7 +12,8 @@ export function toK8sName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9-]/g, "-")
     .replace(/^-+|-+$/g, "") // trim leading/trailing hyphens
-    .slice(0, MAX_JOB_NAME_LENGTH);
+    .slice(0, MAX_JOB_NAME_LENGTH)
+    .replace(/^-+|-+$/g, ""); // trim again after slice
 }
 
 export class KubernetesContainerRuntime implements ContainerRuntime {

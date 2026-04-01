@@ -47,6 +47,20 @@ describe("toK8sName", () => {
   it("preserves valid alphanumeric and hyphen characters", () => {
     expect(toK8sName("valid-name-123")).toBe("valid-name-123");
   });
+
+  it("trims trailing hyphens after truncation", () => {
+    // 51 'a's + 2 special chars → becomes 53 hyphens after replacement
+    // → trim before slice → 53 hyphens (unchanged since all hyphens)
+    // → slice to 52 → 52 hyphens
+    // → trim after slice → empty string (all hyphens)
+    // For this test: "a".repeat(51) + "@@" should become "a".repeat(51)
+    // because the trailing hyphens from @@ should be stripped after slicing
+    const input = "a".repeat(51) + "@@";
+    const result = toK8sName(input);
+    expect(result).toBe("a".repeat(51));
+    expect(result.length).toBe(51);
+    expect(result.endsWith("-")).toBe(false);
+  });
 });
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -99,7 +113,6 @@ describe("KubernetesContainerRuntime.getStatus", () => {
   };
 
   beforeEach(async () => {
-    const k8s = await import("@kubernetes/client-node");
     runtime = new KubernetesContainerRuntime("default");
     // Access the private batchV1 via type assertion for test purposes
     mockBatchApi = (runtime as unknown as { batchV1: typeof mockBatchApi }).batchV1;
