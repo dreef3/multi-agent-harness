@@ -26,6 +26,7 @@ class WebSocketClient {
   private getUrl(): string {
     if (this.projectId) {
       const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+      // TODO: append ?token=<access_token> when AUTH_ENABLED=true
       return `${protocol}://${window.location.host}/ws?projectId=${this.projectId}`;
     }
     return this.baseUrl;

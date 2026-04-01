@@ -6,9 +6,23 @@ import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
+import { verifyWsToken, LOCAL_USER } from "./auth.js";
+import type { AuthUser } from "./auth.js";
+import { config } from "../config.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
 interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error"; [key: string]: unknown; }
+
+// ── resolveWsUser ─────────────────────────────────────────────────────────────
+// Extracted for testability. Returns the resolved AuthUser or throws on failure.
+
+export async function resolveWsUser(token: string | null, authEnabled: boolean): Promise<AuthUser> {
+  if (!authEnabled) return LOCAL_USER;
+  if (!token) throw new Error("No token provided");
+  const user = await verifyWsToken(token);
+  if (!user) throw new Error("Invalid or expired token");
+  return user;
+}
 
 function send(ws: WebSocket, msg: WsServerMessage) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -127,7 +141,31 @@ async function ensureRunningWithRetry(
 }
 
 export function setupWebSocket(server: Server) {
-  const wss = new WebSocketServer({ server, path: "/ws" });
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Handle the HTTP upgrade and authenticate before passing to wss
+  server.on("upgrade", async (req, socket, head) => {
+    const url = new URL(req.url ?? "", "http://localhost");
+    if (url.pathname !== "/ws") {
+      socket.destroy();
+      return;
+    }
+    const token = url.searchParams.get("token");
+
+    let wsUser: AuthUser;
+    try {
+      wsUser = await resolveWsUser(token, config.authEnabled);
+    } catch {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      (ws as WebSocket & { user: AuthUser }).user = wsUser;
+      wss.emit("connection", ws, req);
+    });
+  });
 
   wss.on("connection", async (ws: WebSocket, req: IncomingMessage) => {
     const url = new URL(req.url || "", `http://${req.headers.host}`);
