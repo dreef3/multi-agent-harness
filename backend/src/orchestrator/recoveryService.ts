@@ -1,8 +1,7 @@
-import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import { getProject, updateProject, listExecutingProjects, updateTaskInPlan } from "../store/projects.js";
 import { listAgentSessions, updateAgentSession, listStaleAgentSessions } from "../store/agents.js";
-import { getContainerStatus } from "./containerManager.js";
+import type { ContainerRuntime } from "./containerRuntime.js";
 import { TaskDispatcher } from "./taskDispatcher.js";
 import { config } from "../config.js";
 import type { Project, PlanTask } from "../models/types.js";
@@ -51,8 +50,8 @@ export class RecoveryService {
   private waiters: Array<() => void> = [];
   private projectSlots = new Map<string, { slots: number; waiters: Array<() => void> }>();
 
-  constructor(private readonly docker: Dockerode) {
-    this.dispatcher = new TaskDispatcher();
+  constructor(private readonly runtime: ContainerRuntime) {
+    this.dispatcher = new TaskDispatcher(runtime);
   }
 
   private acquireSlot(): Promise<void> {
@@ -257,7 +256,7 @@ export class RecoveryService {
           let result: Awaited<ReturnType<typeof this.dispatcher.runTask>>;
           try {
             result = await this.dispatcher.runTask(
-              this.docker, freshProject, taskForRun,
+              freshProject, taskForRun,
               retrySessionId,
             );
           } catch (err) {
@@ -409,7 +408,7 @@ export class RecoveryService {
   }
 
   private async getContainerStatus(containerId: string): Promise<string> {
-    return getContainerStatus(this.docker, containerId);
+    return this.runtime.getStatus(containerId);
   }
 
   /**

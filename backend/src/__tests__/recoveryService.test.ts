@@ -482,7 +482,7 @@ describe("RecoveryService", () => {
       const running: string[] = [];
       let maxConcurrent = 0;
 
-      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }) => {
+      const mockRunTask = vi.fn(async (_project: unknown, task: { id: string }) => {
         running.push(task.id);
         maxConcurrent = Math.max(maxConcurrent, running.length);
         await new Promise(r => setTimeout(r, 50));
@@ -519,7 +519,7 @@ describe("RecoveryService", () => {
       const startTimes: Record<string, number> = {};
       const endTimes: Record<string, number> = {};
 
-      const mockRunTask = vi.fn(async (_docker: unknown, _project: { id: string }, task: { id: string }) => {
+      const mockRunTask = vi.fn(async (_project: { id: string }, task: { id: string }) => {
         startTimes[task.id] = Date.now();
         await new Promise(r => setTimeout(r, 60));
         endTimes[task.id] = Date.now();
@@ -559,7 +559,7 @@ describe("RecoveryService", () => {
       (config as any).maxImplAgentsPerProject = 10;
 
       let attempt = 0;
-      const mockRunTask = vi.fn(async (_docker: unknown, _project: unknown, task: { id: string }, existingSessionId?: string) => {
+      const mockRunTask = vi.fn(async (_project: unknown, task: { id: string }, existingSessionId?: string) => {
         attempt++;
         if (attempt < 3) return { taskId: task.id, success: false, error: "container failed" };
         return { taskId: task.id, success: true };
@@ -583,10 +583,10 @@ describe("RecoveryService", () => {
       // runTask called 3 times (2 failures + 1 success)
       expect(mockRunTask).toHaveBeenCalledTimes(3);
       // All calls share the same stable session ID (first call inserts, retries update)
-      const sessionId = mockRunTask.mock.calls[0][3];
+      const sessionId = mockRunTask.mock.calls[0][2];
       expect(sessionId).toBeDefined();
-      expect(mockRunTask.mock.calls[1][3]).toBe(sessionId);
-      expect(mockRunTask.mock.calls[2][3]).toBe(sessionId);
+      expect(mockRunTask.mock.calls[1][2]).toBe(sessionId);
+      expect(mockRunTask.mock.calls[2][2]).toBe(sessionId);
     });
   });
 

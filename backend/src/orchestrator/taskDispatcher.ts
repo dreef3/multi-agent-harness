@@ -1,4 +1,3 @@
-import type Dockerode from "dockerode";
 import { randomUUID } from "crypto";
 import type { Project, Repository, AgentSession, PlanTask, PullRequest } from "../models/types.js";
 import { getProject } from "../store/projects.js";
@@ -6,10 +5,45 @@ import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession, getAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector, ConnectorError } from "../connectors/types.js";
-import { createSubAgentContainer, startContainer, removeContainer, getContainerStatus, watchContainerExit } from "../orchestrator/containerManager.js";
+import type { ContainerRuntime } from "./containerRuntime.js";
 import { config } from "../config.js";
 import { tracer } from "../telemetry.js";
 import { SpanStatusCode } from "@opentelemetry/api";
+
+// All provider API key env vars supported by pi-coding-agent
+const PROVIDER_ENV_VARS = [
+  "ANTHROPIC_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "MISTRAL_API_KEY",
+  "GROQ_API_KEY",
+  "CEREBRAS_API_KEY",
+  "XAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "AI_GATEWAY_API_KEY",
+  "ZAI_API_KEY",
+  "OPENCODE_API_KEY",
+  "HF_TOKEN",
+  "KIMI_API_KEY",
+  "MINIMAX_API_KEY",
+  "MINIMAX_CN_API_KEY",
+  "COPILOT_GITHUB_TOKEN",
+  // Git / VCS credentials intentionally excluded — sub-agent gets GIT_PUSH_URL instead
+  // Cloud providers
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_SESSION_TOKEN",
+  "AWS_REGION",
+  "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+  "GOOGLE_CLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "AZURE_OPENAI_BASE_URL",
+  "AZURE_OPENAI_RESOURCE_NAME",
+  "AZURE_OPENAI_API_VERSION",
+  "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+];
 
 export interface TaskResult {
   taskId: string;
@@ -34,6 +68,12 @@ export function buildClosingRefs(githubIssues: string[]): string {
 }
 
 export class TaskDispatcher {
+  private readonly runtime: ContainerRuntime;
+
+  constructor(containerRuntime: ContainerRuntime) {
+    this.runtime = containerRuntime;
+  }
+
   private static readonly TASK_PREAMBLE = `You are a software engineering sub-agent. Follow this workflow exactly.
 
 ## Step 1 — Understand the Task
@@ -88,7 +128,6 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
    * On retry, pass `existingSessionId` to reuse the session record instead of creating a new one.
    */
   public async runTask(
-    docker: Dockerode,
     project: Project,
     task: PlanTask,
     existingSessionId?: string,
@@ -155,14 +194,53 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           .slice(0, 30)
           .replace(/-+$/g, "");
 
-        containerId = await createSubAgentContainer(docker, {
+        const nameSuffix = taskName
+          ? `${taskName}-${(task.id ?? sessionId).slice(0, 8)}`
+          : (task.id ?? sessionId).slice(0, 16);
+        const containerName = `sub-${nameSuffix}`;
+
+        const agentProvider = config.agentProvider;
+        const agentModel = config.implementationModel;
+        const providerEnv = PROVIDER_ENV_VARS
+          .filter(name => process.env[name])
+          .map(name => `${name}=${process.env[name]}`);
+        const taskEnv = [
+          `TASK_DESCRIPTION=${this.buildTaskPrompt(task)}`,
+          ...(gitPushUrl ? [`GIT_PUSH_URL=${gitPushUrl}`] : []),
+          `AGENT_PROVIDER=${agentProvider}`,
+          `AGENT_MODEL=${agentModel}`,
+          `TASK_ID=${task.id ?? ""}`,
+          `HARNESS_API_URL=${config.harnessApiUrl}`,
+          `AGENT_SESSION_ID=${sessionId}`,
+          ...(config.repoCacheVolume ? [`REPO_CACHE_DIR=/cache`] : []),
+        ];
+
+        const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
+        console.log(`[taskDispatcher] Creating container for session=${sessionId} taskId=${task.id ?? "n/a"}`);
+        console.log(`[taskDispatcher]   image=${config.subAgentImage}`);
+        console.log(`[taskDispatcher]   network=${config.subAgentNetwork}`);
+        console.log(`[taskDispatcher]   branch=${branchName}`);
+        console.log(`[taskDispatcher]   agentProvider=${agentProvider} agentModel=${agentModel}`);
+        console.log(`[taskDispatcher]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
+        console.log(`[taskDispatcher]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
+
+        containerId = await this.runtime.createContainer({
           sessionId,
-          repoCloneUrl: repository.cloneUrl,
-          gitPushUrl,
-          branchName,
-          taskDescription: this.buildTaskPrompt(task),
-          taskName,
-          taskId: task.id,
+          image: config.subAgentImage,
+          name: containerName,
+          env: [
+            `REPO_CLONE_URL=${repository.cloneUrl}`,
+            `BRANCH_NAME=${branchName}`,
+            ...taskEnv,
+            ...providerEnv,
+          ],
+          binds: [
+            `${config.piAgentVolume}:/pi-agent`,
+            ...(config.repoCacheVolume ? [`${config.repoCacheVolume}:/cache`] : []),
+          ],
+          memoryBytes: config.subAgentMemoryBytes,
+          nanoCpus: config.subAgentCpuCount * 1_000_000_000,
+          networkMode: config.subAgentNetwork,
         });
 
         // Update session with container ID and record span attributes
@@ -175,14 +253,14 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
         // Start container
         console.log(`[taskDispatcher] Starting container ${containerId}`);
-        await startContainer(docker, containerId);
+        await this.runtime.startContainer(containerId);
 
         // Stream container logs to backend stdout for observability
-        this.streamContainerLogs(docker, containerId, `sub-${task.id.slice(0, 8)}`);
+        this.streamContainerLogs(containerId, `sub-${task.id.slice(0, 8)}`);
 
         // Wait for completion
         console.log(`[taskDispatcher] Waiting for container to complete (timeout: ${config.subAgentTimeoutMs}ms)`);
-        const completed = await this.waitForCompletion(docker, sessionId, containerId);
+        const completed = await this.waitForCompletion(sessionId, containerId);
         console.log(`[taskDispatcher] Container completed: ${completed}`);
 
         if (!completed) {
@@ -228,7 +306,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         // Cleanup container
         if (containerId) {
           try {
-            await removeContainer(docker, containerId);
+            await this.runtime.removeContainer(containerId);
           } catch {
             // Ignore cleanup errors
           }
@@ -250,7 +328,6 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
    * Polls container status and session updates.
    */
   private async waitForCompletion(
-    docker: Dockerode,
     sessionId: string,
     containerId: string,
     timeoutMs = config.subAgentTimeoutMs
@@ -273,21 +350,19 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         settle(false);
       }, timeoutMs);
 
-      // Docker "die" event fires immediately when the container process exits
-      void watchContainerExit(
-        docker,
+      // Container exit event fires immediately when the container process exits
+      void this.runtime.watchExit(
         containerId,
         (exitCode) => {
           console.log(`[taskDispatcher] Container ${containerId} exited with code ${exitCode}`);
           settle(exitCode === 0);
-        },
-        (_err) => {
-          // Stream error — fall back to session poll and timeout; do not settle here
-          console.warn(
-            `[taskDispatcher] Docker events stream error for ${containerId}, relying on session poll`
-          );
         }
-      );
+      ).catch((_err) => {
+        // Stream error — fall back to session poll and timeout; do not settle here
+        console.warn(
+          `[taskDispatcher] watchExit error for ${containerId}, relying on session poll`
+        );
+      });
 
       // Session-status poll at 2-second cadence
       // Handles bridge-based completion (sub-agent calls /api/sessions/:id/status)
@@ -371,7 +446,6 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
    * This is called when review comments need to be addressed.
    */
   async runFixRun(
-    docker: Dockerode,
     projectId: string,
     pullRequestId: string,
     comments: Array<{ body: string; filePath?: string; lineNumber?: number }>
@@ -436,23 +510,47 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         ? repository.cloneUrl.replace("https://github.com/", `https://x-access-token:${ghToken}@github.com/`)
         : repository.cloneUrl;
 
-      containerId = await createSubAgentContainer(docker, {
+      const fixTaskId = `fix-${sessionId.slice(0, 8)}`;
+      const agentProvider = config.agentProvider;
+      const agentModel = config.implementationModel;
+      const providerEnv = PROVIDER_ENV_VARS
+        .filter(name => process.env[name])
+        .map(name => `${name}=${process.env[name]}`);
+
+      containerId = await this.runtime.createContainer({
         sessionId,
-        repoCloneUrl: repository.cloneUrl,
-        gitPushUrl: fixGitPushUrl,
-        branchName: pr.branch,
-        taskDescription,
-        taskId: `fix-${sessionId.slice(0, 8)}`,
+        image: config.subAgentImage,
+        name: `sub-${fixTaskId}`,
+        env: [
+          `REPO_CLONE_URL=${repository.cloneUrl}`,
+          `BRANCH_NAME=${pr.branch}`,
+          `TASK_DESCRIPTION=${taskDescription}`,
+          ...(fixGitPushUrl ? [`GIT_PUSH_URL=${fixGitPushUrl}`] : []),
+          `AGENT_PROVIDER=${agentProvider}`,
+          `AGENT_MODEL=${agentModel}`,
+          `TASK_ID=${fixTaskId}`,
+          `HARNESS_API_URL=${config.harnessApiUrl}`,
+          `AGENT_SESSION_ID=${sessionId}`,
+          ...(config.repoCacheVolume ? [`REPO_CACHE_DIR=/cache`] : []),
+          ...providerEnv,
+        ],
+        binds: [
+          `${config.piAgentVolume}:/pi-agent`,
+          ...(config.repoCacheVolume ? [`${config.repoCacheVolume}:/cache`] : []),
+        ],
+        memoryBytes: config.subAgentMemoryBytes,
+        nanoCpus: config.subAgentCpuCount * 1_000_000_000,
+        networkMode: config.subAgentNetwork,
       });
 
       await updateAgentSession(sessionId, { containerId, status: "running" });
-      await startContainer(docker, containerId);
+      await this.runtime.startContainer(containerId);
 
       // Stream container logs to backend stdout for observability
-      this.streamContainerLogs(docker, containerId, `fix-${sessionId.slice(0, 8)}`);
+      this.streamContainerLogs(containerId, fixTaskId);
 
       // Wait for completion
-      const completed = await this.waitForCompletion(docker, sessionId, containerId);
+      const completed = await this.waitForCompletion(sessionId, containerId);
 
       if (!completed) {
         throw new Error("Fix-run timed out or container failed");
@@ -483,7 +581,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
     } finally {
       if (containerId) {
         try {
-          await removeContainer(docker, containerId);
+          await this.runtime.removeContainer(containerId);
         } catch {
           // Ignore cleanup errors
         }
@@ -494,30 +592,20 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
   /**
    * Stream container stdout/stderr to backend process stdout for observability.
    */
-  private streamContainerLogs(docker: Dockerode, containerId: string, label: string): void {
-    docker.getContainer(containerId).logs(
-      { follow: true, stdout: true, stderr: true, timestamps: false },
-      (err, stream) => {
-        if (err || !stream) return;
-        docker.modem.demuxStream(
-          stream as NodeJS.ReadableStream,
-          {
-            write: (chunk: Buffer) => {
-              for (const line of chunk.toString().split("\n")) {
-                if (line.trim()) console.log(`[container:${label}] ${line}`);
-              }
-            },
-          } as NodeJS.WritableStream,
-          {
-            write: (chunk: Buffer) => {
-              for (const line of chunk.toString().split("\n")) {
-                if (line.trim()) console.error(`[container:${label}] ${line}`);
-              }
-            },
-          } as NodeJS.WritableStream
-        );
-      }
-    );
+  private streamContainerLogs(containerId: string, label: string): void {
+    void this.runtime.streamLogs(
+      containerId,
+      (line, isError) => {
+        if (line.trim()) {
+          if (isError) {
+            console.error(`[container:${label}] ${line}`);
+          } else {
+            console.log(`[container:${label}] ${line}`);
+          }
+        }
+      },
+      true
+    ).catch(() => { /* ignore log stream errors */ });
   }
 
 }

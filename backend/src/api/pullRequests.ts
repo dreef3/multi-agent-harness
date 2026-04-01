@@ -11,11 +11,12 @@ import {
 import { getRepository } from "../store/repositories.js";
 import { getConnector } from "../connectors/types.js";
 import { TaskDispatcher } from "../orchestrator/taskDispatcher.js";
+import type { ContainerRuntime } from "../orchestrator/containerRuntime.js";
 import type { ReviewComment } from "../models/types.js";
 
-export function createPullRequestsRouter(docker: Dockerode): Router {
+export function createPullRequestsRouter(docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
-  const taskDispatcher = new TaskDispatcher();
+  const taskDispatcher = containerRuntime ? new TaskDispatcher(containerRuntime) : null;
 
   // List all PRs for a project
   router.get("/project/:projectId", async (req, res) => {
@@ -121,9 +122,13 @@ export function createPullRequestsRouter(docker: Dockerode): Router {
       // Mark comments as fixing
       await markCommentsStatus(pr.id, commentsToFix.map(c => c.id), "fixing");
 
+      if (!taskDispatcher) {
+        res.status(503).json({ error: "Container runtime not available" });
+        return;
+      }
+
       // Run fix via task dispatcher
       const result = await taskDispatcher.runFixRun(
-        docker,
         pr.projectId,
         pr.id,
         commentsToFix.map(c => ({

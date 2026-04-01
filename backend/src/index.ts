@@ -14,6 +14,8 @@ import { setDebounceEngine } from "./api/webhooks.js";
 import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
 import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
 import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
+import { DockerContainerRuntime } from "./orchestrator/dockerRuntime.js";
+import type { ContainerRuntime } from "./orchestrator/containerRuntime.js";
 
 async function main() {
   console.log("[startup] Initializing database...");
@@ -23,6 +25,7 @@ async function main() {
   const dockerUrl = new URL(config.dockerProxyUrl);
   console.log(`[startup]   Docker host=${dockerUrl.hostname} port=${dockerUrl.port}`);
   const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port, 10) });
+  const containerRuntime: ContainerRuntime = new DockerContainerRuntime(docker);
 
   console.log("[startup] Ensuring sub-agent image exists...");
   try { await ensureSubAgentImage(docker, config.subAgentImage); }
@@ -33,7 +36,7 @@ async function main() {
   setDebounceEngine(debounceEngine);
 
   console.log("[startup] Initializing recovery service...");
-  const recoveryService = new RecoveryService(docker);
+  const recoveryService = new RecoveryService(containerRuntime);
   setRecoveryService(recoveryService);
 
   console.log("[startup] Initializing planning agent manager...");
@@ -45,7 +48,7 @@ async function main() {
   await recoveryService.recoverOnBoot();
 
   console.log("[startup] Starting polling...");
-  startPolling(docker);
+  startPolling(docker, containerRuntime);
 
   const app = express();
   app.use(
@@ -68,7 +71,7 @@ async function main() {
       },
     }),
   );
-  app.use("/api", createRouter(config.dataDir, docker));
+  app.use("/api", createRouter(config.dataDir, docker, containerRuntime));
 
   const server = createServer(app);
   setupWebSocket(server);

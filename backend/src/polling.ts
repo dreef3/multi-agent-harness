@@ -8,6 +8,7 @@ import { getDebounceEngine } from "./api/webhooks.js";
 import { getRecoveryService } from "./orchestrator/recoveryService.js";
 import { getPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
 import { TaskDispatcher } from "./orchestrator/taskDispatcher.js";
+import type { ContainerRuntime } from "./orchestrator/containerRuntime.js";
 import { slugify, buildPlanningFilePath } from "./agents/planningTool.js";
 import { randomUUID } from "crypto";
 import type { ReviewComment, PullRequest, Project } from "./models/types.js";
@@ -28,7 +29,8 @@ let intervalId: ReturnType<typeof setInterval> | null = null;
  */
 export async function pollPullRequest(
   docker: Dockerode,
-  pr: PullRequest
+  pr: PullRequest,
+  containerRuntime?: ContainerRuntime
 ): Promise<number> {
   const repository = await getRepository(pr.repositoryId);
   if (!repository) {
@@ -111,9 +113,12 @@ export async function pollPullRequest(
           // Mark comments as fixing
           await markCommentsStatus(prId, pendingComments.map(c => c.id), "fixing");
 
-          const dispatcher = new TaskDispatcher();
+          if (!containerRuntime) {
+            console.warn(`[debounce] No containerRuntime available for fix run on PR ${prId}`);
+            return;
+          }
+          const dispatcher = new TaskDispatcher(containerRuntime);
           const result = await dispatcher.runFixRun(
-            docker,
             prToFix.projectId,
             prId,
             pendingComments.map(c => ({
@@ -153,7 +158,7 @@ export function detectLgtm(body: string): boolean {
 
 const approvalPollStates = new Map<string, string>(); // projectId → lastSeenCommentAt
 
-async function pollPlanningPrs(docker: Dockerode): Promise<void> {
+async function pollPlanningPrs(docker: Dockerode, _containerRuntime?: ContainerRuntime): Promise<void> {
   if (!isRunning) return;
   console.log(`[polling] Checking projects for LGTM...`);
 
@@ -274,7 +279,7 @@ async function pollPlanningPrs(docker: Dockerode): Promise<void> {
 /**
  * Poll all open PRs across all projects
  */
-async function pollAllPullRequests(docker: Dockerode): Promise<void> {
+async function pollAllPullRequests(docker: Dockerode, containerRuntime?: ContainerRuntime): Promise<void> {
   if (!isRunning) return;
   console.log(`[polling] Starting poll cycle`);
 
@@ -296,7 +301,7 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
       for (const pr of openPrs) {
         openPrIds.add(pr.id);
         try {
-          const newComments = await pollPullRequest(docker, pr);
+          const newComments = await pollPullRequest(docker, pr, containerRuntime);
           totalNewComments += newComments;
         } catch (error) {
           console.error(`[polling] Error polling PR ${pr.id}:`, error);
@@ -317,7 +322,7 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
     }
 
     // Poll planning PRs for LGTM
-    await pollPlanningPrs(docker);
+    await pollPlanningPrs(docker, containerRuntime);
   } catch (error) {
     console.error("[polling] Error during poll cycle:", error);
   }
@@ -326,7 +331,7 @@ async function pollAllPullRequests(docker: Dockerode): Promise<void> {
 /**
  * Start the polling service
  */
-export function startPolling(docker: Dockerode): void {
+export function startPolling(docker: Dockerode, containerRuntime?: ContainerRuntime): void {
   if (isRunning) {
     console.log("[polling] Already running");
     return;
@@ -336,11 +341,11 @@ export function startPolling(docker: Dockerode): void {
   console.log(`[polling] Starting polling (interval: ${POLL_INTERVAL_MS}ms)`);
 
   // Run initial poll immediately
-  void pollAllPullRequests(docker);
+  void pollAllPullRequests(docker, containerRuntime);
 
   // Schedule regular polls
   intervalId = setInterval(() => {
-    void pollAllPullRequests(docker);
+    void pollAllPullRequests(docker, containerRuntime);
   }, POLL_INTERVAL_MS);
 }
 

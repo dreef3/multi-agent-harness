@@ -11,8 +11,9 @@ import { createSettingsRouter } from "./settings.js";
 import { config } from "../config.js";
 import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
+import type { ContainerRuntime } from "../orchestrator/containerRuntime.js";
 
-export function createRouter(dataDir: string, docker: Dockerode): Router {
+export function createRouter(dataDir: string, docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
 
   router.get("/health", (_req, res) => {
@@ -38,7 +39,7 @@ export function createRouter(dataDir: string, docker: Dockerode): Router {
   router.use("/agents", createAgentsRouter());
   router.use("/jira", createJiraRouter());
   router.use("/github-issues", createGitHubIssuesRouter());
-  router.use("/pull-requests", createPullRequestsRouter(docker));
+  router.use("/pull-requests", createPullRequestsRouter(docker, containerRuntime));
   router.use("/webhooks", createWebhooksRouter());
   router.use("/settings", createSettingsRouter());
 
