@@ -31,7 +31,7 @@
         "helmet": "^8.1.0",
         "jose": "^6.2.2",
         "postgres": "^3.4.8",
-        "superpowers": "github:obra/superpowers#v5.0.4",
+        "superpowers": "github:obra/superpowers#v5.0.7",
         "ws": "^8.16.0",
       },
       "devDependencies": {
@@ -1789,7 +1789,7 @@
 
     "superagent": ["superagent@10.3.0", "", { "dependencies": { "component-emitter": "^1.3.1", "cookiejar": "^2.1.4", "debug": "^4.3.7", "fast-safe-stringify": "^2.1.1", "form-data": "^4.0.5", "formidable": "^3.5.4", "methods": "^1.1.2", "mime": "2.6.0", "qs": "^6.14.1" } }, "sha512-B+4Ik7ROgVKrQsXTV0Jwp2u+PXYLSlqtDAhYnkkD+zn3yg8s/zjA2MeGayPoY/KICrbitwneDHrjSotxKL+0XQ=="],
 
-    "superpowers": ["superpowers@github:obra/superpowers#80021fc", {}, "obra-superpowers-80021fc", "sha512-wvlD97QWnobPE6Ax3Tf3vk1qZ+X7n6y6D04xZ8SqDxEHROH2TINo3Ubb62DdJ95bFypf1o/AiCGbosRPyJT0jg=="],
+    "superpowers": ["superpowers@github:obra/superpowers#dd7a63a", {}, "obra-superpowers-dd7a63a", "sha512-/n20nTU7JEAkKJw85LZ7FM73EiB8wpnae8qWO1QY0DDFqPH4PgOqSTsu0h0oFYDMF42f7yeBNdND16GMB6e8Ag=="],
 
     "supertest": ["supertest@7.2.2", "", { "dependencies": { "cookie-signature": "^1.2.2", "methods": "^1.1.2", "superagent": "^10.3.0" } }, "sha512-oK8WG9diS3DlhdUkcFn4tkNIiIbBx9lI2ClF8K+b2/m8Eyv47LSawxUzZQSNKUrVb2KsqeTDCcjAAVPYaSLVTA=="],
 
