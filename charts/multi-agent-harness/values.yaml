@@ -1,0 +1,109 @@
+# Image configuration
+image:
+  # Corporate registry prefix — empty = use Docker Hub / GHCR
+  # Example: corp-artifactory.example.com/docker-local
+  registry: ""
+  prefix: "ghcr.io/dreef3/multi-agent-harness"
+  tag: "latest"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Backend service configuration
+backend:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
+  # Extra env vars injected into backend container
+  env: {}
+
+# Frontend service configuration
+frontend:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "200m"
+      memory: "128Mi"
+
+# Ingress (standard Kubernetes)
+ingress:
+  enabled: true
+  className: nginx
+  host: harness.example.com
+  annotations: {}
+  tls: []
+  # tls:
+  #   - hosts:
+  #       - harness.example.com
+  #     secretName: harness-tls
+
+# OpenShift Route (alternative to Ingress — enable only on OpenShift)
+route:
+  enabled: false
+  host: ""
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# Persistence
+persistence:
+  # Backend data directory (SQLite, session files)
+  data:
+    storageClass: ""
+    size: 10Gi
+    accessMode: ReadWriteOnce
+  # Shared pi-agent auth tokens (backend + agent pods must both mount this)
+  piAuth:
+    storageClass: ""
+    size: 1Gi
+    accessMode: ReadWriteMany
+
+# Agent pod defaults (used as Job template values by backend at runtime, not a Deployment)
+agent:
+  # Defaults to image.prefix/sub-agent:image.tag if empty
+  image: ""
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "2Gi"
+    limits:
+      cpu: "2000m"
+      memory: "4Gi"
+
+# Auth (OIDC)
+auth:
+  enabled: false
+  oidcIssuerUrl: ""
+  oidcClientId: ""
+  oidcAudience: ""
+
+# Corporate TLS — PEM bundle injected into trust stores
+tls:
+  customCACert: ""
+
+# Corporate HTTP proxy
+proxy:
+  httpProxy: ""
+  httpsProxy: ""
+  noProxy: "localhost,127.0.0.1,.cluster.local,.svc"
+
+# ServiceAccount for backend pod (needs Job + Pod permissions in its namespace)
+serviceAccount:
+  create: true
+  name: harness-agent-runner
+  annotations: {}
+
+# Secrets — set via --set, external-secrets operator, or a pre-existing Secret
+secrets:
+  # Set to name of a pre-existing Secret to use instead of creating one
+  existingSecret: ""
+  githubToken: ""
+  anthropicApiKey: ""
+  webhookSecret: ""

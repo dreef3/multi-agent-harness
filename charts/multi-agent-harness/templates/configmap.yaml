@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "multi-agent-harness.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "multi-agent-harness.labels" . | nindent 4 }}
+data:
+  AUTH_ENABLED: {{ .Values.auth.enabled | quote }}
+  OIDC_ISSUER_URL: {{ .Values.auth.oidcIssuerUrl | quote }}
+  OIDC_CLIENT_ID: {{ .Values.auth.oidcClientId | quote }}
+  OIDC_AUDIENCE: {{ .Values.auth.oidcAudience | quote }}
+  CONTAINER_RUNTIME: "kubernetes"
+  K8S_NAMESPACE: {{ .Release.Namespace | quote }}
+  SUB_AGENT_IMAGE: {{ include "multi-agent-harness.agentImage" . | quote }}
+  PI_AGENT_VOLUME: {{ printf "%s-pi-auth" (include "multi-agent-harness.fullname" .) | quote }}
+  HARNESS_API_URL: {{ printf "http://%s-backend:3000" (include "multi-agent-harness.fullname" .) | quote }}
+  {{- with .Values.proxy.httpProxy }}
+  HTTP_PROXY: {{ . | quote }}
+  http_proxy: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.proxy.httpsProxy }}
+  HTTPS_PROXY: {{ . | quote }}
+  https_proxy: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.proxy.noProxy }}
+  NO_PROXY: {{ . | quote }}
+  no_proxy: {{ . | quote }}
+  {{- end }}
+  {{- range $key, $val := .Values.backend.env }}
+  {{ $key }}: {{ $val | quote }}
+  {{- end }}
