@@ -1,5 +1,8 @@
-import type Dockerode from "dockerode";
+// containerManager.ts — legacy shim for stopContainer/removeContainer; new code should
+// use ContainerRuntime via constructor injection instead.
+import Dockerode from "dockerode";
 import { config } from "../config.js";
+import { DockerContainerRuntime } from "./dockerRuntime.js";
 
 // All provider API key env vars supported by pi-coding-agent
 const PROVIDER_ENV_VARS = [
@@ -127,15 +130,24 @@ export async function startContainer(docker: Dockerode, containerId: string): Pr
   console.log(`[containerManager] Container ${containerId} started`);
 }
 
-export async function stopContainer(docker: Dockerode, containerId: string): Promise<void> {
+// --- Shim functions that delegate to a module-level DockerContainerRuntime singleton ---
+// New code should use ContainerRuntime via constructor injection instead.
+
+function _getRuntime(): DockerContainerRuntime {
+  const dockerUrl = new URL(config.dockerProxyUrl);
+  const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port || "2375", 10) });
+  return new DockerContainerRuntime(docker);
+}
+
+export async function stopContainer(containerId: string): Promise<void> {
   console.log(`[containerManager] Stopping container ${containerId}`);
-  await docker.getContainer(containerId).stop({ t: 10 });
+  await _getRuntime().stopContainer(containerId, 10);
   console.log(`[containerManager] Container ${containerId} stopped`);
 }
 
-export async function removeContainer(docker: Dockerode, containerId: string): Promise<void> {
+export async function removeContainer(containerId: string, force = true): Promise<void> {
   console.log(`[containerManager] Removing container ${containerId}`);
-  await docker.getContainer(containerId).remove({ force: true });
+  await _getRuntime().removeContainer(containerId, force);
   console.log(`[containerManager] Container ${containerId} removed`);
 }
 

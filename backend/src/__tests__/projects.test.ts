@@ -640,8 +640,8 @@ describe("DELETE /projects/:id", () => {
 
     expect(mockStopContainerFn).toHaveBeenCalledTimes(2);
     expect(mockRemoveContainerFn).toHaveBeenCalledTimes(2);
-    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-abc");
-    expect(mockStopContainerFn).toHaveBeenCalledWith({}, "container-def");
+    expect(mockStopContainerFn).toHaveBeenCalledWith("container-abc");
+    expect(mockStopContainerFn).toHaveBeenCalledWith("container-def");
   });
 
   it("does not stop sub-agent containers that are already terminated", async () => {
