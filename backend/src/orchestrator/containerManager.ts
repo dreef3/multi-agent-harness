@@ -133,10 +133,15 @@ export async function startContainer(docker: Dockerode, containerId: string): Pr
 // --- Shim functions that delegate to a module-level DockerContainerRuntime singleton ---
 // New code should use ContainerRuntime via constructor injection instead.
 
+let _runtimeInstance: DockerContainerRuntime | null = null;
+
 function _getRuntime(): DockerContainerRuntime {
-  const dockerUrl = new URL(config.dockerProxyUrl);
-  const docker = new Dockerode({ host: dockerUrl.hostname, port: parseInt(dockerUrl.port || "2375", 10) });
-  return new DockerContainerRuntime(docker);
+  if (!_runtimeInstance) {
+    const dockerUrl = new URL(config.dockerProxyUrl);
+    const docker = new Dockerode({ host: dockerUrl.hostname, port: Number(dockerUrl.port) });
+    _runtimeInstance = new DockerContainerRuntime(docker);
+  }
+  return _runtimeInstance;
 }
 
 export async function stopContainer(containerId: string): Promise<void> {

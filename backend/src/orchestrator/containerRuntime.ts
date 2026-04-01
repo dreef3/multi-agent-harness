@@ -28,6 +28,16 @@ export interface AgentContainerSpec {
    * Kubernetes: ignored (uses cluster networking).
    */
   networkMode: string;
+  /** Linux capabilities to drop. Pass ["ALL"] to drop all non-essential capabilities. */
+  capDrop?: string[];
+  /** Security options (e.g., ["no-new-privileges:true"]) */
+  securityOpt?: string[];
+  /** Mount container root filesystem as read-only */
+  readonlyRootfs?: boolean;
+  /** Tmpfs mounts when readonlyRootfs=true, keyed by container path */
+  tmpfs?: Record<string, string>;
+  /** Container working directory */
+  workingDir?: string;
 }
 
 /**

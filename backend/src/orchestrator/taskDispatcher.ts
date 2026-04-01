@@ -241,6 +241,13 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           memoryBytes: config.subAgentMemoryBytes,
           nanoCpus: config.subAgentCpuCount * 1_000_000_000,
           networkMode: config.subAgentNetwork,
+          capDrop: ["ALL"],
+          securityOpt: ["no-new-privileges:true"],
+          readonlyRootfs: config.subAgentReadOnlyRootfs ?? false,
+          tmpfs: config.subAgentReadOnlyRootfs
+            ? { "/tmp": "rw,noexec,nosuid,size=128m", "/run": "rw,noexec,nosuid,size=32m" }
+            : undefined,
+          workingDir: "/workspace",
         });
 
         // Update session with container ID and record span attributes
@@ -541,6 +548,13 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         memoryBytes: config.subAgentMemoryBytes,
         nanoCpus: config.subAgentCpuCount * 1_000_000_000,
         networkMode: config.subAgentNetwork,
+        capDrop: ["ALL"],
+        securityOpt: ["no-new-privileges:true"],
+        readonlyRootfs: config.subAgentReadOnlyRootfs ?? false,
+        tmpfs: config.subAgentReadOnlyRootfs
+          ? { "/tmp": "rw,noexec,nosuid,size=128m", "/run": "rw,noexec,nosuid,size=32m" }
+          : undefined,
+        workingDir: "/workspace",
       });
 
       await updateAgentSession(sessionId, { containerId, status: "running" });

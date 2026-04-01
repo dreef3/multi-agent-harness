@@ -34,12 +34,17 @@ export class DockerContainerRuntime implements ContainerRuntime {
     const container = await this.docker.createContainer({
       Image: spec.image,
       name: spec.name,
+      WorkingDir: spec.workingDir,
       Env: spec.env,
       HostConfig: {
         Binds: spec.binds,
         Memory: spec.memoryBytes,
         NanoCpus: spec.nanoCpus,
         NetworkMode: spec.networkMode,
+        CapDrop: spec.capDrop,
+        SecurityOpt: spec.securityOpt,
+        ReadonlyRootfs: spec.readonlyRootfs,
+        Tmpfs: spec.tmpfs,
       },
       Labels: {
         "harness.session-id": spec.sessionId,
@@ -63,12 +68,27 @@ export class DockerContainerRuntime implements ContainerRuntime {
 
   async getStatus(containerId: string): Promise<"running" | "stopped" | "exited" | "unknown"> {
     try {
-      const info = await this.docker.getContainer(containerId).inspect();
-      if (info.State.Status === "running") return "running";
-      if (info.State.Status === "exited") return "exited";
-      return "stopped";
-    } catch {
-      return "unknown";
+      const container = this.docker.getContainer(containerId);
+      const info = await container.inspect();
+      const state = info.State.Status as string;
+      switch (state) {
+        case "running":
+        case "restarting":
+          return "running";
+        case "exited":
+          return info.State.ExitCode === 0 ? "exited" : "stopped";
+        case "created":
+        case "paused":
+        case "removing":
+        case "dead":
+        default:
+          return "stopped";
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.includes("No such container")) {
+        return "unknown";
+      }
+      throw e;
     }
   }
 
@@ -104,7 +124,8 @@ export class DockerContainerRuntime implements ContainerRuntime {
           stream.on("data", (chunk: Buffer) => {
             const entries = parseDockerLogBuffer(chunk);
             if (entries.length === 0) {
-              // Fallback: raw text (non-multiplexed)
+              // Fallback: raw text (non-multiplexed stream)
+              console.warn("[dockerRuntime] parseDockerLogBuffer: buffer did not parse as multiplexed stream, falling back to raw text");
               for (const line of chunk.toString().split("\n")) {
                 if (line) onData(line, false);
               }
