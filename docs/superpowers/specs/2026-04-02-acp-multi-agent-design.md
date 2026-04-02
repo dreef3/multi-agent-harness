@@ -15,7 +15,7 @@
 2. Support five CLI agents with feature parity: Pi (via pi-acp), Gemini CLI, Claude Code (via claude-agent-acp), Copilot CLI, OpenCode.
 3. Unify planning agent and sub-agent lifecycle management under a single `AcpAgentManager`.
 4. Make sub-agents reusable within a project (multi-task, CI-fix loops) with idle timeout.
-5. Enable superpowers skills on sub-agents (executing-plans, systematic-debugging, verification-before-completion).
+5. Enable superpowers skills on sub-agents (executing-plans, test-driven-development, systematic-debugging, requesting-code-review, finishing-a-development-branch).
 6. Push ACP events end-to-end to the frontend (no translation layer).
 
 ## 2. Non-Goals
@@ -69,18 +69,8 @@ Frontend (browser)
     │  └───────────────────┘  │
     └─────────────────────────┘
 
-┌──────────────────────────────────────────────────────────┐
-│ Backend                                                   │
-│                                                           │
-│  ┌──────────────────────┐  ┌──────────────────────────┐  │
-│  │   AcpAgentManager    │  │  MCP SSE Server           │  │
-│  │   (TCP → agents)     │  │  (http://backend:3000/mcp)│  │
-│  │                      │  │                            │  │
-│  │                      │  │  Tools call store/         │  │
-│  │                      │  │  orchestrator directly     │  │
-│  │                      │  │  — no HTTP round-trip      │  │
-│  └──────────────────────┘  └──────────────────────────┘  │
-└──────────────────────────────────────────────────────────┘
+Note: The Backend box above contains both the AcpAgentManager and the MCP SSE Server
+(http://backend:3000/mcp). MCP tool handlers call store/orchestrator directly — no HTTP round-trip.
 ```
 
 ### 3.1 Protocol responsibilities
@@ -103,7 +93,7 @@ Frontend (browser)
 | Frontend events | `PlanningAgentEvent` (custom type) | Raw ACP `session/update` notifications |
 | Container images | `planning-agent` + `sub-agent` | `agent-{pi,gemini,claude,copilot,opencode}` |
 | Skills (sub-agent) | `noSkills: true` | Superpowers enabled (executing-plans, systematic-debugging, verification) |
-| Model selection | `AGENT_PLANNING_MODEL=provider/model` | Same format + `AGENT_TYPE={pi,gemini,claude,copilot,opencode}` |
+| Model selection | `AGENT_PLANNING_MODEL=provider/model` | Same env var format as defaults + per-project override via settings UI/API |
 
 ---
 
@@ -236,12 +226,12 @@ Each agent Dockerfile copies the shared `AGENTS.md` into `/agent-data/{role}/` a
 
 ```dockerfile
 # In each Dockerfile (planning variant)
-COPY agents/prompts/planning/AGENTS.md /agent-data/AGENTS.md
-RUN ln -s /agent-data/AGENTS.md /agent-data/CLAUDE.md
+COPY agents/prompts/planning/AGENTS.md /agent-data/planning/AGENTS.md
+RUN ln -s /agent-data/planning/AGENTS.md /agent-data/planning/CLAUDE.md
 
 # In each Dockerfile (implementation variant)
-COPY agents/prompts/implementation/AGENTS.md /agent-data/AGENTS.md
-RUN ln -s /agent-data/AGENTS.md /agent-data/CLAUDE.md
+COPY agents/prompts/implementation/AGENTS.md /agent-data/implementation/AGENTS.md
+RUN ln -s /agent-data/implementation/AGENTS.md /agent-data/implementation/CLAUDE.md
 ```
 
 ### 5.2 Shared base Dockerfile
@@ -322,7 +312,7 @@ backend/src/mcp/
 ├── server.ts               # MCP SSE endpoint setup (Express middleware)
 ├── tools/
 │   ├── dispatch_tasks.ts   # calls taskDispatcher directly
-│   ├── ask_planning_agent.ts  # calls planningAgentManager.injectMessage()
+│   ├── ask_planning_agent.ts  # calls AcpAgentManager.sendPrompt()
 │   ├── write_planning_document.ts  # calls gitHub connector directly
 │   ├── get_task_status.ts  # calls store/tasks directly
 │   ├── get_pull_requests.ts  # calls store/pullRequests directly
@@ -667,7 +657,7 @@ The existing `PlanningAgentManager`, `planning-agent/`, and `sub-agent/` directo
 ### 11.1 Unit tests
 
 - `AcpAgentManager`: mock TCP socket, verify ACP handshake, event parsing, OTEL span creation
-- Shared MCP server: verify each tool makes correct HTTP calls to backend API
+- MCP tool handlers: verify each tool calls the correct store/orchestrator functions directly (no HTTP — they're in-process)
 - stdio→TCP bridge: verify bidirectional piping
 
 ### 11.2 Integration tests
