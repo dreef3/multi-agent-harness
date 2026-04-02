@@ -656,7 +656,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           `REPO_CLONE_URL=${repository.cloneUrl}`,
           `BRANCH_NAME=${pr.branch}`,
           `TASK_DESCRIPTION=${taskDescription}`,
-          `TASK_COMMIT_MSG=fix: address review comments`,
+          `TASK_COMMIT_MSG=fix: address review comments on ${pr.branch}`,
           ...(fixGitPushUrl ? [`GIT_PUSH_URL=${fixGitPushUrl}`] : []),
           `AGENT_PROVIDER=${agentProvider}`,
           `AGENT_MODEL=${agentModel}`,
