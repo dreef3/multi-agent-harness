@@ -1,0 +1,40 @@
+# planning-agent/Dockerfile.wolfi
+# Chainguard Wolfi variant.
+# Build context: repo root
+
+FROM cgr.dev/chainguard/node:latest
+
+USER root
+
+# Install git, curl, and gh CLI
+RUN apk add --no-cache git curl
+
+# Install gh CLI from GitHub releases
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY planning-agent/package.json .
+RUN npm install
+
+RUN mkdir -p /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY planning-agent/runner.mjs .
+COPY planning-agent/tools.mjs .
+COPY planning-agent/system-prompt.md .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/node/.config/rtk
+COPY shared/config/rtk-config.toml /home/node/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+USER nonroot
+
+ENTRYPOINT ["node", "/app/runner.mjs"]

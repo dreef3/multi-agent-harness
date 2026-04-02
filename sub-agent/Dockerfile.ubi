@@ -1,0 +1,51 @@
+# sub-agent/Dockerfile.ubi
+# Red Hat UBI 8 variant — includes OpenJDK 21, Maven, bun, gh CLI.
+# Build context: repo root
+
+FROM registry.access.redhat.com/ubi8/openjdk-21
+
+USER root
+
+# Install build tools + Node.js 24 repo
+RUN dnf install -y curl git && \
+    curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && \
+    dnf install -y nodejs && \
+    dnf clean all
+
+# Install Maven
+RUN dnf install -y maven && dnf clean all
+
+# Install bun
+RUN curl -fsSL https://bun.sh/install | bash && \
+    mv /root/.bun/bin/bun /usr/local/bin/bun && \
+    bun --version
+
+# Install gh CLI from GitHub releases (not in UBI repos)
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY sub-agent/package.json .
+RUN bun install
+
+RUN mkdir -p /workspace /pi-agent && chown 1001:0 /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY --chown=1001:0 sub-agent/runner.mjs .
+COPY --chown=1001:0 sub-agent/tools.mjs .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/jboss/.config/rtk
+COPY shared/config/rtk-config.toml /home/jboss/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+# ubi8/openjdk-21 default user is jboss (UID 185) — use a fixed non-root UID
+USER 1001
+
+ENTRYPOINT ["bun", "/app/runner.mjs"]

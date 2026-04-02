@@ -1,0 +1,40 @@
+# planning-agent/Dockerfile.ubi
+# Red Hat UBI 8 variant.
+# Build context: repo root (for shared/ directory access)
+
+FROM registry.access.redhat.com/ubi8/nodejs-22
+
+USER root
+
+# Install git (already present in ubi8/nodejs-22) and curl
+RUN dnf install -y git curl && dnf clean all
+
+# Install gh CLI from GitHub releases tarball (not in UBI repos)
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY planning-agent/package.json .
+RUN npm install
+
+RUN mkdir -p /workspace /pi-agent && chown 1001:0 /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY --chown=1001:0 planning-agent/runner.mjs .
+COPY --chown=1001:0 planning-agent/tools.mjs .
+COPY --chown=1001:0 planning-agent/system-prompt.md .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/node/.config/rtk
+COPY shared/config/rtk-config.toml /home/node/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+USER 1001
+
+ENTRYPOINT ["node", "/app/runner.mjs"]

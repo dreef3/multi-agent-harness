@@ -1,0 +1,49 @@
+# sub-agent/Dockerfile.wolfi
+# Chainguard Wolfi variant — minimal CVE surface.
+# Build context: repo root
+
+FROM cgr.dev/chainguard/node:latest
+
+USER root
+
+# Install all tooling via apk
+RUN apk add --no-cache \
+    git \
+    curl \
+    openjdk-21 \
+    maven \
+    nodejs-24
+
+# Install bun
+RUN curl -fsSL https://bun.sh/install | sh && \
+    mv /root/.bun/bin/bun /usr/local/bin/bun && \
+    bun --version
+
+# Install gh CLI
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY sub-agent/package.json .
+RUN bun install
+
+RUN mkdir -p /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY sub-agent/runner.mjs .
+COPY sub-agent/tools.mjs .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/nonroot/.config/rtk
+COPY shared/config/rtk-config.toml /home/nonroot/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+USER nonroot
+
+ENTRYPOINT ["bun", "/app/runner.mjs"]
