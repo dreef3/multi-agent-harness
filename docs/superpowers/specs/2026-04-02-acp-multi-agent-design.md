@@ -678,6 +678,13 @@ The existing `PlanningAgentManager`, `planning-agent/`, and `sub-agent/` directo
 
 ### 11.3 E2E tests
 
-- Full flow: create project → start planning agent → send prompt → dispatch tasks → sub-agent executes → PR created
-- Run with two agent types: **Pi (via pi-acp)** and **Copilot CLI** — these are the two currently available for testing
-- Validate parity: same task produces equivalent results with both agent types
+Verify workflow mechanics, not LLM output (too non-deterministic). Run with **Pi (via pi-acp)** and **Copilot CLI**.
+
+- ACP handshake completes (initialize → session/new → session ready)
+- Prompt delivery works (session/prompt → streaming events arrive)
+- MCP tools are callable (agent can invoke harness tools, backend receives calls)
+- Tool call events stream to frontend WebSocket
+- Sub-agent container starts, receives task, pushes a commit (content irrelevant)
+- Planning agent can dispatch tasks and receive status updates
+- Agent container stops after idle timeout
+- Per-project agent config is respected (switching CLI type works)
