@@ -290,21 +290,20 @@ try {
 let exitCode = aiSucceeded ? 0 : 1;
 
 try {
+  // Stage any files the AI left uncommitted.
   git("add", "-A");
-  const diff = execSync("git diff --cached --stat").toString().trim();
-  if (!diff) {
-    // Legacy log commits removed — structured tracing handled by backend TraceBuilder.
-    // No file changes and no fallback log needed; exitCode remains aiSucceeded ? 0 : 1.
-    console.log("[sub-agent] No file changes to commit.");
-  }
-  const finalDiff = execSync("git diff --cached --stat").toString().trim();
-  if (finalDiff) {
+  const stagedDiff = execSync("git diff --cached --stat").toString().trim();
+  if (stagedDiff) {
     git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
-    execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
-    console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
+    console.log("[sub-agent] Auto-committed uncommitted file changes.");
   } else {
-    console.log("[sub-agent] No changes to commit");
+    console.log("[sub-agent] No uncommitted file changes.");
   }
+  // Always push — this covers commits the AI agent made during its own run
+  // (the AI follows the preamble and commits, leaving nothing staged for the
+  // auto-commit above, but those commits still need to reach the remote).
+  execFileSync("git", ["push", "origin", `HEAD:${BRANCH_NAME}`], { stdio: "inherit" });
+  console.log("[sub-agent] Changes pushed to branch:", BRANCH_NAME);
 } catch (commitErr) {
   console.warn("[sub-agent] Commit/push failed:", commitErr.message);
   exitCode = 1;
