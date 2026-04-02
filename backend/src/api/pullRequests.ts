@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import {
   listPullRequestsByProject,
   getPullRequest,
+  insertPullRequest,
   getPendingComments,
   upsertReviewComment,
   markCommentsStatus
@@ -17,6 +18,35 @@ import type { ReviewComment } from "../models/types.js";
 export function createPullRequestsRouter(docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
   const taskDispatcher = containerRuntime ? new TaskDispatcher(containerRuntime) : null;
+
+  // Register a PR record (used by tests and webhook ingestion)
+  router.post("/", async (req, res) => {
+    const { repositoryId, projectId, branch, externalId, url, provider } = req.body;
+    if (!repositoryId || !branch) {
+      res.status(400).json({ error: "repositoryId and branch are required" });
+      return;
+    }
+    const repo = await getRepository(repositoryId);
+    if (!repo) {
+      res.status(404).json({ error: "Repository not found" });
+      return;
+    }
+    const pr = {
+      id: randomUUID(),
+      projectId: projectId ?? randomUUID(),
+      repositoryId,
+      agentSessionId: randomUUID(),
+      provider: (provider ?? repo.provider) as "github" | "bitbucket-server",
+      externalId: externalId ?? branch,
+      url: url ?? "",
+      branch,
+      status: "open" as const,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await insertPullRequest(pr);
+    res.status(201).json(pr);
+  });
 
   // List all PRs for a project
   router.get("/project/:projectId", async (req, res) => {
