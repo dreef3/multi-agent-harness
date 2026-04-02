@@ -1,5 +1,5 @@
 import type { Repository, VcsComment } from "../models/types.js";
-import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval } from "./types.js";
+import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval, BuildStatus, BuildCheckRun } from "./types.js";
 import { ConnectorError } from "./types.js";
 
 interface BitbucketRef {
@@ -273,6 +273,47 @@ export class BitbucketConnector implements VcsConnector {
         error
       );
     }
+  }
+
+  async getBuildStatus(repo: Repository, ref: string): Promise<BuildStatus> {
+    const { baseUrl } = this.getProjectRepo(repo);
+
+    const data = await this.fetchJson<{
+      values: Array<{
+        key: string;
+        state: "SUCCESSFUL" | "FAILED" | "INPROGRESS";
+        url: string;
+        dateAdded: number;
+        name?: string;
+      }>;
+      isLastPage: boolean;
+    }>(`${baseUrl}/rest/build-status/1.0/commits/${ref}`);
+
+    const checks: BuildCheckRun[] = data.values.map((v) => ({
+      name: v.name ?? v.key,
+      status:
+        v.state === "SUCCESSFUL" ? "success"
+        : v.state === "FAILED" ? "failure"
+        : "pending",
+      url: v.url,
+      buildId: v.key,
+      startedAt: v.dateAdded ? new Date(v.dateAdded).toISOString() : undefined,
+    }));
+
+    const overallState: BuildStatus["state"] =
+      checks.some((c) => c.status === "failure") ? "failure"
+      : checks.some((c) => c.status === "pending") ? "pending"
+      : checks.length > 0 && checks.every((c) => c.status === "success")
+      ? "success"
+      : "unknown";
+
+    return { state: overallState, checks };
+  }
+
+  async getBuildLogs(_repo: Repository, buildId: string): Promise<string> {
+    // Bitbucket Server does not natively store build logs.
+    // The buildId contains the key (e.g. "JENKINS-JOB-NAME/42") which encodes the CI URL.
+    return `Build logs are stored in your CI provider. Build key: ${buildId}`;
   }
 
   async commitFile(

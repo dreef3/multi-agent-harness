@@ -184,5 +184,77 @@ export function createPullRequestsRouter(docker: Dockerode, containerRuntime?: C
     }
   });
 
+  // GET /api/pull-requests/:id/build-status
+  router.get("/:id/build-status", async (req, res) => {
+    try {
+      const pr = await getPullRequest(req.params.id);
+      if (!pr) {
+        res.status(404).json({ error: "Pull request not found" });
+        return;
+      }
+
+      const repo = await getRepository(pr.repositoryId);
+      if (!repo) {
+        res.status(404).json({ error: "Repository not found" });
+        return;
+      }
+
+      const connector = getConnector(repo.provider);
+      const status = await connector.getBuildStatus(repo, pr.branch);
+      res.json(status);
+    } catch (err) {
+      console.error("[api] getBuildStatus error:", err);
+      res.status(500).json({ error: "Failed to fetch build status" });
+    }
+  });
+
+  // GET /api/pull-requests/:id/build-logs/:buildId
+  router.get("/:id/build-logs/:buildId", async (req, res) => {
+    try {
+      const pr = await getPullRequest(req.params.id);
+      if (!pr) {
+        res.status(404).json({ error: "Pull request not found" });
+        return;
+      }
+
+      const repo = await getRepository(pr.repositoryId);
+      if (!repo) {
+        res.status(404).json({ error: "Repository not found" });
+        return;
+      }
+
+      const connector = getConnector(repo.provider);
+      const logs = await connector.getBuildLogs(repo, req.params.buildId);
+      res.json({ logs });
+    } catch (err) {
+      console.error("[api] getBuildLogs error:", err);
+      res.status(500).json({ error: "Failed to fetch build logs" });
+    }
+  });
+
+  // GET /api/pull-requests/:id/approvals
+  router.get("/:id/approvals", async (req, res) => {
+    try {
+      const pr = await getPullRequest(req.params.id);
+      if (!pr) {
+        res.status(404).json({ error: "Pull request not found" });
+        return;
+      }
+
+      const repo = await getRepository(pr.repositoryId);
+      if (!repo) {
+        res.status(404).json({ error: "Repository not found" });
+        return;
+      }
+
+      const connector = getConnector(repo.provider);
+      const approvals = await connector.getPrApprovals(repo, pr.externalId ?? req.params.id);
+      res.json({ approvals });
+    } catch (err) {
+      console.error("[api] getPrApprovals error:", err);
+      res.status(500).json({ error: "Failed to fetch PR approvals" });
+    }
+  });
+
   return router;
 }
