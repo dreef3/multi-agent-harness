@@ -708,6 +708,4 @@ Existing test suites to parametrize:
 - `tests/repository-flow.spec.ts` — full project lifecycle (create project → planning → dispatch → sub-agent → PR). Already covers the end-to-end workflow.
 - `tests/review-flow.spec.ts` — PR approval flow.
 
-**New E2E scenarios (only things not testable at unit level):**
-- Per-project agent config takes effect: create project with `copilot` config, verify the correct container image is started (observable via container labels/name)
-- Mixed config: planning=pi, implementation=copilot — both containers start with correct types
+No new E2E scenarios needed — the parametrized matrix (pi-pi, copilot-copilot, pi-copilot) already exercises per-project config and mixed agent types through the existing test flows.
