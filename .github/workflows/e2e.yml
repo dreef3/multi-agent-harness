@@ -134,7 +134,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_APPROVER_TOKEN: ${{ secrets.GH_APPROVER_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
-        run: bunx playwright test --ignore-glob="**/jenkins-integration.spec.ts"
+        run: bunx playwright test
 
       - name: Upload test results
         if: always()

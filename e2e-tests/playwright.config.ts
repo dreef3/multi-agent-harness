@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
+  // Exclude Jenkins integration tests unless JENKINS_URL is set —
+  // those are handled by the dedicated jenkins-integration CI job.
+  testIgnore: process.env.JENKINS_URL ? undefined : ['**/jenkins-integration.spec.ts'],
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: 0,
