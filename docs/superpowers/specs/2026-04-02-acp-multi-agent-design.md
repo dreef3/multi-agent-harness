@@ -504,41 +504,115 @@ Frontend should display which agent type is running (Pi, Gemini, Claude, Copilot
 
 ## 9. Configuration
 
-### 9.1 Environment variables
+### 9.1 Per-project agent selection
 
-```bash
-# Agent type selection
-AGENT_TYPE=gemini                           # pi | gemini | claude | copilot | opencode
+Agent type and model are configurable **per project**, with separate choices for planning and implementation roles. Environment variables provide instance-wide defaults; per-project settings override them.
 
-# Model selection (same format as today)
-AGENT_PLANNING_MODEL=gemini/gemini-2.5-pro
-AGENT_IMPLEMENTATION_MODEL=gemini/gemini-2.5-flash
-
-# Agent-specific auth (only the relevant ones needed)
-GEMINI_API_KEY=...                          # for gemini
-ANTHROPIC_API_KEY=...                       # for claude
-COPILOT_GITHUB_TOKEN=...                    # for copilot
-OPENCODE_API_KEY=...                        # for opencode
-# Pi uses existing auth mechanisms (Copilot PAT, API keys, etc.)
-```
-
-### 9.2 Config.ts changes
+**Data model** — add to the `Project` type:
 
 ```typescript
-// New config fields
-agentType: process.env.AGENT_TYPE ?? "pi",
-
-// Image selection based on agent type
-agentImage(role: "planning" | "implementation"): string {
-  const type = config.agentType;
-  return process.env[`${role.toUpperCase()}_AGENT_IMAGE`]
-    ?? `multi-agent-harness/agent-${type}:latest`;
+interface Project {
+  // ... existing fields ...
+  planningAgent?: {
+    type: string;     // "pi" | "gemini" | "claude" | "copilot" | "opencode"
+    model?: string;   // e.g. "gemini-2.5-pro" — if omitted, use default for type
+  };
+  implementationAgent?: {
+    type: string;
+    model?: string;
+  };
 }
 ```
 
-### 9.3 docker-compose.yml
+**Resolution order** (for planning agent; same pattern for implementation):
+1. `project.planningAgent.type` / `project.planningAgent.model` (per-project setting)
+2. `AGENT_PLANNING_MODEL` env var (instance default, parsed as `type/model`)
+3. Hardcoded fallback: `pi/claude-3-opus`
 
-Replace the single `planning-agent` and `sub-agent` services with per-type build targets:
+This allows mixing agent types within a project (e.g., Claude Code for planning, Gemini for implementation) or across projects (Project A uses Copilot, Project B uses OpenCode).
+
+### 9.2 Environment variables (instance defaults)
+
+```bash
+# Default agent selection (overridden by per-project settings)
+AGENT_PLANNING_MODEL=gemini/gemini-2.5-pro
+AGENT_IMPLEMENTATION_MODEL=gemini/gemini-2.5-flash
+
+# Agent-specific auth (all that apply must be set)
+GEMINI_API_KEY=...
+ANTHROPIC_API_KEY=...
+COPILOT_GITHUB_TOKEN=...
+OPENCODE_API_KEY=...
+# Pi uses existing auth mechanisms (Copilot PAT, API keys, etc.)
+```
+
+### 9.3 Settings UI
+
+New settings screen accessible from the frontend (project settings page):
+
+```
+┌─────────────────────────────────────────────────┐
+│ Agent Configuration                              │
+│                                                  │
+│ Planning Agent                                   │
+│ ┌─────────────────┐  ┌───────────────────────┐  │
+│ │ CLI: [Gemini ▼] │  │ Model: [gemini-2.5-pro]│  │
+│ └─────────────────┘  └───────────────────────┘  │
+│                                                  │
+│ Implementation Agent                             │
+│ ┌─────────────────┐  ┌─────────────────────────┐│
+│ │ CLI: [Claude ▼] │  │ Model: [claude-sonnet-4] ││
+│ └─────────────────┘  └─────────────────────────┘│
+│                                                  │
+│ (Defaults from environment: gemini/gemini-2.5-pro│
+│  and gemini/gemini-2.5-flash)                    │
+│                                                  │
+│               [Save]  [Reset to defaults]        │
+└─────────────────────────────────────────────────┘
+```
+
+**CLI dropdown options:** Pi, Gemini CLI, Claude Code, Copilot CLI, OpenCode. Only CLIs whose Docker images are built and whose API keys are configured should be selectable (backend reports available agent types via a new `/api/config/available-agents` endpoint).
+
+**Model field:** Free text input. The model list depends on the CLI and provider — the harness doesn't validate model names, it passes them through to the agent.
+
+### 9.4 API
+
+```
+GET  /api/config/available-agents
+  → { agents: [{ type: "pi", available: true }, { type: "gemini", available: true }, ...] }
+  (checks: image exists + required API key is set)
+
+PUT  /api/projects/:id/agent-config
+  ← { planningAgent: { type, model }, implementationAgent: { type, model } }
+
+GET  /api/projects/:id/agent-config
+  → { planningAgent: { type, model }, implementationAgent: { type, model }, defaults: { ... } }
+```
+
+### 9.5 Config.ts changes
+
+```typescript
+// Instance-wide defaults (from env vars)
+const defaultPlanningSpec = parseModelSpec(process.env.AGENT_PLANNING_MODEL ?? "pi/claude-3-opus");
+const defaultImplSpec = parseModelSpec(process.env.AGENT_IMPLEMENTATION_MODEL ?? "pi/claude-3-haiku");
+
+export const config = {
+  // ... existing fields ...
+  defaultPlanningAgentType: defaultPlanningSpec?.provider ?? "pi",
+  defaultPlanningModel: defaultPlanningSpec?.model ?? "claude-3-opus",
+  defaultImplementationAgentType: defaultImplSpec?.provider ?? "pi",
+  defaultImplementationModel: defaultImplSpec?.model ?? "claude-3-haiku",
+};
+
+// Image selection — called with resolved agent type (after per-project override)
+export function agentImage(agentType: string): string {
+  return `multi-agent-harness/agent-${agentType}:latest`;
+}
+```
+
+### 9.6 docker-compose.yml
+
+All agent images are build targets. Only the ones actually used at runtime are started.
 
 ```yaml
 services:
