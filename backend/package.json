@@ -13,6 +13,7 @@
   "dependencies": {
     "@kubernetes/client-node": "^1.4.0",
     "@mariozechner/pi-coding-agent": "^0.61.1",
+    "@modelcontextprotocol/sdk": "^1.28.0",
     "@octokit/rest": "^22.0.1",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/auto-instrumentations-node": "^0.71.0",
