@@ -210,26 +210,38 @@ agents/
 ├── base/
 │   └── Dockerfile.base          # shared: git, gh, node, rtk, stdio-tcp-bridge
 ├── stdio-tcp-bridge.mjs         # ~30 lines: listen TCP :3333, spawn ACP subprocess, pipe stdio
+├── prompts/
+│   ├── planning/
+│   │   └── AGENTS.md            # planning agent system prompt (single source of truth)
+│   └── implementation/
+│       └── AGENTS.md            # sub-agent system prompt (single source of truth)
 ├── pi/
 │   ├── Dockerfile               # FROM base + pi-acp + superpowers
-│   ├── config/                  # pi-coding-agent settings, guard hook config
-│   └── system-prompt.md         # planning agent system prompt (existing, moved)
+│   └── config/                  # pi-coding-agent settings, guard hook config
 ├── gemini/
 │   ├── Dockerfile               # FROM base + gemini CLI
-│   ├── .gemini/settings.json    # OTEL, MCP server registration, extension hooks
-│   └── GEMINI.md                # system prompt
+│   └── .gemini/settings.json    # OTEL, MCP server registration, extension hooks
 ├── claude/
 │   ├── Dockerfile               # FROM base + claude CLI + claude-agent-acp
-│   ├── settings.json            # hooks (guard), MCP server registration
-│   └── CLAUDE.md                # system prompt
+│   └── settings.json            # hooks (guard), MCP server registration
 ├── copilot/
 │   ├── Dockerfile               # FROM base + copilot CLI
-│   ├── mcp.json                 # MCP server registration
-│   └── instructions.md          # system prompt
+│   └── mcp.json                 # MCP server registration
 └── opencode/
     ├── Dockerfile               # FROM base + opencode binary
-    ├── opencode.json            # config, MCP registration
-    └── AGENTS.md                # system prompt + rules
+    └── opencode.json            # config, MCP registration
+```
+
+Each agent Dockerfile copies the shared `AGENTS.md` into `/agent-data/{role}/` and creates a `CLAUDE.md` symlink for Claude Code containers:
+
+```dockerfile
+# In each Dockerfile (planning variant)
+COPY agents/prompts/planning/AGENTS.md /agent-data/AGENTS.md
+RUN ln -s /agent-data/AGENTS.md /agent-data/CLAUDE.md
+
+# In each Dockerfile (implementation variant)
+COPY agents/prompts/implementation/AGENTS.md /agent-data/AGENTS.md
+RUN ln -s /agent-data/AGENTS.md /agent-data/CLAUDE.md
 ```
 
 ### 5.2 Shared base Dockerfile
@@ -401,35 +413,52 @@ RTK binary is in the base image. Each agent needs to route bash output through i
 
 ### 7.3 System prompts
 
-Planning agent and sub-agent each get a system prompt. Delivered via each CLI's native mechanism:
+**Problem:** Repositories added to a project may already contain their own `AGENTS.md`, `CLAUDE.md`, etc. Harness-managed system prompts must not conflict with user-level repo prompts.
 
-| CLI | Planning prompt | Sub-agent prompt |
-|---|---|---|
-| Pi | `system-prompt.md` via `resourceLoader.systemPrompt` (existing) | New `sub-agent-prompt.md` |
-| Gemini | `GEMINI.md` in working directory | `GEMINI.md` in workspace root |
-| Claude | `CLAUDE.md` in working directory | `CLAUDE.md` in workspace root |
-| Copilot | `instructions.md` or `.github/copilot-instructions.md` | Same, in workspace root |
-| OpenCode | `AGENTS.md` or rules files | `AGENTS.md` in workspace root |
+**Solution:** Harness system prompts live in a **user-level configuration directory** (`/agent-data/`), not in the workspace/repo root. Each CLI loads its config from this directory, separate from the cloned repository.
 
-Sub-agent system prompt content (common across all CLIs):
+| Directory | Contents |
+|---|---|
+| `/agent-data/planning/` | `AGENTS.md` (planning agent prompt) + `CLAUDE.md` symlink |
+| `/agent-data/implementation/` | `AGENTS.md` (sub-agent prompt) + `CLAUDE.md` symlink |
+
+**Consistency:** All CLIs read `AGENTS.md` natively (Pi, Gemini, OpenCode, Copilot). Claude Code reads `CLAUDE.md`. For Claude Code, `CLAUDE.md` is a symlink to `AGENTS.md` — one source of truth.
+
+The Dockerfile copies these files into `/agent-data/` at build time. The agent's config points to this directory for user-level instructions. Repo-level `AGENTS.md` / `CLAUDE.md` in the cloned workspace are left untouched and loaded additively by the CLI (agent sees both harness instructions + repo instructions).
+
+**Sub-agent system prompt content** (in `/agent-data/implementation/AGENTS.md`):
 - You are an implementation agent. Your job is to implement a specific task.
 - Use the `ask_planning_agent` tool when blocked.
-- Follow the executing-plans skill workflow.
-- Use systematic-debugging when encountering failures.
-- Run verification-before-completion before claiming done.
-- Commit and push changes when task is complete.
+- Follow the executing-plans skill workflow for each task.
+- Use test-driven-development: write tests before implementation.
+- Use systematic-debugging when encountering errors or CI failures.
+- Use requesting-code-review after implementation to self-review.
+- Use finishing-a-development-branch when done: always commit and push (do not ask — just do it).
+- Never create PRs manually — the harness creates them automatically.
 
 ### 7.4 Skills / superpowers
 
-| CLI | Skill delivery | Planning skills | Sub-agent skills |
-|---|---|---|---|
-| Pi | `superpowers` npm package (existing) | brainstorming, writing-plans | executing-plans, systematic-debugging, verification-before-completion |
-| Gemini | Extension or inline in system prompt | Same set | Same set |
-| Claude | Skills directory in container | Same set | Same set |
-| Copilot | Inline in system prompt (no native skills) | Same set | Same set |
-| OpenCode | Plugin directory or inline | Same set | Same set |
+**Planning agent skills:**
+- brainstorming
+- writing-plans
+- dispatching-parallel-agents
 
-For CLIs without a native skill loader (Copilot), the key skill instructions are embedded directly in the system prompt. The full skill files are ~100 lines each — small enough to inline without excessive prompt bloat.
+**Sub-agent (implementation) skills:**
+- executing-plans — follow the plan step by step
+- test-driven-development — write tests before implementation
+- systematic-debugging — root-cause analysis before fixes; also used when CI fails
+- requesting-code-review — self-review after implementation
+- finishing-a-development-branch — always commit and push (hardcoded: never ask, never prompt for choice)
+
+| CLI | Skill delivery mechanism |
+|---|---|
+| Pi | `superpowers` npm package (existing for planning; add to sub-agent) |
+| Claude | Skills loaded from filesystem (`~/.claude/skills/` or project-level) |
+| Gemini | Extension or inline in `AGENTS.md` system prompt |
+| Copilot | Inline in `AGENTS.md` system prompt (no native skill system) |
+| OpenCode | Plugin directory or inline in `AGENTS.md` |
+
+For CLIs without a native skill loader (Copilot, potentially Gemini), the key skill instructions are embedded directly in the system prompt. The full skill files are ~100 lines each — small enough to inline without excessive prompt bloat.
 
 ---
 
