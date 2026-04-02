@@ -25,6 +25,20 @@ export interface PrApproval {
   submittedAt: string; // ISO-8601
 }
 
+export interface BuildCheckRun {
+  name: string;
+  status: "success" | "failure" | "pending" | "skipped";
+  url: string;
+  buildId: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface BuildStatus {
+  state: "success" | "failure" | "pending" | "unknown";
+  checks: BuildCheckRun[];
+}
+
 export interface VcsConnector {
   /**
    * Create a new branch in the repository
@@ -61,6 +75,19 @@ export interface VcsConnector {
    * Get PR approvals (reviews) for a pull request
    */
   getPrApprovals(repo: Repository, prId: string): Promise<PrApproval[]>;
+
+  /**
+   * Returns the aggregated CI build status for a git ref (branch name or commit SHA).
+   */
+  getBuildStatus(repo: Repository, ref: string): Promise<BuildStatus>;
+
+  /**
+   * Returns raw log text for a specific CI build/check run by its ID.
+   * The buildId comes from BuildCheckRun.buildId returned by getBuildStatus.
+   * Passing buildUrl (BuildCheckRun.url) lets the connector route the request
+   * to the correct CI backend (TeamCity, Jenkins, GitHub Actions, etc.).
+   */
+  getBuildLogs(repo: Repository, buildId: string, buildUrl?: string): Promise<string>;
 
   /**
    * Commit a file to a branch. Creates the branch from defaultBranch first

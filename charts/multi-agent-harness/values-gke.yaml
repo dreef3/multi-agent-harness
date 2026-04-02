@@ -1,0 +1,17 @@
+# GKE-specific overrides
+# Usage: helm upgrade --install harness charts/multi-agent-harness -f charts/multi-agent-harness/values-gke.yaml
+
+ingress:
+  className: gce
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    # Uncomment to use a static IP reserved in GCP:
+    # kubernetes.io/ingress.global-static-ip-name: "harness-ip"
+
+persistence:
+  data:
+    # GKE SSD (Compute Engine Persistent Disk, RWO)
+    storageClass: premium-rwo
+  piAuth:
+    # GKE Filestore (NFS, RWX) — requires Filestore CSI driver
+    storageClass: standard-rwx

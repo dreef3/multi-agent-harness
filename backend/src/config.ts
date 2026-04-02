@@ -91,6 +91,19 @@ export const config = {
   oidcRoleMapReviewer: process.env.OIDC_ROLE_MAP_REVIEWER ?? "harness-reviewers",
   oidcRoleMapViewer:   process.env.OIDC_ROLE_MAP_VIEWER   ?? "harness-viewers",
 
+  /**
+   * When true, taskDispatcher polls CI build status after sub-agent container
+   * exits and marks the task failed if CI checks do not pass.
+   * Default: false (safe default for repos without CI configured)
+   */
+  waitForCi: process.env.WAIT_FOR_CI === "true",
+
+  /**
+   * Maximum milliseconds to wait for CI checks to complete before timing out.
+   * Timeout is treated as failure. Default: 600000 (10 minutes)
+   */
+  ciWaitTimeoutMs: parseInt(process.env.CI_WAIT_TIMEOUT_MS ?? "600000", 10),
+
   // Container runtime
   containerRuntime: (() => {
     const v = process.env.CONTAINER_RUNTIME ?? "docker";

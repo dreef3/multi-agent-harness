@@ -8,6 +8,7 @@ import { createGitHubIssuesRouter } from "./githubIssues.js";
 import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
 import { createSettingsRouter } from "./settings.js";
+import { createCiRouter } from "./ci.js";
 import { config } from "../config.js";
 import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
@@ -42,6 +43,7 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
   router.use("/pull-requests", createPullRequestsRouter(docker, containerRuntime));
   router.use("/webhooks", createWebhooksRouter());
   router.use("/settings", createSettingsRouter());
+  router.use("/ci", createCiRouter());
 
   return router;
 }

@@ -1,0 +1,33 @@
+{{- if .Values.serviceAccount.create }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "multi-agent-harness.fullname" . }}-agent-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "multi-agent-harness.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs", "jobs/status"]
+    verbs: ["create", "get", "list", "watch", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "multi-agent-harness.fullname" . }}-agent-runner
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "multi-agent-harness.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "multi-agent-harness.fullname" . }}-agent-runner
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.serviceAccount.name | default (include "multi-agent-harness.fullname" .) }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

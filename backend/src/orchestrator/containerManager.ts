@@ -57,6 +57,24 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
     .filter(name => process.env[name])
     .map(name => `${name}=${process.env[name]}`);
 
+  // Forward corporate proxy env vars if present in the backend process environment
+  const PROXY_ENV_VARS = [
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
+  ];
+  const proxyEnvVars = PROXY_ENV_VARS
+    .filter(name => process.env[name])
+    .map(name => `${name}=${process.env[name]}`);
+
+  // Forward custom CA cert path for Node.js certificate verification
+  const caEnvVars: string[] = [];
+  if (process.env.NODE_EXTRA_CA_CERTS) {
+    caEnvVars.push(`NODE_EXTRA_CA_CERTS=${process.env.NODE_EXTRA_CA_CERTS}`);
+  }
+  if (process.env.GIT_SSL_CAINFO) {
+    caEnvVars.push(`GIT_SSL_CAINFO=${process.env.GIT_SSL_CAINFO}`);
+  }
+
   const agentProvider = opts.agentProvider ?? config.agentProvider;
   const agentModel = opts.agentModel ?? config.implementationModel;
 
@@ -82,6 +100,9 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   console.log(`[containerManager]   providerEnvVars present: [${presentProviderKeys.join(", ")}]`);
   console.log(`[containerManager]   memory=${config.subAgentMemoryBytes} cpuCount=${config.subAgentCpuCount}`);
   console.log(`[containerManager]   repoCacheVolume=${config.repoCacheVolume || "(disabled)"}`);
+  if (proxyEnvVars.length > 0) {
+    console.log(`[containerManager]   proxyEnvVars forwarded: [${proxyEnvVars.map(e => e.split("=")[0]).join(", ")}]`);
+  }
 
   const nameSuffix = opts.taskName
     ? `${opts.taskName}-${(opts.taskId ?? opts.sessionId).slice(0, 8)}`
@@ -91,7 +112,14 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   const container = await docker.createContainer({
     Image: config.subAgentImage,
     name: containerName,
-    Env: [`REPO_CLONE_URL=${opts.repoCloneUrl}`, `BRANCH_NAME=${opts.branchName}`, ...taskEnv, ...providerEnv],
+    Env: [
+      `REPO_CLONE_URL=${opts.repoCloneUrl}`,
+      `BRANCH_NAME=${opts.branchName}`,
+      ...taskEnv,
+      ...providerEnv,
+      ...proxyEnvVars,
+      ...caEnvVars,
+    ],
     WorkingDir: "/workspace",
     HostConfig: {
       Binds: [

@@ -9,6 +9,7 @@ import type { Project, Repository } from "../models/types.js";
 import { verifyWsToken, LOCAL_USER } from "./auth.js";
 import type { AuthUser } from "./auth.js";
 import { config } from "../config.js";
+import { buildCiToolsDescription } from "../agents/ciTools.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
 interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error"; [key: string]: unknown; }
@@ -90,6 +91,9 @@ ${repoList}
 1. You have NO local direct file access. You MUST use the provided tools to interact with repositories.
 2. Always perform a broad search/grep before making structural assumptions.
 3. When you are ready to propose a plan, you MUST follow the "superpowers:executing-plans" format exactly.
+
+---
+${buildCiToolsDescription(config.harnessApiUrl)}
 `;
 }
 

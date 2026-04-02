@@ -1,0 +1,64 @@
+# backend/Dockerfile.ubi
+# Red Hat UBI 8 variant — uses ubi8/nodejs-22 for RHEL compatibility.
+# Build context: backend/
+
+FROM oven/bun:1 AS bun-binary
+
+FROM registry.access.redhat.com/ubi8/nodejs-22 AS builder
+
+# Switch to root for installs
+USER root
+
+WORKDIR /app
+
+ARG CUSTOM_CA_BUNDLE=""
+
+# Copy bun from the official image + bunx symlink (build script uses bunx)
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s bun /usr/local/bin/bunx
+
+# Install build tools needed by node-gyp (for better-sqlite3).
+# UBI8 ships Python 3.6 by default, but node-gyp v12 uses the walrus operator (:=)
+# which requires Python 3.8+. Install python38 from AppStream and tell node-gyp to use it.
+RUN dnf install -y python38 make gcc-c++ && dnf clean all && \
+    npm install -g node-gyp && \
+    if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      update-ca-trust force-enable && \
+      echo "$CUSTOM_CA_BUNDLE" > /etc/pki/ca-trust/source/anchors/custom.crt && \
+      update-ca-trust; \
+    fi
+
+# Copy package manifest and lockfile
+COPY package.json bun.lock ./
+
+# Install deps — skip lifecycle scripts; rebuild better-sqlite3 explicitly below
+RUN bun install --ignore-scripts
+
+# Rebuild better-sqlite3 native binding for the current Node.js ABI
+COPY scripts ./scripts
+RUN sh scripts/rebuild-sqlite3.sh
+
+# Copy source and compile TypeScript
+COPY . .
+RUN bun run build
+
+# ---- Runtime stage ----
+FROM registry.access.redhat.com/ubi8/nodejs-22
+
+USER root
+WORKDIR /app
+
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+
+RUN mkdir -p /app/data /pi-agent && \
+    chown -R 1001:0 /app /pi-agent && \
+    chmod -R g=u /app /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+# UBI runs as UID 1001 by default (matches OpenShift arbitrary UID range)
+USER 1001
+
+CMD ["node", "dist/index.js"]

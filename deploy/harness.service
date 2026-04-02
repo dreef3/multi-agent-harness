@@ -1,0 +1,36 @@
+[Unit]
+Description=Multi-Agent Harness
+Documentation=https://github.com/dreef3/multi-agent-harness
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Working directory must contain docker-compose.yml, docker-compose.corp.yaml, and .env
+WorkingDirectory=/opt/multi-agent-harness
+
+# Use corporate overlay — remove second -f if not using corporate config
+ExecStart=/usr/bin/docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.corp.yaml \
+  up -d --pull=missing
+
+ExecStop=/usr/bin/docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.corp.yaml \
+  down
+
+# Restart policy: do not restart automatically — use systemctl start manually
+Restart=no
+
+TimeoutStartSec=120
+TimeoutStopSec=60
+
+# Log to systemd journal (view with: journalctl -u harness)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

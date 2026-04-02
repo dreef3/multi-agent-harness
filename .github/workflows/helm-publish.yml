@@ -1,0 +1,65 @@
+name: Helm Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  helm-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: v3.14.0
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Update chart version
+        run: |
+          sed -i \
+            "s/^version:.*/version: ${{ steps.version.outputs.VERSION }}/" \
+            charts/multi-agent-harness/Chart.yaml
+          sed -i \
+            "s/^appVersion:.*/appVersion: \"${{ steps.version.outputs.VERSION }}\"/" \
+            charts/multi-agent-harness/Chart.yaml
+
+      - name: Helm lint
+        run: helm lint charts/multi-agent-harness/
+
+      - name: Package chart
+        run: |
+          mkdir -p .helm-packages
+          helm package charts/multi-agent-harness/ --destination .helm-packages/
+
+      - name: Push chart to GHCR OCI registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+          helm push \
+            .helm-packages/multi-agent-harness-${{ steps.version.outputs.VERSION }}.tgz \
+            oci://ghcr.io/${{ github.repository_owner }}/charts
+
+      - name: Push to Artifactory Helm repo
+        if: vars.PUSH_TO_ARTIFACTORY == 'true'
+        run: |
+          curl -fsS \
+            -H "Authorization: Bearer ${{ secrets.ARTIFACTORY_TOKEN }}" \
+            -T .helm-packages/multi-agent-harness-${{ steps.version.outputs.VERSION }}.tgz \
+            "${{ vars.ARTIFACTORY_HELM_REPO }}/multi-agent-harness-${{ steps.version.outputs.VERSION }}.tgz"
+
+      - name: Upload chart as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: helm-chart-${{ steps.version.outputs.VERSION }}
+          path: .helm-packages/
+          retention-days: 90

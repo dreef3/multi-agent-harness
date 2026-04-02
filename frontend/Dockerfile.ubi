@@ -1,0 +1,45 @@
+# frontend/Dockerfile.ubi
+# Red Hat UBI 8 variant — nginx-124 server image.
+# Build context: frontend/
+
+FROM oven/bun:1 AS bun-binary
+
+FROM registry.access.redhat.com/ubi8/nodejs-22 AS builder
+
+USER root
+WORKDIR /app
+
+ARG CUSTOM_CA_BUNDLE=""
+
+# Copy bun from the official image + bunx symlink (build script uses bunx)
+COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s bun /usr/local/bin/bunx
+
+RUN if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      update-ca-trust force-enable && \
+      echo "$CUSTOM_CA_BUNDLE" > /etc/pki/ca-trust/source/anchors/custom.crt && \
+      update-ca-trust; \
+    fi
+
+COPY package.json bun.lock* ./
+RUN bun install
+
+COPY . .
+RUN bun run build
+
+# ---- Runtime stage ----
+FROM registry.access.redhat.com/ubi8/nginx-124
+
+COPY --from=builder /app/dist /usr/share/nginx/html
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# UBI nginx-124 runs as UID 1001; switch to root to patch the nginx config.
+# Use redirect+move because sed -i can't write temp files in the restricted dir.
+USER 0
+RUN sed 's/listen 80;/listen 8080;/' /etc/nginx/conf.d/default.conf \
+      > /tmp/_nginx_default.conf && \
+    mv /tmp/_nginx_default.conf /etc/nginx/conf.d/default.conf
+USER 1001
+
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]

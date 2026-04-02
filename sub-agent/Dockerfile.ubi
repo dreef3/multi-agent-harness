@@ -1,0 +1,56 @@
+# sub-agent/Dockerfile.ubi
+# Red Hat UBI 8 variant — includes OpenJDK 21, Maven, bun, gh CLI.
+# Build context: repo root
+
+FROM registry.access.redhat.com/ubi8/openjdk-21
+
+USER root
+
+# Install build tools + Node.js 24 repo
+# ubi8/openjdk-21 ships microdnf, not dnf
+RUN microdnf install -y curl git unzip && \
+    curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && \
+    microdnf install -y nodejs && \
+    microdnf clean all
+
+# Install Maven
+RUN microdnf install -y maven && microdnf clean all
+
+# Install bun
+ARG BUN_VERSION=1.3.11
+RUN curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
+        -o /tmp/bun.zip && \
+    unzip -q /tmp/bun.zip -d /tmp/bun-dir && \
+    mv /tmp/bun-dir/bun-linux-x64/bun /usr/local/bin/bun && \
+    rm -rf /tmp/bun.zip /tmp/bun-dir && \
+    bun --version
+
+# Install gh CLI from GitHub releases (not in UBI repos)
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY sub-agent/package.json .
+RUN bun install
+
+RUN mkdir -p /workspace /pi-agent && chown 1001:0 /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY --chown=1001:0 sub-agent/runner.mjs .
+COPY --chown=1001:0 sub-agent/tools.mjs .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/jboss/.config/rtk
+COPY shared/config/rtk-config.toml /home/jboss/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+# ubi8/openjdk-21 default user is jboss (UID 185) — use a fixed non-root UID
+USER 1001
+
+ENTRYPOINT ["bun", "/app/runner.mjs"]

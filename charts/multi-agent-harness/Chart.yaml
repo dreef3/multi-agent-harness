@@ -1,0 +1,12 @@
+apiVersion: v2
+name: multi-agent-harness
+description: AI agent orchestration harness for software development
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+keywords:
+  - ai
+  - agents
+  - automation
+maintainers:
+  - name: harness-team

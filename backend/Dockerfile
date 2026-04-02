@@ -3,6 +3,11 @@ FROM oven/bun:1 AS bun-binary
 FROM node:24-slim AS builder
 # Copy bun binary for lockfile-aware installs while keeping node for native module compilation
 COPY --from=bun-binary /usr/local/bin/bun /usr/local/bin/bun
+ARG CUSTOM_CA_BUNDLE=""
+RUN if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      printf "%s\n" "$CUSTOM_CA_BUNDLE" >> /etc/ssl/certs/ca-certificates.crt && \
+      update-ca-certificates 2>/dev/null || true; \
+    fi
 WORKDIR /app
 
 # Install build dependencies for native modules (including node-gyp for better-sqlite3)
@@ -23,6 +28,11 @@ COPY . .
 RUN bun run build
 
 FROM node:24-slim
+ARG CUSTOM_CA_BUNDLE=""
+RUN if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      printf "%s\n" "$CUSTOM_CA_BUNDLE" >> /etc/ssl/certs/ca-certificates.crt && \
+      update-ca-certificates 2>/dev/null || true; \
+    fi
 WORKDIR /app
 COPY --from=builder /app/package.json ./package.json
 COPY --from=builder /app/dist ./dist

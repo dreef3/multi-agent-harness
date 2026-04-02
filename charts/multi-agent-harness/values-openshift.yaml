@@ -1,0 +1,21 @@
+# OpenShift-specific overrides
+# Usage: helm upgrade --install harness charts/multi-agent-harness -f charts/multi-agent-harness/values-openshift.yaml
+
+ingress:
+  enabled: false
+
+route:
+  enabled: true
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+
+# OpenShift assigns arbitrary UIDs — do not set runAsUser
+# Deployments already hardcode runAsNonRoot: true in pod securityContext
+
+# OpenShift uses oc-managed StorageClasses
+persistence:
+  data:
+    storageClass: ocs-storagecluster-ceph-rbd
+  piAuth:
+    storageClass: ocs-storagecluster-cephfs

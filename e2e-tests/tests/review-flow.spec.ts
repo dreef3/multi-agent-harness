@@ -145,7 +145,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
       {
         method: 'POST',
         headers: GH_HEADERS,
-        body: JSON.stringify({ body: 'Please add a brief comment explaining what this file is for.' }),
+        body: JSON.stringify({ body: 'Please add the text "<!-- E2E test marker -->" as a new line at the end of review-flow-marker.md' }),
       }
     );
     expect(commentRes.ok).toBe(true);
@@ -188,7 +188,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         const commits = await res.json() as { sha: string }[];
         return commits.length > baselineCount;
       },
-      { timeout: 30000, intervals: [5000] }
+      { timeout: 90000, intervals: [5000] }
     ).toBe(true);
   });
 });

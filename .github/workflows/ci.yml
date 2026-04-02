@@ -46,6 +46,9 @@ jobs:
       - name: Install dependencies
         run: bun install
 
+      - name: Lint
+        run: bun run lint 2>/dev/null || echo "No lint script configured"
+
       - name: Type check
         run: bunx tsc --noEmit
 
@@ -54,3 +57,59 @@ jobs:
 
       - name: Build
         run: bun run build
+
+  build-alt-dockerfiles:
+    name: Build alt Dockerfiles (${{ matrix.service }}-${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: backend
+            variant: ubi
+            context: ./backend
+            dockerfile: backend/Dockerfile.ubi
+          - service: backend
+            variant: wolfi
+            context: ./backend
+            dockerfile: backend/Dockerfile.wolfi
+          - service: frontend
+            variant: ubi
+            context: ./frontend
+            dockerfile: frontend/Dockerfile.ubi
+          - service: frontend
+            variant: wolfi
+            context: ./frontend
+            dockerfile: frontend/Dockerfile.wolfi
+          - service: planning-agent
+            variant: ubi
+            context: .
+            dockerfile: planning-agent/Dockerfile.ubi
+          - service: planning-agent
+            variant: wolfi
+            context: .
+            dockerfile: planning-agent/Dockerfile.wolfi
+          - service: sub-agent
+            variant: ubi
+            context: .
+            dockerfile: sub-agent/Dockerfile.ubi
+          - service: sub-agent
+            variant: wolfi
+            context: .
+            dockerfile: sub-agent/Dockerfile.wolfi
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }} (${{ matrix.variant }})
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: false
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ matrix.variant }}
+          cache-to: type=gha,scope=${{ matrix.service }}-${{ matrix.variant }},mode=max

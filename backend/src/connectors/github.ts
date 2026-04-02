@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
 import type { Repository, VcsComment } from "../models/types.js";
-import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval } from "./types.js";
+import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval, BuildStatus, BuildCheckRun } from "./types.js";
 import { ConnectorError } from "./types.js";
+import { fetchCiLogs } from "../api/ci.js";
 
 export class GitHubConnector implements VcsConnector {
   private getToken(): string {
@@ -230,6 +231,91 @@ export class GitHubConnector implements VcsConnector {
         "github",
         error
       );
+    }
+  }
+
+  async getBuildStatus(repo: Repository, ref: string): Promise<BuildStatus> {
+    const octokit = this.getOctokit();
+    const { owner, repoName } = this.getOwnerRepo(repo);
+
+    const { data } = await octokit.checks.listForRef({
+      owner,
+      repo: repoName,
+      ref,
+      per_page: 100,
+    });
+
+    const checks: BuildCheckRun[] = data.check_runs.map((run) => ({
+      name: run.name,
+      status:
+        run.conclusion === "success" ? "success"
+        : run.conclusion === "failure" || run.conclusion === "timed_out"
+          ? "failure"
+        : run.conclusion === "skipped" || run.conclusion === "neutral"
+          ? "skipped"
+        : "pending",
+      url: run.html_url ?? "",
+      buildId: String(run.id),
+      startedAt: run.started_at ?? undefined,
+      completedAt: run.completed_at ?? undefined,
+    }));
+
+    const overallState: BuildStatus["state"] =
+      checks.some((c) => c.status === "failure") ? "failure"
+      : checks.some((c) => c.status === "pending") ? "pending"
+      : checks.length > 0 &&
+        checks.every((c) => c.status === "success" || c.status === "skipped")
+      ? "success"
+      : "unknown";
+
+    return { state: overallState, checks };
+  }
+
+  async getBuildLogs(repo: Repository, buildId: string, buildUrl?: string): Promise<string> {
+    const { owner, repoName } = this.getOwnerRepo(repo);
+    const token = this.getToken();
+
+    // --- Jenkins / TeamCity: delegate to shared CI log fetcher ---
+    const jenkinsBase = process.env.JENKINS_URL?.replace(/\/$/, "");
+    const teamcityBase = process.env.TEAMCITY_URL?.replace(/\/$/, "");
+    if (buildUrl && ((jenkinsBase && buildUrl.startsWith(jenkinsBase)) || (teamcityBase && buildUrl.startsWith(teamcityBase)))) {
+      try {
+        return await fetchCiLogs(buildUrl);
+      } catch (err) {
+        return `Log fetch failed: ${err instanceof Error ? err.message : String(err)}. Build URL: ${buildUrl}`;
+      }
+    }
+
+    // --- GitHub Actions: fetch job logs via Actions API ---
+    try {
+      const response = await fetch(
+        `https://api.github.com/repos/${owner}/${repoName}/actions/jobs/${buildId}/logs`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/vnd.github+json",
+          },
+          redirect: "follow",
+        }
+      );
+      if (response.ok) {
+        return await response.text();
+      }
+    } catch {
+      // fall through to URL fallback
+    }
+
+    // Fallback: return the check run details URL
+    try {
+      const octokit = this.getOctokit();
+      const { data } = await octokit.checks.get({
+        owner,
+        repo: repoName,
+        check_run_id: parseInt(buildId, 10),
+      });
+      return `Logs available at: ${data.details_url ?? data.html_url}`;
+    } catch {
+      return `Logs not available for check run ${buildId}`;
     }
   }
 

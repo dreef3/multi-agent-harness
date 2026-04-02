@@ -1,0 +1,57 @@
+# sub-agent/Dockerfile.wolfi
+# Chainguard Wolfi variant — minimal CVE surface.
+# Build context: repo root
+
+FROM cgr.dev/chainguard/node:latest-dev
+
+USER root
+
+ARG BUN_VERSION=1.3.11
+ARG CUSTOM_CA_BUNDLE=""
+
+# base image already provides Node.js — don't re-install nodejs (version conflict)
+# build-base not needed here; maven brings in Java deps
+RUN apk add --no-cache \
+    git \
+    curl \
+    unzip \
+    openjdk-21 \
+    maven && \
+    if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      echo "$CUSTOM_CA_BUNDLE" >> /etc/ssl/certs/ca-certificates.crt; \
+    fi && \
+    curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
+        -o /tmp/bun.zip && \
+    unzip -q /tmp/bun.zip -d /tmp/bun-dir && \
+    mv /tmp/bun-dir/bun-linux-x64/bun /usr/local/bin/bun && \
+    rm -rf /tmp/bun.zip /tmp/bun-dir && \
+    bun --version
+
+# Install gh CLI
+RUN GH_VERSION=2.45.0 && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" \
+    | tar xz --strip-components=1 -C /usr/local && \
+    gh --version
+
+WORKDIR /app
+
+COPY sub-agent/package.json .
+RUN bun install
+
+RUN mkdir -p /workspace /pi-agent
+
+ENV PI_CODING_AGENT_DIR=/pi-agent
+
+COPY sub-agent/runner.mjs .
+COPY sub-agent/tools.mjs .
+
+COPY shared/bin/rtk /usr/local/bin/rtk
+RUN chmod +x /usr/local/bin/rtk && \
+    /usr/local/bin/rtk --version || echo "[warn] rtk not runnable on this arch"
+RUN mkdir -p /home/nonroot/.config/rtk
+COPY shared/config/rtk-config.toml /home/nonroot/.config/rtk/config.toml
+COPY shared/extensions/ /app/shared/extensions/
+
+USER nonroot
+
+ENTRYPOINT ["bun", "/app/runner.mjs"]
