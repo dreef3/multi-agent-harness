@@ -9,6 +9,7 @@ import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
 import { createSettingsRouter } from "./settings.js";
 import { createCiRouter } from "./ci.js";
+import { createAgentConfigRouter } from "./agentConfig.js";
 import { config } from "../config.js";
 import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
@@ -29,6 +30,9 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
       implementationModel: config.implementationModel,
     });
   });
+
+  // Agent config endpoints — no auth required (simple config reads/writes)
+  router.use(createAgentConfigRouter());
 
   // JWT verification for all protected routes
   router.use(verifyJwt());
