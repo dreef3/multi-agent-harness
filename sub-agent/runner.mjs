@@ -27,6 +27,8 @@ const BRANCH_NAME = process.env.BRANCH_NAME ?? "";
 const TASK_DESCRIPTION =
   process.env.TASK_DESCRIPTION ??
   "Create a file called task-complete.md with the content '# Task Complete'";
+// Optional short commit message for the auto-commit; falls back to TASK_DESCRIPTION snippet.
+const TASK_COMMIT_MSG = process.env.TASK_COMMIT_MSG ?? "";
 // New env vars injected by containerManager
 const HARNESS_API_URL = process.env.HARNESS_API_URL ?? "";
 const AGENT_SESSION_ID = process.env.AGENT_SESSION_ID ?? "";
@@ -294,7 +296,8 @@ try {
   git("add", "-A");
   const stagedDiff = execSync("git diff --cached --stat").toString().trim();
   if (stagedDiff) {
-    git("commit", "-m", `feat: ${TASK_DESCRIPTION.slice(0, 60)}`);
+    const commitMsg = TASK_COMMIT_MSG || `feat: ${TASK_DESCRIPTION.slice(0, 60)}`;
+    git("commit", "--quiet", "-m", commitMsg);
     console.log("[sub-agent] Auto-committed uncommitted file changes.");
   } else {
     console.log("[sub-agent] No uncommitted file changes.");

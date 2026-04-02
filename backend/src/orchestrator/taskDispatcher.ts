@@ -208,6 +208,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           .map(name => `${name}=${process.env[name]}`);
         const taskEnv = [
           `TASK_DESCRIPTION=${this.buildTaskPrompt(task)}`,
+          `TASK_COMMIT_MSG=feat: ${task.description.slice(0, 60)}`,
           ...(gitPushUrl ? [`GIT_PUSH_URL=${gitPushUrl}`] : []),
           `AGENT_PROVIDER=${agentProvider}`,
           `AGENT_MODEL=${agentModel}`,
@@ -655,6 +656,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           `REPO_CLONE_URL=${repository.cloneUrl}`,
           `BRANCH_NAME=${pr.branch}`,
           `TASK_DESCRIPTION=${taskDescription}`,
+          `TASK_COMMIT_MSG=fix: address review comments`,
           ...(fixGitPushUrl ? [`GIT_PUSH_URL=${fixGitPushUrl}`] : []),
           `AGENT_PROVIDER=${agentProvider}`,
           `AGENT_MODEL=${agentModel}`,
