@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "harness": {
+      "url": "http://backend:3000/mcp"
+    }
+  }
+}

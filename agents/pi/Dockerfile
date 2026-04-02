@@ -1,0 +1,16 @@
+FROM multi-agent-harness/agent-base:latest AS base
+
+WORKDIR /app
+
+COPY agents/pi/package.json /app/package.json
+RUN npm install --production
+
+COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
+
+COPY agents/prompts/planning/AGENTS.md /agent-data/planning/AGENTS.md
+RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agent-data/planning/CLAUDE.md
+
+COPY agents/prompts/implementation/AGENTS.md /agent-data/implementation/AGENTS.md
+RUN mkdir -p /agent-data/implementation && ln -sf /agent-data/implementation/AGENTS.md /agent-data/implementation/CLAUDE.md
+
+ENTRYPOINT ["node", "/app/stdio-tcp-bridge.mjs", "npx", "pi-acp"]

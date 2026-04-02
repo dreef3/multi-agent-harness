@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "harness": {
+      "url": "http://backend:3000/mcp"
+    }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": ["/app/guard-hook.sh"]
+      }
+    ]
+  }
+}
