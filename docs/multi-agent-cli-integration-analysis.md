@@ -68,7 +68,7 @@ Replacing the SDK means replacing the runner entirely — there is no abstractio
 |---|---|---|---|---|---|
 | **Language** | JS/TS (npm) | JS/TS (npm) | JS/TS (npm binary) | Go (binary) | Go (binary) |
 | **Headless / non-interactive** | SDK `runRpcMode` | `-p` flag, `--output-format json\|jsonl` | `-p` flag, `--output-format json\|stream-json` | `-p` flag | `opencode serve` (HTTP API) |
-| **Structured I/O protocol** | Custom JSON-RPC over stdio | JSONL streaming, JSON single-shot | stream-json (JSONL), JSON | **ACP over stdio or TCP** (JSON-RPC 2.0) | OpenAPI HTTP server |
+| **Structured I/O protocol** | Custom JSON-RPC over stdio | JSONL streaming, JSON, **ACP over stdio** (JSON-RPC 2.0) | stream-json (JSONL), JSON | **ACP over stdio or TCP** (JSON-RPC 2.0) | OpenAPI HTTP server, **ACP over stdio** (JSON-RPC 2.0) |
 | **MCP support** | No (custom tool API) | Yes (stdio + SSE transports) | Yes (stdio + SSE) | Yes (stdio + SSE) | Yes (stdio + remote) |
 | **Custom tools** | JS `customTools` array | MCP servers | MCP servers, hooks, skills | MCP servers | MCP servers, config-defined custom tools, plugins |
 | **OTEL** | No (harness adds it) | Yes (built-in, configurable) | Yes (built-in, `OTEL_LOGS_EXPORTER`) | No built-in | No built-in |
@@ -77,7 +77,7 @@ Replacing the SDK means replacing the runner entirely — there is no abstractio
 | **SDK / programmatic API** | Full JS SDK | Headless CLI only (no SDK) | Python + TS SDK (subprocess-based) | `@github/copilot-sdk` (now ACP-based) | Go SDK, HTTP SDK |
 | **Subprocess control** | Full (in-process) | `gemini -p "..." --output-format jsonl` | `claude -p "..." --output-format stream-json` | `copilot --acp --stdio` | `opencode serve` + HTTP client |
 | **Session persistence** | JSONL session files | Built-in | Built-in (`--resume`) | ACP session management | Built-in |
-| **ACP support** | No | No | No | **Yes (native)** | No |
+| **ACP support** | No | **Yes (`gemini --acp`)** | **Yes (via [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp))** | **Yes (`copilot --acp`)** | **Yes (`opencode acp`)** |
 
 ---
 
@@ -110,9 +110,15 @@ Replacing the SDK means replacing the runner entirely — there is no abstractio
 - Runs in Docker; needs `GEMINI_API_KEY` or Google Cloud auth
 - No special requirements beyond standard Node.js environment
 
+**ACP support:**
+- `gemini --acp` starts Gemini CLI in ACP mode (JSON-RPC 2.0 over stdio)
+- Client-server model: harness sends requests, Gemini processes and streams responses
+- ACP client can expose MCP tools that Gemini's model can call
+- Supported by Zed, JetBrains, Neovim, and other ACP-compliant editors
+
 **Integration approach for harness:**
-- Spawn as subprocess: `gemini -p "task" --output-format jsonl --non-interactive --yolo`
-- Parse JSONL stream for events (tool calls, text deltas, completion)
+- **Preferred:** Start `gemini --acp` as subprocess or via TCP bridge — same pattern as Copilot CLI
+- Alternative: `gemini -p "task" --output-format jsonl --non-interactive --yolo` for simpler one-shot use
 - Custom tools via MCP sidecar server in same container
 - OTEL can be configured natively — may reduce need for harness-side instrumentation
 
@@ -153,9 +159,15 @@ Replacing the SDK means replacing the runner entirely — there is no abstractio
 - Works in Docker; needs `ANTHROPIC_API_KEY`
 - No TTY required in headless mode
 
+**ACP support:**
+- Via [`@agentclientprotocol/claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) (npm package, v0.24.2)
+- Bridges Claude Agent SDK to ACP (JSON-RPC 2.0 over stdio)
+- Supports: context @-mentions, image input, tool execution with permissions, session management, MCP servers, slash commands, terminal access
+- Actively maintained (72 releases as of March 2026)
+
 **Integration approach for harness:**
-- Run via TS SDK or direct subprocess: `claude -p "task" --output-format stream-json --dangerously-skip-permissions`
-- Parse stream-json events for real-time activity
+- **Preferred:** Use `claude-agent-acp` as ACP subprocess — unified ACP pattern with all other agents
+- Alternative: TS SDK or direct subprocess `claude -p "task" --output-format stream-json --dangerously-skip-permissions`
 - Custom tools via MCP sidecar or hooks
 - Built-in OTEL reduces harness instrumentation burden
 - `CLAUDE.md` in workspace root provides per-task instructions (equivalent to system prompt)
@@ -219,26 +231,38 @@ Replacing the SDK means replacing the runner entirely — there is no abstractio
 - Works in Docker; configure API keys for chosen provider
 - Go binary — small container footprint
 
+**ACP support:**
+- `opencode acp` starts OpenCode as an ACP-compatible subprocess (JSON-RPC 2.0 over stdio)
+- All built-in tools, custom tools, MCP servers, rules, agents, and permissions flow through ACP
+- Limitation: some built-in slash commands (`/undo`, `/redo`) are currently unsupported via ACP
+- Supported by Zed, JetBrains, Neovim (Avante.nvim, CodeCompanion.nvim)
+
 **Integration approach for harness:**
-- Run `opencode serve` in container, communicate via HTTP API
-- OpenAPI spec enables strongly-typed client generation
+- **Preferred:** Start `opencode acp` as subprocess or via TCP bridge — unified ACP pattern
+- Alternative: `opencode serve` for HTTP API access (useful for web-based integrations)
 - Custom tools via MCP sidecar or config-defined tools
-- OTEL must be added by harness (intercept HTTP events)
+- OTEL must be added by harness (intercept ACP/HTTP events)
 - Plugin hooks for security enforcement
 
 ---
 
 ## 4. Integration Protocols: ACP, A2A, MCP
 
-### 4.1 ACP (Agent Client Protocol) — JetBrains/GitHub flavor
+### 4.1 ACP (Agent Client Protocol) — the emerging universal standard
 
-Not to be confused with IBM's Agent Communication Protocol (same acronym).
+Not to be confused with IBM's Agent Communication Protocol (same acronym, different project).
 
-- **What:** JSON-RPC 2.0 protocol for IDE/client ↔ agent communication
-- **Adopted by:** GitHub Copilot CLI (`copilot --acp`), JetBrains AI Assistant, Kiro, Cline, and 19+ other tools
-- **Transport:** stdio or TCP
+- **What:** JSON-RPC 2.0 protocol for client ↔ agent communication, often described as "the LSP for AI coding agents"
+- **Spec:** [agentclientprotocol.com](https://agentclientprotocol.com)
+- **Transport:** stdio (primary) or TCP
 - **Key methods:** `initialize`, `session/new`, `session/prompt`, streaming events, permission requests
-- **Relevance:** This is the **closest match** to the current pi-coding-agent TCP RPC pattern
+- **Adopted by all four target agents:**
+  - Gemini CLI: `gemini --acp` (native)
+  - Copilot CLI: `copilot --acp` (native, stdio or TCP)
+  - OpenCode: `opencode acp` (native)
+  - Claude Code: via [`claude-agent-acp`](https://github.com/agentclientprotocol/claude-agent-acp) adapter (npm, actively maintained)
+- **Also adopted by:** JetBrains AI, Zed, Kiro, Cline, goose, Codex CLI, and 19+ other tools
+- **Relevance:** This is the **closest match** to the current pi-coding-agent TCP RPC pattern, and is now **the universal solution** for all target agents
 
 ### 4.2 A2A (Agent-to-Agent Protocol) — Google/Linux Foundation
 
@@ -258,10 +282,10 @@ Not to be confused with IBM's Agent Communication Protocol (same acronym).
 
 ### 4.4 Can ACP/A2A be "the solution"?
 
-**ACP (JetBrains/GitHub flavor):**
-- Pros: Already implemented by Copilot CLI; JSON-RPC 2.0 maps 1:1 to current TCP bridge; session/prompt model matches planning agent pattern
-- Cons: Only Copilot CLI supports it natively; Gemini CLI, Claude Code, and OpenCode do not speak ACP
-- Verdict: **Good for Copilot CLI specifically, not a universal solution**
+**ACP (Agent Client Protocol):**
+- Pros: Implemented by **all four target agents** (Gemini CLI native, Copilot CLI native, OpenCode native, Claude Code via adapter); JSON-RPC 2.0 maps 1:1 to current TCP bridge; session/prompt model matches planning agent pattern; growing industry adoption (20+ tools); ACP clients can expose MCP tools to agents
+- Cons: Claude Code requires an adapter package (not native); protocol still maturing (spec may evolve); permission request model may need customization for harness security policies
+- Verdict: **Yes — ACP is the universal solution.** The harness should standardize on ACP as the agent communication protocol, replacing the current pi-coding-agent-specific TCP RPC bridge
 
 **A2A (Google/Linux Foundation):**
 - Pros: Designed for exactly this problem (multi-agent orchestration); REST-based (easy to implement); growing ecosystem
@@ -305,7 +329,7 @@ What can and cannot be replicated per agent:
 
 2. **Guard hooks:** Each agent has its own mechanism. No universal approach — must implement per-agent.
 
-3. **Multi-turn planning sessions:** Only pi-coding-agent and Copilot CLI (ACP) natively support long-lived multi-turn sessions over a protocol. Gemini CLI and Claude Code require repeated subprocess invocations with `--resume` or conversation IDs. OpenCode's HTTP server supports persistent sessions.
+3. **Multi-turn planning sessions:** All four target agents support multi-turn sessions via ACP's `session/new` + `session/prompt` lifecycle. This is a significant improvement over the headless-only approach (which would require `--resume` flags or conversation IDs).
 
 ---
 
@@ -378,14 +402,16 @@ Standardize on ACP (JSON-RPC 2.0) as the harness ↔ agent protocol. Write thin 
 
 **Pros:**
 - Backend only speaks one protocol
-- Adding new agents = writing a small adapter
-- Copilot CLI needs no adapter (native ACP)
-- ACP is gaining industry traction
+- Adding new agents = minimal config (all targets already support ACP)
+- Copilot CLI, Gemini CLI, OpenCode: native ACP — zero adapter code
+- Claude Code: well-maintained ACP adapter (`claude-agent-acp`, 72 releases)
+- ACP has strong industry traction (20+ tools, backed by Zed/JetBrains/GitHub)
+- JSON-RPC 2.0 maps almost directly to current TCP bridge code in `planningAgentManager.ts`
 
 **Cons:**
-- Adapter layer adds complexity and latency
-- Mapping non-ACP semantics to ACP may lose information
-- ACP spec may evolve (it's still maturing outside of Copilot)
+- ACP spec may evolve (though convergence is happening)
+- Claude Code requires adapter package (additional dependency)
+- Permission request model may need harness-specific handling
 
 ### Option C: MCP-first architecture (tool-centric)
 
@@ -426,14 +452,17 @@ Flip the model: instead of the harness controlling agents via protocol, expose h
 - Harness becomes more passive (can't inject prompts mid-session as easily)
 - Planning agent pattern (TCP RPC for interactive use) doesn't fit as well
 
-### Recommended: Option A + MCP tools (pragmatic hybrid)
+### Recommended: Option B — Unified ACP bridge + MCP tools
 
-1. **Keep agent-specific runners** for lifecycle management (start, stream, stop, commit/push)
-2. **Extract custom tools into MCP servers** that work with any agent
-3. **Use native OTEL** where available (Gemini CLI, Claude Code) and harness-side OTEL where not (Copilot CLI, OpenCode)
-4. **Standardize the event translation layer** — define a common `HarnessEvent` type and implement a translator per agent output format
+With all four target agents supporting ACP, the unified bridge approach is now clearly the best path:
 
-This gives the best incremental migration path while converging toward a common tool layer.
+1. **Standardize on ACP** (JSON-RPC 2.0) as the harness ↔ agent protocol, replacing the pi-coding-agent-specific TCP RPC bridge
+2. **Extract custom tools into MCP servers** that any ACP agent can consume (ACP clients can expose MCP tools to agents)
+3. **Write one `AcpAgentManager`** that replaces `PlanningAgentManager` — same TCP bridge pattern, but speaking standard ACP instead of pi-coding-agent's custom RPC
+4. **Use native OTEL** where available (Gemini CLI, Claude Code) and harness-side OTEL where not (Copilot CLI, OpenCode)
+5. **Container images differ only in the agent binary** — the runner logic is the same ACP subprocess start
+
+This eliminates per-agent runner code almost entirely. The harness becomes agent-agnostic.
 
 ---
 
@@ -456,51 +485,45 @@ This gives the best incremental migration path while converging toward a common 
 - Package as a container sidecar or in-process MCP server
 - **Effort:** ~2-3 days. This unblocks all future agents.
 
-**Phase 2 — Generic runner framework**
-- Define `HarnessEvent` interface (superset of current `PlanningAgentEvent`)
-- Create `AgentRunner` abstraction with methods: `start()`, `sendPrompt()`, `onEvent()`, `stop()`
-- Implement `PiCodingAgentRunner` first (refactor existing code)
-- Create `Dockerfile.template` with common base (git, gh, rtk) + agent-specific layers
+**Phase 2 — AcpAgentManager (unified ACP bridge)**
+- Define `AcpAgentManager` that replaces `PlanningAgentManager`'s pi-coding-specific RPC handling with standard ACP JSON-RPC 2.0
+- Reuse the existing TCP bridge pattern (connect to container on port 3333, parse newline-delimited JSON-RPC)
+- Map ACP events to the existing `PlanningAgentEvent` type (or a superset `HarnessEvent`)
+- Handle ACP permission requests: auto-approve or route through harness policy
+- Create `Dockerfile.base` with common foundation (git, gh, rtk, MCP sidecar)
 - **Effort:** ~3-4 days
 
-**Phase 3 — Claude Code runner**
-- Install `claude` CLI in container
-- Runner spawns `claude -p "task" --output-format stream-json --dangerously-skip-permissions`
-- Parse stream-json events → `HarnessEvent`
-- `CLAUDE.md` in workspace replaces system prompt
+**Phase 3 — First ACP agent: Gemini CLI or Copilot CLI**
+- Pick one native ACP agent (no adapter needed) as the first integration
+- Dockerfile: `FROM harness-base` + install agent binary + configure ACP mode
+- Container entrypoint: agent binary in ACP mode, listening on TCP 3333 (or stdio bridged to TCP)
 - MCP server from Phase 1 provides custom tools
-- Configure OTEL via env vars (`OTEL_LOGS_EXPORTER=otlp`)
+- System prompt via agent-native config (`GEMINI.md` or Copilot instructions)
+- Validate: streaming, tool calls, OTEL, guard hooks all work through ACP
 - **Effort:** ~2-3 days
 
-**Phase 4 — Gemini CLI runner**
-- Install `gemini` CLI in container
-- Runner spawns `gemini -p "task" --output-format jsonl --non-interactive --yolo`
-- Parse JSONL events → `HarnessEvent`
-- `GEMINI.md` in workspace for instructions
-- MCP server from Phase 1 provides custom tools
-- Configure OTEL via `.gemini/settings.json`
-- **Effort:** ~2-3 days
+**Phase 4 — Claude Code via ACP adapter**
+- Install `@agentclientprotocol/claude-agent-acp` in container
+- Same ACP bridge — `AcpAgentManager` works unchanged
+- `CLAUDE.md` in workspace for system prompt
+- Built-in OTEL configured via env vars
+- **Effort:** ~2 days
 
-**Phase 5 — Copilot CLI runner (ACP)**
-- Install `copilot` binary in container
-- Runner connects via ACP TCP (`copilot --acp --port 3333`)
-- ACP JSON-RPC maps almost directly to existing TCP bridge code
-- MCP server from Phase 1 provides custom tools
-- Auth: device flow or PAT injection
-- **Effort:** ~3-4 days (auth complexity)
+**Phase 5 — Remaining agents (OpenCode + whichever wasn't done in Phase 3)**
+- OpenCode: `opencode acp` — native ACP, same bridge
+- Copilot or Gemini (whichever remains): same pattern
+- **Effort:** ~1-2 days each (ACP infrastructure already proven)
 
-**Phase 6 — OpenCode runner**
-- Install `opencode` binary in container
-- Runner starts `opencode serve` and communicates via HTTP API
-- Parse HTTP responses → `HarnessEvent`
-- MCP server from Phase 1 provides custom tools
-- **Effort:** ~2-3 days
+**Phase 6 — Retire pi-coding-agent runner (optional)**
+- If pi-coding-agent adds ACP support, migrate it to the unified bridge
+- Otherwise keep the existing runner as a legacy path
+- **Effort:** ~1 day if ACP support lands; 0 if kept as-is
 
 ### 7.3 What ACP/A2A mean for the future
 
-- **Short term (now):** ACP is only relevant for Copilot CLI. Not a universal solution.
-- **Medium term (6-12 months):** If more CLI agents adopt ACP (plausible given industry momentum), Option B becomes viable. Monitor adoption.
-- **Long term (12+ months):** A2A may become the standard for multi-agent orchestration in enterprise settings. The harness's planning→sub-agent pattern maps well to A2A's task delegation model. Consider A2A when the harness needs to integrate with external agent systems (not just CLI agents it controls).
+- **Now:** ACP is supported by all four target agents. It is the clear integration standard for CLI coding agents. The harness should adopt it immediately.
+- **Medium term (6-12 months):** ACP ecosystem will mature. Expect better tooling, SDKs, and possibly a formal spec versioning process. The harness benefits from early adoption — less migration work later.
+- **Long term (12+ months):** A2A may become the standard for multi-agent orchestration in enterprise settings. The harness's planning→sub-agent pattern maps well to A2A's task delegation model. Consider A2A when the harness needs to integrate with external agent systems (not just CLI agents it controls). ACP and A2A are complementary: ACP for client↔agent, A2A for agent↔agent.
 
 ### 7.4 What cannot achieve parity
 
@@ -544,7 +567,16 @@ This gives the best incremental migration path while converging toward a common 
 - [Plugins](https://opencode.ai/docs/plugins/)
 - [SDK](https://opencode.ai/docs/sdk/)
 
-### Protocols
+### ACP (Agent Client Protocol)
+- [Agent Client Protocol spec](https://agentclientprotocol.com)
+- [ACP: The LSP for AI Coding Agents](https://blog.promptlayer.com/agent-client-protocol-the-lsp-for-ai-coding-agents/)
+- [Gemini CLI ACP Mode](https://geminicli.com/docs/cli/acp-mode/)
+- [OpenCode ACP docs](https://opencode.ai/docs/acp/)
+- [claude-agent-acp adapter](https://github.com/agentclientprotocol/claude-agent-acp)
+- [Zed: Bring Your Own Agent](https://zed.dev/blog/bring-your-own-agent-to-zed)
+- [ACP progress report](https://zed.dev/blog/acp-progress-report)
+
+### Protocols (A2A / IBM ACP)
 - [ACP (IBM/BeeAI) — GitHub](https://github.com/i-am-bee/acp)
 - [A2A Protocol](https://a2a-protocol.org/latest/)
 - [Linux Foundation A2A announcement](https://www.linuxfoundation.org/press/linux-foundation-launches-the-agent2agent-protocol-project-to-enable-secure-intelligent-communication-between-ai-agents)
