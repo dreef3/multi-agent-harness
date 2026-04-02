@@ -700,12 +700,14 @@ export default defineConfig({
 
 Each test creates a project with the parametrized agent config via the API before running.
 
-**Test scenarios (run per config):**
-- ACP handshake completes (initialize → session/new → session ready)
-- Prompt delivery works (session/prompt → streaming events arrive)
-- MCP tools are callable (agent invokes harness tools, backend receives calls)
-- Tool call events stream to frontend WebSocket
-- Sub-agent container starts, receives task, pushes a commit (content irrelevant)
-- Planning agent can dispatch tasks and receive status updates
-- Agent container stops after idle timeout
-- Per-project agent config is respected (switching CLI type works)
+**E2E tests verify only what cannot be covered by backend/frontend unit/integration tests** — the full container-to-browser flow with real Docker and real ACP connections.
+
+Existing test suites to parametrize:
+- `planning-agent-tests/planning-agent.test.ts` — container bootstrap, TCP/ACP connect, prompt response, skill access, guard hook. Adapt from pi-specific RPC to ACP protocol.
+- `planning-agent-tests/implementation-agent.test.ts` — guard hook, runner setup. Adapt container image references.
+- `tests/repository-flow.spec.ts` — full project lifecycle (create project → planning → dispatch → sub-agent → PR). Already covers the end-to-end workflow.
+- `tests/review-flow.spec.ts` — PR approval flow.
+
+**New E2E scenarios (only things not testable at unit level):**
+- Per-project agent config takes effect: create project with `copilot` config, verify the correct container image is started (observable via container labels/name)
+- Mixed config: planning=pi, implementation=copilot — both containers start with correct types
