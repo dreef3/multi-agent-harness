@@ -65,15 +65,22 @@ Frontend (browser)
     │  │  - RTK            │  │  (per-agent mechanism)
     │  │  - Skills         │  │  (per-agent mechanism)
     │  │  - System prompt  │  │  (AGENTS.md / CLAUDE.md / GEMINI.md / etc.)
-    │  │  - MCP: harness   │  │  (shared MCP server, registered natively)
+    │  │  - MCP: harness   │  │  (remote MCP → backend:3000/mcp)
     │  └───────────────────┘  │
-    │                         │
-    │  ┌───────────────────┐  │
-    │  │ Shared MCP Server │  │  dispatch_tasks, ask_planning_agent,
-    │  │ (stdio, in-proc)  │  │  write_planning_document, get_task_status,
-    │  └───────────────────┘  │  get_pull_requests, reply_to_subagent, web_fetch
-    │                         │
     └─────────────────────────┘
+
+┌──────────────────────────────────────────────────────────┐
+│ Backend                                                   │
+│                                                           │
+│  ┌──────────────────────┐  ┌──────────────────────────┐  │
+│  │   AcpAgentManager    │  │  MCP SSE Server           │  │
+│  │   (TCP → agents)     │  │  (http://backend:3000/mcp)│  │
+│  │                      │  │                            │  │
+│  │                      │  │  Tools call store/         │  │
+│  │                      │  │  orchestrator directly     │  │
+│  │                      │  │  — no HTTP round-trip      │  │
+│  └──────────────────────┘  └──────────────────────────┘  │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### 3.1 Protocol responsibilities
@@ -81,7 +88,7 @@ Frontend (browser)
 | Layer | Protocol | Purpose |
 |---|---|---|
 | Backend ↔ Agent | ACP (JSON-RPC 2.0 over TCP) | Session lifecycle, prompts, streaming events |
-| Agent ↔ Harness tools | MCP (stdio, in-container) | Custom tool invocation (dispatch, plan docs, status, etc.) |
+| Agent ↔ Harness tools | MCP (SSE, remote — `http://backend:3000/mcp`) | Custom tool invocation (dispatch, plan docs, status, etc.) |
 | Backend ↔ Frontend | WebSocket | Forward raw ACP `session/update` notifications |
 | Per-agent native | Each CLI's own system | Guard hooks, RTK, skills, system prompt, OTEL config |
 
@@ -91,7 +98,7 @@ Frontend (browser)
 |---|---|---|
 | `PlanningAgentManager` | pi-coding-agent-specific RPC, planning-only | `AcpAgentManager` — generic ACP, manages all agents |
 | Sub-agent runner | `runner.mjs` imports pi SDK, one-shot | ACP subprocess, reusable session, idle timeout |
-| Custom tools | JS objects via `customTools` array | Shared MCP server, registered per-CLI natively |
+| Custom tools | JS objects via `customTools` array | MCP server hosted in backend (SSE), agents connect remotely |
 | Guard hook | `BashSpawnHook` in runner.mjs | Per-agent native hook mechanism |
 | Frontend events | `PlanningAgentEvent` (custom type) | Raw ACP `session/update` notifications |
 | Container images | `planning-agent` + `sub-agent` | `agent-{pi,gemini,claude,copilot,opencode}` |
@@ -242,10 +249,6 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Shared MCP server
-COPY shared/mcp-server/ /app/mcp-server/
-RUN cd /app/mcp-server && npm install
-
 # RTK binary + config
 COPY shared/bin/rtk /usr/local/bin/rtk
 RUN chmod +x /usr/local/bin/rtk
@@ -294,31 +297,43 @@ Exception: Copilot CLI supports `--acp --port 3333` natively, so its entrypoint 
 
 ---
 
-## 6. Shared MCP Server
+## 6. MCP Server (Backend-Hosted)
 
-Single MCP server providing all harness-specific tools. Runs in-container via stdio transport, registered in each CLI's native MCP config.
+The backend hosts an MCP server over SSE at `http://backend:3000/mcp`. Agent containers connect to it as a remote MCP server. Tool handlers call the backend's store and orchestrator modules directly — no HTTP API round-trip, no duplicate REST surface.
 
 ### 6.1 Implementation
 
+The MCP SSE endpoint is added to the existing Express app in `backend/src/`:
+
 ```
-shared/mcp-server/
-├── server.mjs              # MCP server entry point
-├── package.json            # @modelcontextprotocol/sdk
-└── tools/
-    ├── dispatch_tasks.mjs
-    ├── ask_planning_agent.mjs
-    ├── write_planning_document.mjs
-    ├── get_task_status.mjs
-    ├── get_pull_requests.mjs
-    ├── reply_to_subagent.mjs
-    └── web_fetch.mjs
+backend/src/mcp/
+├── server.ts               # MCP SSE endpoint setup (Express middleware)
+├── tools/
+│   ├── dispatch_tasks.ts   # calls taskDispatcher directly
+│   ├── ask_planning_agent.ts  # calls planningAgentManager.injectMessage()
+│   ├── write_planning_document.ts  # calls gitHub connector directly
+│   ├── get_task_status.ts  # calls store/tasks directly
+│   ├── get_pull_requests.ts  # calls store/pullRequests directly
+│   ├── reply_to_subagent.ts  # calls message store directly
+│   └── web_fetch.ts        # HTTP fetch with SSRF guard (Pi agents only)
 ```
 
-`server.mjs` uses the `@modelcontextprotocol/sdk` package to expose tools via stdio transport. Each tool file exports `{ name, description, inputSchema (JSON Schema), execute(params) → content }`.
+Uses `@modelcontextprotocol/sdk` server with SSE transport. Each tool is defined with JSON Schema input, and calls existing backend functions — the same code paths that the current REST API routes use, but without the HTTP serialization layer.
 
-`BACKEND_URL` is passed as an environment variable. Each tool's `execute` function makes HTTP requests to the backend API (same endpoints as today).
+### 6.2 Session context
 
-### 6.2 Tool availability by agent role
+The MCP connection needs to know which agent is calling. The agent's MCP config includes query parameters in the URL:
+
+```
+http://backend:3000/mcp?projectId={PROJECT_ID}&sessionId={AGENT_SESSION_ID}&role={planning|implementation}
+```
+
+The MCP server reads these from the connection to:
+- Filter tools by role (planning agents get `dispatch_tasks`; sub-agents get `ask_planning_agent`)
+- Scope tool operations to the correct project
+- Correlate tool calls with OTEL spans
+
+### 6.3 Tool availability by agent role
 
 | Tool | Planning agent | Sub-agent |
 |---|---|---|
@@ -330,31 +345,29 @@ shared/mcp-server/
 | `ask_planning_agent` | No | Yes |
 | `web_fetch` | Yes | Yes (Pi only; others have built-in) |
 
-The MCP server reads an `AGENT_ROLE=planning|implementation` env var to filter which tools are exposed.
+### 6.4 Per-CLI registration
 
-### 6.3 Per-CLI registration
-
-Each CLI registers the MCP server in its native config format. Example for Gemini:
+Each CLI registers the backend MCP server as a remote SSE server. Example for Gemini:
 
 ```json
 // .gemini/settings.json
 {
   "mcpServers": {
     "harness": {
-      "command": "node",
-      "args": ["/app/mcp-server/server.mjs"],
-      "env": {
-        "BACKEND_URL": "http://backend:3000",
-        "PROJECT_ID": "${PROJECT_ID}",
-        "AGENT_SESSION_ID": "${AGENT_SESSION_ID}",
-        "AGENT_ROLE": "${AGENT_ROLE}"
-      }
+      "url": "http://backend:3000/mcp?projectId=${PROJECT_ID}&sessionId=${AGENT_SESSION_ID}&role=planning"
     }
   }
 }
 ```
 
-Equivalent one-liner configs for Claude (`settings.json`), Copilot (`mcp.json`), OpenCode (`opencode.json`), and Pi (settings or programmatic registration).
+Equivalent configs for Claude (`settings.json`), Copilot (`mcp.json`), OpenCode (`opencode.json`), Pi (native MCP config). The URL template variables are resolved at container startup (injected via env vars or config file generation).
+
+### 6.5 Advantages over in-container sidecar
+
+- **No duplicate API surface:** Tools call store/orchestrator directly, not via HTTP. The existing REST API routes (`/api/projects/:id/tasks`, `/api/agents/:id/message`, etc.) can be gradually deprecated for agent use.
+- **No sidecar process:** One fewer process per container. Simpler container images.
+- **Centralized:** Tool logic lives in the backend codebase, same language (TypeScript), same test infrastructure. Tool changes deploy once.
+- **Auth:** Backend can authenticate MCP connections using the session ID, ensuring agents can only access their own project's data.
 
 ---
 
