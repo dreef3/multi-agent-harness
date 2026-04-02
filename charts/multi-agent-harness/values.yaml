@@ -20,7 +20,9 @@ backend:
       cpu: "1000m"
       memory: "1Gi"
   # Extra env vars injected into backend container
-  env: {}
+  env:
+    WAIT_FOR_CI: "false"
+    CI_WAIT_TIMEOUT_MS: "600000"
 
 # Frontend service configuration
 frontend:

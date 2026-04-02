@@ -5,6 +5,8 @@ import { getRepository } from "../store/repositories.js";
 import { insertAgentSession, updateAgentSession, getAgentSession } from "../store/agents.js";
 import { insertPullRequest } from "../store/pullRequests.js";
 import { getConnector, ConnectorError } from "../connectors/types.js";
+import type { BuildStatus } from "../connectors/types.js";
+import { getOrCreateTrace } from "./traceBuilder.js";
 import type { ContainerRuntime } from "./containerRuntime.js";
 import { config } from "../config.js";
 import { tracer } from "../telemetry.js";
@@ -283,6 +285,37 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         await updateAgentSession(sessionId, { status: "completed" });
         span.setStatus({ code: SpanStatusCode.OK });
 
+        // ── CI-aware completion ───────────────────────────────────────────────
+        if (config.waitForCi) {
+          console.log(
+            `[taskDispatcher] WAIT_FOR_CI=true — polling CI for branch ${branchName}`
+          );
+
+          const { passed, status: ciStatus } = await this.waitForPrCi(
+            repository,
+            branchName
+          );
+
+          this.recordCiResultInTrace(project, task, 1, passed, ciStatus);
+
+          if (!passed) {
+            await updateAgentSession(sessionId, { status: "failed" });
+            throw new Error(
+              `CI checks failed on branch ${branchName}: ${
+                ciStatus.checks
+                  .filter((c) => c.status === "failure")
+                  .map((c) => c.name)
+                  .join(", ") || "timeout or unknown"
+              }`
+            );
+          }
+
+          console.log(
+            `[taskDispatcher] CI passed for branch ${branchName} — proceeding with PR`
+          );
+        }
+        // ── End CI-aware completion ───────────────────────────────────────────
+
         // Try to create PR — non-fatal since the branch might have no new commits
         try {
           const pr = await this.createPr(project, repository, agentSession, branchName, task.description);
@@ -325,6 +358,91 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
         }
       }
     });
+  }
+
+  /**
+   * Polls the CI build status for the given branch until it resolves to
+   * success or failure, or until the timeout is reached.
+   */
+  private async waitForPrCi(
+    repository: Repository,
+    branchName: string,
+    timeoutMs: number = config.ciWaitTimeoutMs
+  ): Promise<{ passed: boolean; status: BuildStatus }> {
+    const connector = getConnector(repository.provider);
+    const startTime = Date.now();
+    let lastStatus: BuildStatus = { state: "unknown", checks: [] };
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        lastStatus = await connector.getBuildStatus(repository, branchName);
+      } catch (err) {
+        console.warn(`[taskDispatcher] getBuildStatus error for branch ${branchName}:`, err);
+        await new Promise((resolve) => setTimeout(resolve, 30_000));
+        continue;
+      }
+
+      if (lastStatus.state === "success") {
+        console.log(`[taskDispatcher] CI passed for branch ${branchName}`);
+        return { passed: true, status: lastStatus };
+      }
+
+      if (lastStatus.state === "failure") {
+        const failedChecks = lastStatus.checks
+          .filter((c) => c.status === "failure")
+          .map((c) => c.name)
+          .join(", ");
+        console.warn(
+          `[taskDispatcher] CI failed for branch ${branchName}. Failing checks: ${failedChecks}`
+        );
+        return { passed: false, status: lastStatus };
+      }
+
+      if (lastStatus.state === "unknown" && lastStatus.checks.length === 0) {
+        // No CI checks configured for this repo/branch — treat as passing
+        console.log(
+          `[taskDispatcher] No CI checks found for branch ${branchName} — assuming pass`
+        );
+        return { passed: true, status: lastStatus };
+      }
+
+      // state === "pending" — wait and retry
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log(
+        `[taskDispatcher] CI pending for branch ${branchName} (${elapsed}s elapsed), waiting 30s...`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30_000));
+    }
+
+    // Timeout
+    console.warn(
+      `[taskDispatcher] CI wait timeout after ${timeoutMs}ms for branch ${branchName}. Treating as failure.`
+    );
+    return { passed: false, status: lastStatus };
+  }
+
+  private recordCiResultInTrace(
+    project: Project,
+    task: PlanTask,
+    attemptNumber: number,
+    passed: boolean,
+    status: BuildStatus
+  ): void {
+    try {
+      const trace = getOrCreateTrace(project.id, project.name);
+      trace.recordCiResult(task.id, attemptNumber, {
+        state: passed ? "success" : (status.state === "failure" ? "failure" : "error"),
+        checks: status.checks.map((c) => ({
+          name: c.name,
+          state: c.status,
+          url: c.url,
+        })),
+      });
+      // Note: full persistTrace (commit to VCS) happens during PR creation.
+      // CI result is recorded in-memory here so it's included when that persist runs.
+    } catch (err) {
+      console.warn("[taskDispatcher] Failed to record CI result in trace:", err);
+    }
   }
 
   /**
