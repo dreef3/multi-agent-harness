@@ -1,0 +1,19 @@
+# Corporate Artifactory npm registry configuration.
+#
+# Usage (CI):
+#   cp bunfig.corp.toml bunfig.toml
+#   ARTIFACTORY_NPM_TOKEN=<token> bun install
+#
+# Usage (Docker build):
+#   COPY bunfig.corp.toml bunfig.toml
+#   (add to Dockerfile before RUN bun install)
+
+[install]
+# Route all npm installs through Artifactory npm-remote virtual repo.
+# This repo proxies the public registry and caches packages locally.
+registry = "https://corp-artifactory.example.com/api/npm/npm-remote/"
+
+[install.scopes]
+# Private packages in the corp npm-local repo require a token.
+# The token is read from the env var at bun install time.
+"@mariozechner" = { token = "$ARTIFACTORY_NPM_TOKEN", url = "https://corp-artifactory.example.com/api/npm/npm-local/" }

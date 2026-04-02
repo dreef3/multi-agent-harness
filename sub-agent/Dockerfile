@@ -1,4 +1,9 @@
 FROM oven/bun:1
+ARG CUSTOM_CA_BUNDLE=""
+RUN if [ -n "$CUSTOM_CA_BUNDLE" ]; then \
+      printf "%s\n" "$CUSTOM_CA_BUNDLE" >> /etc/ssl/certs/ca-certificates.crt && \
+      update-ca-certificates 2>/dev/null || true; \
+    fi
 
 RUN apt-get update && apt-get install -y \
     git \

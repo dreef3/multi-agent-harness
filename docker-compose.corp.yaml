@@ -1,0 +1,74 @@
+# Corporate overlay — deploy with:
+#   docker compose -f docker-compose.yml -f docker-compose.corp.yaml up -d
+#
+# Required env vars (set in .env or shell):
+#   CORP_REGISTRY     — e.g. corp-artifactory.example.com/docker-local
+#   IMAGE_TAG         — e.g. 1.2.3 or latest
+#   OIDC_ISSUER_URL   — e.g. https://sso.corp.example.com/realms/engineering
+#   OIDC_CLIENT_ID    — registered OIDC client id
+#   POSTGRES_PASSWORD — strong random password
+#
+# Optional:
+#   HTTP_PROXY / HTTPS_PROXY / NO_PROXY — corporate HTTP proxy
+#   CUSTOM_CA_BUNDLE                    — PEM bundle of extra CA certs
+
+services:
+  backend:
+    image: ${CORP_REGISTRY:-corp-artifactory.example.com/docker-local}/multi-agent-harness/backend:${IMAGE_TAG:-latest}
+    environment:
+      AUTH_ENABLED: "true"
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:?OIDC_ISSUER_URL is required in corp deployment}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:?OIDC_CLIENT_ID is required in corp deployment}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,postgres}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1,postgres}
+      # NODE_EXTRA_CA_CERTS is forwarded to sub-agent containers by containerManager.ts
+      NODE_EXTRA_CA_CERTS: ${NODE_EXTRA_CA_CERTS:-}
+      DATABASE_TYPE: postgresql
+      DATABASE_URL: postgresql://harness:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/harness
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    image: ${CORP_REGISTRY:-corp-artifactory.example.com/docker-local}/multi-agent-harness/frontend:${IMAGE_TAG:-latest}
+
+  planning-agent:
+    image: ${CORP_REGISTRY:-corp-artifactory.example.com/docker-local}/multi-agent-harness/planning-agent:${IMAGE_TAG:-latest}
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1}
+
+  sub-agent:
+    image: ${CORP_REGISTRY:-corp-artifactory.example.com/docker-local}/multi-agent-harness/sub-agent:${IMAGE_TAG:-latest}
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
+      http_proxy: ${HTTP_PROXY:-}
+      https_proxy: ${HTTPS_PROXY:-}
+      no_proxy: ${NO_PROXY:-localhost,127.0.0.1}
+
+  postgres:
+    image: ${CORP_REGISTRY:-corp-artifactory.example.com/docker-local}/postgres:16
+    environment:
+      POSTGRES_DB: harness
+      POSTGRES_USER: harness
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - harness-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  harness-postgres:
