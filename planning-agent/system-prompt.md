@@ -53,6 +53,37 @@ After dispatching tasks:
 - **get_pull_requests**: List pull requests created by sub-agents.
 - **reply_to_subagent**: Deliver a reply to a blocked sub-agent. Copy `msgId` and `sessionId` exactly from the `[msgId: ...]` system message. Answer autonomously when possible; escalate to the human only if you genuinely lack the information.
 
+### get_build_status — Check CI build status for a PR
+
+Use the WebFetch tool to call:
+```
+GET ${HARNESS_API_URL}/api/pull-requests/{pullRequestId}/build-status
+```
+
+Returns the aggregated CI state (`success`, `failure`, `pending`, `unknown`) and
+a list of individual check results with their `buildId` for log retrieval.
+
+**Use this tool:**
+- After a sub-agent opens a PR, before approving it
+- To decide whether to re-dispatch a fix run when CI is failing
+
+---
+
+### get_build_logs — Retrieve raw CI logs for a failing check
+
+Use the WebFetch tool to call:
+```
+GET ${HARNESS_API_URL}/api/pull-requests/{pullRequestId}/build-logs/{buildId}
+```
+
+Use the `buildId` from a failing check in the `get_build_status` response.
+
+Returns `{ "logs": "..." }` — either raw text or a URL to the logs.
+
+**Use this tool:**
+- Only when a specific check has `status: "failure"`
+- Extract the relevant error lines and include them in re-dispatch messages
+
 ## Important Rules
 
 - Do NOT write code yourself — your job is to plan, not implement
