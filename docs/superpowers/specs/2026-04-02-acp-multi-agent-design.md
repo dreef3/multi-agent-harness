@@ -678,11 +678,32 @@ The existing `PlanningAgentManager`, `planning-agent/`, and `sub-agent/` directo
 
 ### 11.3 E2E tests
 
-Verify workflow mechanics, not LLM output (too non-deterministic). Run with **Pi (via pi-acp)** and **Copilot CLI**.
+Verify workflow mechanics, not LLM output (too non-deterministic).
 
+**Parametrized test matrix:** Existing E2E tests are adapted using Playwright's parametrized test support (`test.describe` with parameter arrays or projects in `playwright.config.ts`) to run the same scenarios across multiple agent configurations:
+
+```typescript
+// playwright.config.ts
+const agentConfigs = [
+  { name: "pi-pi", planning: "pi", implementation: "pi" },
+  { name: "copilot-copilot", planning: "copilot", implementation: "copilot" },
+  { name: "pi-copilot", planning: "pi", implementation: "copilot" },
+];
+
+export default defineConfig({
+  projects: agentConfigs.map(cfg => ({
+    name: cfg.name,
+    use: { agentConfig: cfg },
+  })),
+});
+```
+
+Each test creates a project with the parametrized agent config via the API before running.
+
+**Test scenarios (run per config):**
 - ACP handshake completes (initialize → session/new → session ready)
 - Prompt delivery works (session/prompt → streaming events arrive)
-- MCP tools are callable (agent can invoke harness tools, backend receives calls)
+- MCP tools are callable (agent invokes harness tools, backend receives calls)
 - Tool call events stream to frontend WebSocket
 - Sub-agent container starts, receives task, pushes a commit (content irrelevant)
 - Planning agent can dispatch tasks and receive status updates
