@@ -1,0 +1,36 @@
+Multi-Agent Harness has been deployed!
+
+{{- if .Values.ingress.enabled }}
+Access the UI at: https://{{ .Values.ingress.host }}
+{{- else if .Values.route.enabled }}
+Access the UI via the OpenShift Route (check `oc get route -n {{ .Release.Namespace }}`).
+{{- else }}
+No Ingress or Route is enabled. Forward the frontend port to access the UI:
+
+  kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "multi-agent-harness.fullname" . }}-frontend 8080:80
+
+Then open: http://localhost:8080
+{{- end }}
+
+REQUIRED: Set credentials before the system becomes operational.
+
+  helm upgrade {{ .Release.Name }} . -n {{ .Release.Namespace }} \
+    --set secrets.githubToken=<your-github-token> \
+    --set secrets.anthropicApiKey=<your-anthropic-key>
+
+Or create the Secret out-of-band and reference it:
+
+  --set secrets.existingSecret=<secret-name>
+
+{{- if .Values.auth.enabled }}
+
+Auth is ENABLED. Configure your OIDC provider to allow:
+  - Redirect URI: https://{{ .Values.ingress.host }}/callback
+  - OIDC Issuer:  {{ .Values.auth.oidcIssuerUrl }}
+{{- else }}
+
+Auth is DISABLED. Enable with:
+  --set auth.enabled=true \
+  --set auth.oidcIssuerUrl=https://your-idp/.well-known/openid-configuration \
+  --set auth.oidcClientId=<client-id>
+{{- end }}

@@ -98,7 +98,7 @@ proxy:
 # ServiceAccount for backend pod (needs Job + Pod permissions in its namespace)
 serviceAccount:
   create: true
-  name: harness-agent-runner
+  name: ""
   annotations: {}
 
 # Secrets — set via --set, external-secrets operator, or a pre-existing Secret

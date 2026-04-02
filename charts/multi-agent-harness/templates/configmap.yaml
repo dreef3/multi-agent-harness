@@ -13,7 +13,7 @@ data:
   CONTAINER_RUNTIME: "kubernetes"
   K8S_NAMESPACE: {{ .Release.Namespace | quote }}
   SUB_AGENT_IMAGE: {{ include "multi-agent-harness.agentImage" . | quote }}
-  PI_AGENT_VOLUME: {{ printf "%s-pi-auth" (include "multi-agent-harness.fullname" .) | quote }}
+  PI_AGENT_VOLUME: "/pi-agent"
   HARNESS_API_URL: {{ printf "http://%s-backend:3000" (include "multi-agent-harness.fullname" .) | quote }}
   {{- with .Values.proxy.httpProxy }}
   HTTP_PROXY: {{ . | quote }}
