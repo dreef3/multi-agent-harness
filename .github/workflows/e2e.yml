@@ -212,11 +212,10 @@ jobs:
           def instance = Jenkins.getInstanceOrNull()
           if (!instance) return
 
-          // Allow anonymous full access so tests need no credentials
-          instance.setSecurityRealm(new HudsonPrivateSecurityRealm(false))
-          def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
-          strategy.setAllowAnonymousRead(true)
-          instance.setAuthorizationStrategy(strategy)
+          // Allow full anonymous access so tests need no credentials.
+          // UNSECURED means everyone (including anonymous) has full control.
+          instance.setAuthorizationStrategy(AuthorizationStrategy.UNSECURED)
+          instance.setSecurityRealm(SecurityRealm.NO_AUTHENTICATION)
 
           // Disable CSRF — simplifies REST API calls in tests
           instance.setCrumbIssuer(null)
