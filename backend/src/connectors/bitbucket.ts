@@ -1,17 +1,8 @@
 import type { Repository, VcsComment } from "../models/types.js";
 import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval, BuildStatus, BuildCheckRun } from "./types.js";
 import { ConnectorError } from "./types.js";
+import { fetchCiLogs } from "../api/ci.js";
 
-/** Extract the TeamCity internal build ID from a TC build URL. */
-function extractTeamCityBuildId(url: string): string | null {
-  // viewLog.html?buildId=12345 or ?buildId=12345&...
-  const m1 = url.match(/[?&]buildId=(\d+)/);
-  if (m1) return m1[1];
-  // /buildConfiguration/{configId}/12345 or /build/12345
-  const m2 = url.match(/\/(?:buildConfiguration\/[^/?]+|build)\/(\d+)/);
-  if (m2) return m2[1];
-  return null;
-}
 
 interface BitbucketRef {
   id: string;
@@ -322,51 +313,14 @@ export class BitbucketConnector implements VcsConnector {
   }
 
   async getBuildLogs(_repo: Repository, buildId: string, buildUrl?: string): Promise<string> {
-    // Bitbucket Server does not store logs itself — delegate to the CI backend.
-
-    const teamcityBase = process.env.TEAMCITY_URL?.replace(/\/$/, "");
-    const teamcityToken = process.env.TEAMCITY_TOKEN;
-    const jenkinsBase = process.env.JENKINS_URL?.replace(/\/$/, "");
-    const jenkinsToken = process.env.JENKINS_TOKEN;
-
-    // --- TeamCity ---
-    if (teamcityBase && buildUrl && buildUrl.startsWith(teamcityBase)) {
-      const tcBuildId = extractTeamCityBuildId(buildUrl) ?? buildId;
-      const logUrl = `${teamcityBase}/app/rest/builds/id:${tcBuildId}/log`;
-      try {
-        const res = await fetch(logUrl, {
-          headers: {
-            Authorization: `Bearer ${teamcityToken ?? ""}`,
-            Accept: "text/plain",
-          },
-        });
-        if (res.ok) return res.text();
-        return `TeamCity log fetch failed (${res.status}). View build at: ${buildUrl}`;
-      } catch (err) {
-        return `TeamCity log fetch error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+    if (!buildUrl) {
+      return `Build key: ${buildId} — set TEAMCITY_URL or JENKINS_URL to enable log fetching`;
     }
-
-    // --- Jenkins ---
-    if (jenkinsBase && buildUrl && buildUrl.startsWith(jenkinsBase)) {
-      const logUrl = buildUrl.replace(/\/?$/, "/") + "consoleText";
-      try {
-        const headers: Record<string, string> = { "User-Agent": "multi-agent-harness" };
-        if (jenkinsToken) {
-          headers["Authorization"] = `Bearer ${jenkinsToken}`;
-        }
-        const res = await fetch(logUrl, { headers });
-        if (res.ok) return res.text();
-        return `Jenkins log fetch failed (${res.status}). View build at: ${buildUrl}`;
-      } catch (err) {
-        return `Jenkins log fetch error: ${err instanceof Error ? err.message : String(err)}`;
-      }
+    try {
+      return await fetchCiLogs(buildUrl);
+    } catch (err) {
+      return `Log fetch failed: ${err instanceof Error ? err.message : String(err)}. Build URL: ${buildUrl}`;
     }
-
-    if (buildUrl) {
-      return `Build logs available at CI system: ${buildUrl}`;
-    }
-    return `Build key: ${buildId} — set TEAMCITY_URL or JENKINS_URL to enable log fetching`;
   }
 
   async commitFile(

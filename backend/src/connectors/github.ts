@@ -2,6 +2,7 @@ import { Octokit } from "@octokit/rest";
 import type { Repository, VcsComment } from "../models/types.js";
 import type { VcsConnector, CreatePullRequestParams, PullRequestResult, PullRequestInfo, PrApproval, BuildStatus, BuildCheckRun } from "./types.js";
 import { ConnectorError } from "./types.js";
+import { fetchCiLogs } from "../api/ci.js";
 
 export class GitHubConnector implements VcsConnector {
   private getToken(): string {
@@ -274,21 +275,14 @@ export class GitHubConnector implements VcsConnector {
     const { owner, repoName } = this.getOwnerRepo(repo);
     const token = this.getToken();
 
-    // --- Jenkins: if the check run URL points to a Jenkins instance, fetch console output ---
+    // --- Jenkins / TeamCity: delegate to shared CI log fetcher ---
     const jenkinsBase = process.env.JENKINS_URL?.replace(/\/$/, "");
-    const jenkinsToken = process.env.JENKINS_TOKEN;
-    if (jenkinsBase && buildUrl && buildUrl.startsWith(jenkinsBase)) {
-      const logUrl = buildUrl.replace(/\/?$/, "/") + "consoleText";
+    const teamcityBase = process.env.TEAMCITY_URL?.replace(/\/$/, "");
+    if (buildUrl && ((jenkinsBase && buildUrl.startsWith(jenkinsBase)) || (teamcityBase && buildUrl.startsWith(teamcityBase)))) {
       try {
-        const headers: Record<string, string> = { "User-Agent": "multi-agent-harness" };
-        if (jenkinsToken) {
-          headers["Authorization"] = `Bearer ${jenkinsToken}`;
-        }
-        const res = await fetch(logUrl, { headers });
-        if (res.ok) return res.text();
-        return `Jenkins log fetch failed (${res.status}). View build at: ${buildUrl}`;
+        return await fetchCiLogs(buildUrl);
       } catch (err) {
-        return `Jenkins log fetch error: ${err instanceof Error ? err.message : String(err)}`;
+        return `Log fetch failed: ${err instanceof Error ? err.message : String(err)}. Build URL: ${buildUrl}`;
       }
     }
 

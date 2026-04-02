@@ -179,6 +179,183 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  jenkins-integration:
+    name: Jenkins CI Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build just the backend image (no agents needed for CI log tests)
+      - name: Build backend image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          tags: multi-agent-harness/backend:latest
+          load: true
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      - name: Prepare Jenkins init scripts
+        run: |
+          mkdir -p /tmp/jenkins-init
+          # Groovy init script: disable setup wizard, create admin user,
+          # allow anonymous read so the test needs no auth.
+          cat > /tmp/jenkins-init/00-setup.groovy << 'GROOVY'
+          import jenkins.model.*
+          import hudson.security.*
+
+          def instance = Jenkins.getInstanceOrNull()
+          if (!instance) return
+
+          // Allow anonymous full access so tests need no credentials
+          instance.setSecurityRealm(new HudsonPrivateSecurityRealm(false))
+          def strategy = new FullControlOnceLoggedInAuthorizationStrategy()
+          strategy.setAllowAnonymousRead(true)
+          instance.setAuthorizationStrategy(strategy)
+
+          // Disable CSRF — simplifies REST API calls in tests
+          instance.setCrumbIssuer(null)
+
+          instance.save()
+          GROOVY
+
+          # Job DSL init script: create the test freestyle job
+          cat > /tmp/jenkins-init/01-job.groovy << 'GROOVY'
+          import jenkins.model.*
+          import hudson.model.*
+          import hudson.tasks.*
+
+          def instance = Jenkins.getInstanceOrNull()
+          if (!instance) return
+
+          def jobName = 'harness-test-job'
+          if (instance.getItem(jobName) != null) return
+
+          def project = new FreeStyleProject(instance, jobName)
+          project.buildersList.add(new Shell(
+            'echo "HARNESS_CI_TEST_MARKER"\n' +
+            'echo "Build number: $BUILD_NUMBER"\n' +
+            'echo "Build completed at: $(date)"\n'
+          ))
+          instance.add(project, jobName)
+          instance.save()
+          GROOVY
+
+      - name: Start Jenkins
+        run: |
+          docker run -d --name jenkins \
+            -p 8080:8080 \
+            -v /tmp/jenkins-init:/var/jenkins_home/init.groovy.d \
+            -e JAVA_OPTS="-Djenkins.install.runSetupWizard=false" \
+            jenkins/jenkins:lts-jdk21
+
+      - name: Wait for Jenkins to be ready
+        run: |
+          echo "Waiting for Jenkins..."
+          for i in $(seq 1 40); do
+            if curl -sf http://localhost:8080/api/json > /dev/null 2>&1; then
+              echo "Jenkins is ready (attempt $i)"
+              break
+            fi
+            echo "  attempt $i/40..."
+            sleep 5
+          done
+          curl -sf http://localhost:8080/api/json || (echo "Jenkins did not start" && exit 1)
+
+      - name: Verify test job was created
+        run: |
+          curl -sf http://localhost:8080/job/harness-test-job/api/json | python3 -c "
+          import sys, json; d = json.load(sys.stdin); print('Job:', d['name'])
+          "
+
+      - name: Create harness .env with Jenkins config
+        run: |
+          cat > .env << EOF
+          GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
+          PORT=3000
+          DATA_DIR=/app/data
+          SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
+          SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
+          AGENT_PLANNING_MODEL=github-copilot/gpt-5-mini
+          AGENT_IMPLEMENTATION_MODEL=github-copilot/gpt-5-mini
+          JENKINS_URL=http://host.docker.internal:8080
+          FRONTEND_PORT=0
+          EOF
+
+      - name: Start harness backend only
+        run: |
+          docker compose up -d backend
+          sleep 5
+          # Wait for backend health
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:3000/api/health > /dev/null 2>&1; then
+              echo "Backend ready"
+              break
+            fi
+            sleep 3
+          done
+
+      - name: Setup Bun for E2E tests
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install E2E test dependencies
+        working-directory: ./e2e-tests
+        run: bun install
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache-jenkins
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('e2e-tests/package.json') }}
+
+      - name: Install Playwright browsers
+        working-directory: ./e2e-tests
+        if: steps.playwright-cache-jenkins.outputs.cache-hit != 'true'
+        run: bunx playwright install --with-deps chromium
+
+      - name: Install Playwright system dependencies
+        working-directory: ./e2e-tests
+        if: steps.playwright-cache-jenkins.outputs.cache-hit == 'true'
+        run: bunx playwright install-deps chromium
+
+      - name: Run Jenkins integration tests
+        working-directory: ./e2e-tests
+        env:
+          JENKINS_URL: http://localhost:8080
+          # The harness container reaches Jenkins via host.docker.internal
+          JENKINS_URL_FROM_HARNESS: http://host.docker.internal:8080
+        run: bunx playwright test jenkins-integration
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-jenkins
+          path: e2e-tests/playwright-report/
+          retention-days: 14
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "=== Backend logs ==="
+          docker compose logs backend
+          echo "=== Jenkins logs ==="
+          docker logs jenkins | tail -100
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose down -v
+          docker rm -f jenkins || true
+
   planning-agent-isolation:
     name: Planning Agent Isolation Tests
     runs-on: ubuntu-latest
