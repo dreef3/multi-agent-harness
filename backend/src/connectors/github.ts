@@ -270,11 +270,29 @@ export class GitHubConnector implements VcsConnector {
     return { state: overallState, checks };
   }
 
-  async getBuildLogs(repo: Repository, buildId: string): Promise<string> {
+  async getBuildLogs(repo: Repository, buildId: string, buildUrl?: string): Promise<string> {
     const { owner, repoName } = this.getOwnerRepo(repo);
     const token = this.getToken();
 
-    // First try: direct job logs via Actions API
+    // --- Jenkins: if the check run URL points to a Jenkins instance, fetch console output ---
+    const jenkinsBase = process.env.JENKINS_URL?.replace(/\/$/, "");
+    const jenkinsToken = process.env.JENKINS_TOKEN;
+    if (jenkinsBase && buildUrl && buildUrl.startsWith(jenkinsBase)) {
+      const logUrl = buildUrl.replace(/\/?$/, "/") + "consoleText";
+      try {
+        const headers: Record<string, string> = { "User-Agent": "multi-agent-harness" };
+        if (jenkinsToken) {
+          headers["Authorization"] = `Bearer ${jenkinsToken}`;
+        }
+        const res = await fetch(logUrl, { headers });
+        if (res.ok) return res.text();
+        return `Jenkins log fetch failed (${res.status}). View build at: ${buildUrl}`;
+      } catch (err) {
+        return `Jenkins log fetch error: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+
+    // --- GitHub Actions: fetch job logs via Actions API ---
     try {
       const response = await fetch(
         `https://api.github.com/repos/${owner}/${repoName}/actions/jobs/${buildId}/logs`,

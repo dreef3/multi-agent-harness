@@ -84,8 +84,10 @@ export interface VcsConnector {
   /**
    * Returns raw log text for a specific CI build/check run by its ID.
    * The buildId comes from BuildCheckRun.buildId returned by getBuildStatus.
+   * Passing buildUrl (BuildCheckRun.url) lets the connector route the request
+   * to the correct CI backend (TeamCity, Jenkins, GitHub Actions, etc.).
    */
-  getBuildLogs(repo: Repository, buildId: string): Promise<string>;
+  getBuildLogs(repo: Repository, buildId: string, buildUrl?: string): Promise<string>;
 
   /**
    * Commit a file to a branch. Creates the branch from defaultBranch first

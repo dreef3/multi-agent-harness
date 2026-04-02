@@ -254,7 +254,18 @@ export function createPullRequestsRouter(docker: Dockerode, containerRuntime?: C
       }
 
       const connector = getConnector(repo.provider);
-      const logs = await connector.getBuildLogs(repo, req.params.buildId);
+
+      // Look up the build URL from the current build status so the connector
+      // can route log requests to the correct CI backend (Jenkins / TeamCity / GH Actions).
+      let buildUrl: string | undefined;
+      try {
+        const status = await connector.getBuildStatus(repo, pr.branch);
+        buildUrl = status.checks.find(c => c.buildId === req.params.buildId)?.url;
+      } catch {
+        // Non-fatal — connector falls back to URL-less behaviour
+      }
+
+      const logs = await connector.getBuildLogs(repo, req.params.buildId, buildUrl);
       res.json({ logs });
     } catch (err) {
       console.error("[api] getBuildLogs error:", err);
