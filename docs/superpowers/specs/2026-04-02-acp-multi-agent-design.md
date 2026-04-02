@@ -656,13 +656,9 @@ services:
 
 ## 10. Migration Path
 
-### 10.1 Backward compatibility
+No backward compatibility required — the project is in active development.
 
-During transition, the existing `PlanningAgentManager` and pi-coding-agent runners remain functional. The new `AcpAgentManager` is additive. `AGENT_TYPE=pi` with the new system uses pi-acp; omitting `AGENT_TYPE` falls back to the existing `PlanningAgentManager` code path.
-
-### 10.2 Deprecation
-
-Once all five agent types are validated, the old `PlanningAgentManager`, `planning-agent/runner.mjs`, `sub-agent/runner.mjs`, and their Dockerfiles are removed. The `planning-agent/` and `sub-agent/` directories are replaced by `agents/pi/`.
+The existing `PlanningAgentManager`, `planning-agent/`, and `sub-agent/` directories are **deleted** and replaced by `AcpAgentManager` + `agents/pi/`. This is a clean cut-over, not a gradual migration.
 
 ---
 
@@ -683,4 +679,5 @@ Once all five agent types are validated, the old `PlanningAgentManager`, `planni
 ### 11.3 E2E tests
 
 - Full flow: create project → start planning agent → send prompt → dispatch tasks → sub-agent executes → PR created
-- Run with at least 2 agent types (Pi + one other) to validate parity
+- Run with two agent types: **Pi (via pi-acp)** and **Copilot CLI** — these are the two currently available for testing
+- Validate parity: same task produces equivalent results with both agent types
