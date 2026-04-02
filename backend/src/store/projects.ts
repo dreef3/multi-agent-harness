@@ -11,6 +11,8 @@ interface ProjectRow {
   planning_branch: string | null;
   planning_pr_json: string | null;
   last_error: string | null;
+  planning_agent_json: string | null;
+  implementation_agent_json: string | null;
 }
 
 function fromRow(row: ProjectRow): Project {
@@ -25,6 +27,8 @@ function fromRow(row: ProjectRow): Project {
     lastError: row.last_error ?? undefined,
     masterSessionPath: row.master_session_path,
     createdAt: row.created_at, updatedAt: row.updated_at,
+    planningAgent: row.planning_agent_json ? JSON.parse(row.planning_agent_json) : undefined,
+    implementationAgent: row.implementation_agent_json ? JSON.parse(row.implementation_agent_json) : undefined,
   };
 }
 
@@ -33,9 +37,9 @@ export async function insertProject(project: Project): Promise<void> {
     INSERT INTO projects
       (id, name, status, source_type, source_json, repository_ids, plan_json,
        master_session_path, primary_repository_id, planning_branch, planning_pr_json,
-       last_error, created_at, updated_at)
+       last_error, created_at, updated_at, planning_agent_json, implementation_agent_json)
     VALUES
-      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     project.id, project.name, project.status,
     project.source.type, JSON.stringify(project.source),
@@ -47,6 +51,8 @@ export async function insertProject(project: Project): Promise<void> {
     project.planningPr ? JSON.stringify(project.planningPr) : null,
     project.lastError ?? null,
     project.createdAt, project.updatedAt,
+    project.planningAgent ? JSON.stringify(project.planningAgent) : null,
+    project.implementationAgent ? JSON.stringify(project.implementationAgent) : null,
   ]);
 }
 
@@ -116,7 +122,9 @@ export async function updateProject(id: string, updates: Partial<Omit<Project, "
         planning_branch=?,
         planning_pr_json=?,
         last_error=?,
-        updated_at=?
+        updated_at=?,
+        planning_agent_json=?,
+        implementation_agent_json=?
     WHERE id=?
   `, [
     merged.name, merged.status,
@@ -129,6 +137,8 @@ export async function updateProject(id: string, updates: Partial<Omit<Project, "
     merged.planningPr ? JSON.stringify(merged.planningPr) : null,
     merged.lastError ?? null,
     merged.updatedAt,
+    merged.planningAgent ? JSON.stringify(merged.planningAgent) : null,
+    merged.implementationAgent ? JSON.stringify(merged.implementationAgent) : null,
     merged.id,
   ]);
 }

@@ -34,6 +34,14 @@ export interface Project {
   masterSessionPath: string;
   createdAt: string;
   updatedAt: string;
+  planningAgent?: {
+    type: string;     // "pi" | "gemini" | "claude" | "copilot" | "opencode"
+    model?: string;
+  };
+  implementationAgent?: {
+    type: string;
+    model?: string;
+  };
 }
 
 export interface Plan {
