@@ -8,7 +8,8 @@ USER root
 WORKDIR /app
 
 # Install bun for frontend build
-RUN curl -fsSL https://bun.sh/install | bash && \
+RUN dnf install -y unzip && dnf clean all && \
+    curl -fsSL https://bun.sh/install | bash && \
     mv /root/.bun/bin/bun /usr/local/bin/bun
 
 COPY package.json bun.lock* ./

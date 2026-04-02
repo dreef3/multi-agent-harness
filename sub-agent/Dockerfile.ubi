@@ -7,13 +7,14 @@ FROM registry.access.redhat.com/ubi8/openjdk-21
 USER root
 
 # Install build tools + Node.js 24 repo
-RUN dnf install -y curl git && \
+# ubi8/openjdk-21 ships microdnf, not dnf
+RUN microdnf install -y curl git unzip && \
     curl -fsSL https://rpm.nodesource.com/setup_24.x | bash - && \
-    dnf install -y nodejs && \
-    dnf clean all
+    microdnf install -y nodejs && \
+    microdnf clean all
 
 # Install Maven
-RUN dnf install -y maven && dnf clean all
+RUN microdnf install -y maven && microdnf clean all
 
 # Install bun
 RUN curl -fsSL https://bun.sh/install | bash && \

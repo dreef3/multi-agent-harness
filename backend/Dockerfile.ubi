@@ -13,7 +13,8 @@ WORKDIR /app
 RUN dnf install -y python3 make gcc-c++ && dnf clean all
 
 # Install bun (used for lockfile-aware installs and TypeScript build)
-RUN curl -fsSL https://bun.sh/install | bash && \
+RUN dnf install -y unzip && dnf clean all && \
+    curl -fsSL https://bun.sh/install | bash && \
     mv /root/.bun/bin/bun /usr/local/bin/bun && \
     bun --version
 

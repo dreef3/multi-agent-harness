@@ -2,7 +2,7 @@
 # Chainguard Wolfi variant — minimal CVE surface.
 # Build context: backend/
 
-FROM cgr.dev/chainguard/node:latest AS builder
+FROM cgr.dev/chainguard/node:latest-dev AS builder
 
 USER root
 WORKDIR /app
