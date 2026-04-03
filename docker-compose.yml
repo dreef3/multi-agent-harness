@@ -43,21 +43,57 @@ services:
     depends_on:
       - backend
 
-  planning-agent:
+  agent-base:
     build:
       context: .
-      dockerfile: planning-agent/Dockerfile
-    image: multi-agent-harness/planning-agent:latest
-    profiles:
-      - build-only  # prevents this from being started by docker compose up
+      dockerfile: agents/base/Dockerfile.base
+    image: multi-agent-harness/agent-base:latest
+    profiles: [build-only]
 
-  sub-agent:
+  agent-pi:
     build:
       context: .
-      dockerfile: sub-agent/Dockerfile
-    image: multi-agent-harness/sub-agent:latest
-    profiles:
-      - build-only  # prevents this from being started by docker compose up
+      dockerfile: agents/pi/Dockerfile
+    image: multi-agent-harness/agent-pi:latest
+    profiles: [build-only]
+    depends_on:
+      - agent-base
+
+  agent-copilot:
+    build:
+      context: .
+      dockerfile: agents/copilot/Dockerfile
+    image: multi-agent-harness/agent-copilot:latest
+    profiles: [build-only]
+    depends_on:
+      - agent-base
+
+  agent-gemini:
+    build:
+      context: .
+      dockerfile: agents/gemini/Dockerfile
+    image: multi-agent-harness/agent-gemini:latest
+    profiles: [build-only]
+    depends_on:
+      - agent-base
+
+  agent-claude:
+    build:
+      context: .
+      dockerfile: agents/claude/Dockerfile
+    image: multi-agent-harness/agent-claude:latest
+    profiles: [build-only]
+    depends_on:
+      - agent-base
+
+  agent-opencode:
+    build:
+      context: .
+      dockerfile: agents/opencode/Dockerfile
+    image: multi-agent-harness/agent-opencode:latest
+    profiles: [build-only]
+    depends_on:
+      - agent-base
 
   postgres:
     image: postgres:16-alpine
