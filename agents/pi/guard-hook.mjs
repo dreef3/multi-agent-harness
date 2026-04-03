@@ -11,6 +11,8 @@ const BLOCKED_PATTERNS = [
   ["gh", "api"],
   ["curl"],
   ["wget"],
+  ["WebSearch"],
+  ["WebFetch"],
 ];
 
 export function createGuardHook() {

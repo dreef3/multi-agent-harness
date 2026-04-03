@@ -4,6 +4,7 @@
       "url": "http://backend:3000/mcp?token=${MCP_TOKEN}"
     }
   },
+  "disabledTools": ["WebSearch", "WebFetch"],
   "hooks": {
     "PreToolUse": [
       {
