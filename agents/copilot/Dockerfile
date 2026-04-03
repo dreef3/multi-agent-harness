@@ -9,4 +9,4 @@ COPY agents/prompts/implementation/AGENTS.md /agent-data/implementation/AGENTS.m
 RUN mkdir -p /agent-data/implementation && ln -sf /agent-data/implementation/AGENTS.md /agent-data/implementation/CLAUDE.md
 
 # Copilot CLI supports native ACP over TCP — no bridge needed
-ENTRYPOINT ["copilot", "--acp", "--port", "3333"]
+ENTRYPOINT ["/app/startup.sh", "copilot", "--acp", "--port", "3333"]

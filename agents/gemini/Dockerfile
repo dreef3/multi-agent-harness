@@ -10,4 +10,4 @@ RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agen
 COPY agents/prompts/implementation/AGENTS.md /agent-data/implementation/AGENTS.md
 RUN mkdir -p /agent-data/implementation && ln -sf /agent-data/implementation/AGENTS.md /agent-data/implementation/CLAUDE.md
 
-ENTRYPOINT ["node", "/app/stdio-tcp-bridge.mjs", "gemini", "--acp"]
+ENTRYPOINT ["/app/startup.sh", "node", "/app/stdio-tcp-bridge.mjs", "gemini", "--acp"]

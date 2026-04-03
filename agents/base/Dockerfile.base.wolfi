@@ -6,12 +6,16 @@ FROM cgr.dev/chainguard/node:latest-dev
 
 USER root
 
-RUN apk add --no-cache git curl github-cli
+RUN apk add --no-cache git curl github-cli gettext
 
 WORKDIR /app
 
 # stdio-to-TCP bridge
 COPY agents/stdio-tcp-bridge.mjs /app/stdio-tcp-bridge.mjs
+
+# Startup wrapper for env var substitution (e.g. MCP_TOKEN in config files)
+COPY agents/startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
 
 RUN mkdir -p /workspace /agent-data
 
