@@ -9,8 +9,16 @@ const REQUIRED_ENV: Record<string, string> = {
   gemini: "GEMINI_API_KEY",
   claude: "ANTHROPIC_API_KEY",
   copilot: "COPILOT_GITHUB_TOKEN",
-  opencode: "OPENCODE_API_KEY",
+  opencode: "ANTHROPIC_API_KEY",  // fallback; opencode supports multiple providers
 };
+
+// Check: env var set OR explicit {TYPE}_ENABLED=true flag (for device-auth flows)
+function isAgentAvailable(type: string): boolean {
+  const enabledFlag = `${type.toUpperCase()}_ENABLED`;
+  if (process.env[enabledFlag] === "true") return true;
+  const envKey = REQUIRED_ENV[type];
+  return envKey ? !!process.env[envKey] : false;
+}
 
 export function createAgentConfigRouter(): Router {
   const router = Router();
@@ -18,7 +26,7 @@ export function createAgentConfigRouter(): Router {
   router.get("/config/available-agents", (_req, res) => {
     const agents = AGENT_TYPES.map((type) => ({
       type,
-      available: !!process.env[REQUIRED_ENV[type]],
+      available: isAgentAvailable(type),
     }));
     res.json({ agents });
   });
