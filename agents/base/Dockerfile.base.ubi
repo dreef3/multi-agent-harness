@@ -8,14 +8,11 @@ USER root
 
 RUN microdnf install -y git curl tar gzip gettext && microdnf clean all
 
-# Install GitHub CLI
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-       -o /tmp/githubcli.gpg && \
-    rpm --import /tmp/githubcli.gpg && \
-    curl -fsSL "https://github.com/cli/cli/releases/download/v2.49.2/gh_2.49.2_linux_amd64.rpm" \
+# Install GitHub CLI — download RPM directly (microdnf doesn't have config-manager)
+RUN curl -fsSL "https://github.com/cli/cli/releases/download/v2.49.2/gh_2.49.2_linux_amd64.rpm" \
        -o /tmp/gh.rpm && \
     rpm -i /tmp/gh.rpm && \
-    rm -f /tmp/githubcli.gpg /tmp/gh.rpm
+    rm -f /tmp/gh.rpm
 
 WORKDIR /app
 
