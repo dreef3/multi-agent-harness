@@ -13,9 +13,13 @@ concurrency:
 
 jobs:
   e2e-github-copilot:
-    name: E2E with GitHub Copilot
+    name: E2E (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [pi-pi, copilot-copilot, pi-copilot]
 
     steps:
       - uses: actions/checkout@v4
@@ -119,13 +123,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           GH_APPROVER_TOKEN: ${{ secrets.GH_APPROVER_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
-        run: bunx playwright test
+        run: bunx playwright test --project ${{ matrix.project }}
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-github-copilot
+          name: playwright-report-${{ matrix.project }}
           path: e2e-tests/playwright-report/
           retention-days: 30
 
@@ -136,27 +140,27 @@ jobs:
           docker compose logs backend
           echo "=== Frontend logs ==="
           docker compose logs frontend
-          echo "=== Planning agent container logs ==="
-          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+          echo "=== Agent container logs ==="
+          docker ps -a --filter "name=agent-" --format "{{.Names}}" | \
             while read name; do
               echo "--- $name ---"
               docker logs "$name" 2>&1 || true
             done
 
-      - name: Collect planning agent session logs
+      - name: Collect agent session logs
         if: failure()
         run: |
           mkdir -p /tmp/agent-sessions
-          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+          docker ps -a --filter "name=agent-" --format "{{.Names}}" | \
             while read name; do
               docker cp "$name:/pi-agent/sessions/." "/tmp/agent-sessions/$name/" 2>/dev/null || true
             done
 
-      - name: Upload planning agent session logs
+      - name: Upload agent session logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: agent-session-logs
+          name: agent-session-logs-${{ matrix.project }}
           path: /tmp/agent-sessions/
           retention-days: 7
 
@@ -354,7 +358,7 @@ jobs:
       - name: Build agent images
         run: |
           docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
-          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
+          docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest .
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -367,7 +371,7 @@ jobs:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           AGENT_PROVIDER: github-copilot
           AGENT_MODEL: gpt-5-mini
-        run: bun test
+        run: bun test --timeout 180000
 
       - name: Dump planning agent container logs on failure
         if: failure()
