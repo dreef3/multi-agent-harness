@@ -59,25 +59,10 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-      - name: Build agent-base image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./agents/base/Dockerfile.base
-          tags: multi-agent-harness/agent-base:latest
-          load: true
-          cache-from: type=gha,scope=agent-base
-          cache-to: type=gha,scope=agent-base,mode=max
-
-      - name: Build agent-pi image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./agents/pi/Dockerfile
-          tags: multi-agent-harness/agent-pi:latest
-          load: true
-          cache-from: type=gha,scope=agent-pi
-          cache-to: type=gha,scope=agent-pi,mode=max
+      - name: Build agent images
+        run: |
+          docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
+          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
 
       - name: Start services
         run: |
@@ -366,25 +351,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build agent-base image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./agents/base/Dockerfile.base
-          tags: multi-agent-harness/agent-base:latest
-          load: true
-          cache-from: type=gha,scope=agent-base
-          cache-to: type=gha,scope=agent-base,mode=max
-
-      - name: Build agent-pi image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./agents/pi/Dockerfile
-          tags: multi-agent-harness/agent-pi:latest
-          load: true
-          cache-from: type=gha,scope=agent-pi
-          cache-to: type=gha,scope=agent-pi,mode=max
+      - name: Build agent images
+        run: |
+          docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
+          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
