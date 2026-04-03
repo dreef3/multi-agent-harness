@@ -1,0 +1,18 @@
+# agents/base/Dockerfile.base.wolfi
+# Chainguard Wolfi variant — minimal CVE surface.
+# Build context: repo root (same as Dockerfile.base)
+
+FROM cgr.dev/chainguard/node:latest-dev
+
+USER root
+
+RUN apk add --no-cache git curl github-cli
+
+WORKDIR /app
+
+# stdio-to-TCP bridge
+COPY agents/stdio-tcp-bridge.mjs /app/stdio-tcp-bridge.mjs
+
+RUN mkdir -p /workspace /agent-data
+
+EXPOSE 3333

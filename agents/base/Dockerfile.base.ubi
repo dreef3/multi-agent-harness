@@ -1,0 +1,27 @@
+# agents/base/Dockerfile.base.ubi
+# Red Hat UBI 8 variant — uses ubi8/nodejs-22-minimal for RHEL compatibility.
+# Build context: repo root (same as Dockerfile.base)
+
+FROM registry.access.redhat.com/ubi8/nodejs-22-minimal
+
+USER root
+
+RUN microdnf install -y git curl tar gzip && microdnf clean all
+
+# Install GitHub CLI
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       -o /tmp/githubcli.gpg && \
+    rpm --import /tmp/githubcli.gpg && \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v2.49.2/gh_2.49.2_linux_amd64.rpm" \
+       -o /tmp/gh.rpm && \
+    rpm -i /tmp/gh.rpm && \
+    rm -f /tmp/githubcli.gpg /tmp/gh.rpm
+
+WORKDIR /app
+
+# stdio-to-TCP bridge
+COPY agents/stdio-tcp-bridge.mjs /app/stdio-tcp-bridge.mjs
+
+RUN mkdir -p /workspace /agent-data
+
+EXPOSE 3333
