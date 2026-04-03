@@ -211,8 +211,6 @@ export function setupWebSocket(server: Server) {
     const providerEnvVars = [
       "ANTHROPIC_API_KEY",
       "OPENAI_API_KEY",
-      "OPENCODE_API_KEY",
-      "MINIMAX_API_KEY", "MINIMAX_CN_API_KEY",
       "COPILOT_GITHUB_TOKEN",
       "GEMINI_API_KEY",
     ]
