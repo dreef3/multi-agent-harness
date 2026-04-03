@@ -123,6 +123,4 @@ volumes:
     name: harness-data
   harness-pi-auth:
     name: harness-pi-auth
-  harness-repo-cache:
-    name: harness-repo-cache
   harness-postgres:

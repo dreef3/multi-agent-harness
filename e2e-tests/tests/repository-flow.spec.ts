@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import {
   API_BASE,
   GH_TOKEN,
@@ -40,7 +40,7 @@ test.describe('Repository Configuration Flow', () => {
     await cleanupNewBranches(initialBranchNames);
   });
 
-  test('create project with repository and verify sub-agent pushes a branch', async ({ page, request }) => {
+  test('create project with repository and verify sub-agent pushes a branch', async ({ page, request, agentConfig }) => {
     test.setTimeout(15 * 60 * 1000); // 15 minutes — covers full agent execution cycle (sub-agent can take ~10 min)
 
     // Navigate to new project form
@@ -68,6 +68,16 @@ test.describe('Repository Configuration Flow', () => {
     // Extract project ID from the URL now (before any navigation)
     const projectId = page.url().match(/\/projects\/([\w-]+)/)?.[1];
     expect(projectId).toBeDefined();
+
+    // Apply agent config for this Playwright project variant (planning + implementation agent types)
+    if (agentConfig.planning || agentConfig.implementation) {
+      await request.put(`${API_BASE}/projects/${projectId}/agent-config`, {
+        data: {
+          planningAgent: { type: agentConfig.planning || 'copilot' },
+          implementationAgent: { type: agentConfig.implementation || 'copilot' },
+        },
+      });
+    }
 
     // Send a task that explicitly invokes superpowers skills.
     // Keeping the request concise to minimize token usage.

@@ -71,7 +71,10 @@ export class AcpTestClient {
     }) + "\n");
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => resolve(events), timeoutMs);
+      const timer = setTimeout(() => {
+        this.off("event", handler);
+        resolve(events);
+      }, timeoutMs);
       const handler = (event: AcpEvent) => {
         events.push(event);
         if (event.id === id && event.result) {
@@ -112,6 +115,19 @@ export class AcpTestClient {
           }
           this.emit("event", msg);
         } catch {}
+      }
+    });
+    this.socket!.on("error", (err: Error) => {
+      for (const [id, pending] of this.pendingRequests) {
+        pending.reject(err);
+        this.pendingRequests.delete(id);
+      }
+    });
+    this.socket!.on("close", () => {
+      const err = new Error("Socket closed");
+      for (const [id, pending] of this.pendingRequests) {
+        pending.reject(err);
+        this.pendingRequests.delete(id);
       }
     });
   }

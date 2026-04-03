@@ -69,7 +69,7 @@ test.describe('Multi-Agent Harness E2E', () => {
 
     // Cleanup: Delete test repository
     const repos = await request.get('http://localhost:3000/api/repositories');
-    if (repos.ok) {
+    if (repos.ok()) {
       const data = await repos.json();
       for (const repo of data) {
         if (repo.name === 'E2E Test Repo') {
