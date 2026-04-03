@@ -25,6 +25,10 @@ class MockManager extends EventEmitter {
   incrementConnections = vi.fn();
   decrementConnections = vi.fn();
   sendPrompt = vi.fn().mockResolvedValue(undefined);
+  onOutput = vi.fn().mockImplementation((agentId: string, handler: (event: unknown) => void) => {
+    this.on(agentId, handler);
+    return () => this.off(agentId, handler);
+  });
 }
 
 let mockManager: MockManager;

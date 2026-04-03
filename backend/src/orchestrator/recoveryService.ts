@@ -16,6 +16,7 @@ import {
   resetStaleDispatchingEntries,
   removeTerminalTasks,
 } from "../store/taskQueue.js";
+import { getAcpAgentManager } from "./acpAgentManager.js";
 
 const taskCounter = meter.createCounter("harness.tasks.dispatched", {
   description: "Number of tasks dispatched",
@@ -353,7 +354,6 @@ export class RecoveryService {
 
   private async notifyMaster(projectId: string, message: string): Promise<void> {
     try {
-      const { getAcpAgentManager } = await import("./acpAgentManager.js");
       const agentId = "planning-" + projectId;
       await getAcpAgentManager().sendPrompt(agentId, message);
     } catch (err) {

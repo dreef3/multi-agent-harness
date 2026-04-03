@@ -102,6 +102,7 @@ const WS_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 120_000];
 async function ensureRunningWithRetry(
   manager: ReturnType<typeof getAcpAgentManager>,
   planningAgentId: string,
+  projectId: string,
   agentType: string,
   envVars: string[],
   ws: WebSocket
@@ -130,7 +131,6 @@ async function ensureRunningWithRetry(
         if (ws.readyState !== WebSocket.OPEN) return false;
       } else {
         // All retries exhausted — persist the error and close
-        const projectId = planningAgentId.replace(/^planning-/, "");
         try {
           await updateProject(projectId, { lastError: msg });
         } catch { /* ignore */ }
@@ -235,7 +235,7 @@ export function setupWebSocket(server: Server) {
     const earlyMessageHandler = (data: Buffer) => earlyMessages.push(data);
     ws.on("message", earlyMessageHandler);
 
-    const started = await ensureRunningWithRetry(manager, planningAgentId, agentType, envVars, ws);
+    const started = await ensureRunningWithRetry(manager, planningAgentId, projectId, agentType, envVars, ws);
     ws.off("message", earlyMessageHandler);
 
     if (!started) {
@@ -243,13 +243,19 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    // Increment manager's connection count to prevent idle timeout
+    // Increment manager's connection count to prevent idle timeout.
+    // Track that increment happened so the close handler can match it.
+    let connected = false;
     manager.incrementConnections(planningAgentId);
+    connected = true;
 
-    // Initial output listener setup (only once per project)
+    // Per-project output broadcaster (only one listener per project at a time).
+    // `unsubscribe` is called when the agent stops/crashes or this WS closes.
+    let unsubscribe: (() => void) | null = null;
+
     if (!projectBroadcasters.has(projectId)) {
       projectBroadcasters.add(projectId);
-      manager.on(planningAgentId, (event: WsAcpEvent) => {
+      unsubscribe = manager.onOutput(planningAgentId, (event: WsAcpEvent) => {
         let logMsg = `[ws] Broadcasting ACP event to project ${projectId}: type=${event.type}`;
         if (event.type === "acp:agent_message_chunk") {
           const text = typeof event.content === "string"
@@ -273,6 +279,13 @@ export function setupWebSocket(server: Server) {
             });
           }
           projectMessageBuffers.delete(projectId);
+        }
+
+        // Remove broadcaster when the agent stops or crashes so it can be
+        // re-registered if the agent restarts.
+        if (event.type === "agent:stopped" || event.type === "agent:crashed") {
+          if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+          projectBroadcasters.delete(projectId);
         }
 
         // acp:error → send as WS error type so the frontend shows it in the banner
@@ -335,7 +348,13 @@ export function setupWebSocket(server: Server) {
         connections.delete(ws);
         if (connections.size === 0) projectConnections.delete(projectId);
       }
-      manager.decrementConnections(planningAgentId);
+      // Remove output broadcaster so it can be re-registered on next connection
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; projectBroadcasters.delete(projectId); }
+      // Only decrement if we successfully incremented (agent started successfully)
+      if (connected) {
+        connected = false;
+        manager.decrementConnections(planningAgentId);
+      }
     });
 
     // Replay any messages that arrived before the container was ready

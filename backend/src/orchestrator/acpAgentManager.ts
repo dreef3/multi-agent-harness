@@ -103,6 +103,8 @@ export class AcpAgentManager extends EventEmitter {
   private agents = new Map<string, AgentState>();
   /** toolCallId → start timestamp (ms) */
   private toolCallStartTimes = new Map<string, number>();
+  /** In-flight ensureRunning promises, keyed by agentId — prevents concurrent double-starts */
+  private inFlightEnsure = new Map<string, Promise<void>>();
 
   constructor(private readonly docker: Dockerode) {
     super();
@@ -177,9 +179,25 @@ export class AcpAgentManager extends EventEmitter {
 
   /**
    * Find or create a Docker container for the given agentId, start it, then
-   * perform the ACP handshake.
+   * perform the ACP handshake.  Concurrent callers share a single in-flight
+   * promise so the container is never started twice.
    */
   async ensureRunning(
+    agentId: string,
+    agentType: string,
+    role: "planning" | "implementation",
+    env?: string[],
+  ): Promise<void> {
+    if (this.agents.has(agentId)) return;
+    const existing = this.inFlightEnsure.get(agentId);
+    if (existing) return existing;
+    const promise = this._doEnsureRunning(agentId, agentType, role, env);
+    this.inFlightEnsure.set(agentId, promise);
+    promise.finally(() => this.inFlightEnsure.delete(agentId));
+    return promise;
+  }
+
+  private async _doEnsureRunning(
     agentId: string,
     agentType: string,
     role: "planning" | "implementation",
@@ -190,9 +208,9 @@ export class AcpAgentManager extends EventEmitter {
     const containerName = agentId;
     let containerId: string;
 
-    const existing = await this.findExistingContainer(containerName);
-    if (existing) {
-      containerId = existing;
+    const existingContainer = await this.findExistingContainer(containerName);
+    if (existingContainer) {
+      containerId = existingContainer;
       try {
         const info = await this.docker.getContainer(containerId).inspect();
         if (!info.State.Running) {
