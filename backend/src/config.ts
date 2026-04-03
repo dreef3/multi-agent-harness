@@ -122,17 +122,21 @@ export function agentImage(agentType: string): string {
 export function resolveAgentConfig(
   role: "planning" | "implementation",
   projectConfig?: { type: string; model?: string }
-): { type: string; model: string } {
+): { type: string; model: string; image: string } {
   if (projectConfig) {
+    const type = projectConfig.type;
     return {
-      type: projectConfig.type,
+      type,
       model: projectConfig.model ?? (
         role === "planning" ? config.planningModel : config.implementationModel
       ),
+      image: agentImage(type),
     };
   }
+  const type = config.agentProvider;
   return {
-    type: config.agentProvider,
+    type,
     model: role === "planning" ? config.planningModel : config.implementationModel,
+    image: agentImage(type),
   };
 }

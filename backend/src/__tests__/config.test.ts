@@ -15,7 +15,7 @@ describe("resolveAgentConfig", () => {
       "planning",
       { type: "gemini", model: "gemini-2.5-pro" }
     );
-    expect(result).toEqual({ type: "gemini", model: "gemini-2.5-pro" });
+    expect(result).toEqual({ type: "gemini", model: "gemini-2.5-pro", image: "multi-agent-harness/agent-gemini:latest" });
   });
 
   it("falls back to env defaults when project config is undefined", () => {
