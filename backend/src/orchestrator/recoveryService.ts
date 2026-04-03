@@ -353,8 +353,9 @@ export class RecoveryService {
 
   private async notifyMaster(projectId: string, message: string): Promise<void> {
     try {
-      const { getPlanningAgentManager } = await import("./planningAgentManager.js");
-      await getPlanningAgentManager().sendPrompt(projectId, message);
+      const { getAcpAgentManager } = await import("./acpAgentManager.js");
+      const agentId = "planning-" + projectId;
+      await getAcpAgentManager().sendPrompt(agentId, message);
     } catch (err) {
       console.error(`[recoveryService] Failed to notify planning agent for project ${projectId}:`, err);
     }
