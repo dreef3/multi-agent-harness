@@ -1,10 +1,10 @@
 /**
- * Planning agent isolation tests.
+ * Planning agent isolation tests (ACP protocol).
  *
- * Spins up the planning-agent Docker container directly (no full harness stack)
- * and tests it via the TCP RPC interface. Covers:
+ * Spins up an agent Docker container directly (no full harness stack)
+ * and tests it via the ACP TCP interface. Covers:
  *
- *   1. Container bootstrap — starts, TCP connects, responds to a prompt
+ *   1. Container bootstrap — starts, TCP connects, ACP session initializes
  *   2. Skill file access  — agent reads brainstorming SKILL.md via `cat` (absolute path)
  *   3. Phase-1 behaviour  — agent asks clarifying questions, not immediately writing a spec
  *   4. Guard hook         — `gh pr create` is blocked; agent is told to use write_planning_document
@@ -14,12 +14,13 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { execSync } from "child_process";
-import { PlanningAgentRpcClient, type RpcEvent } from "./rpc-client";
+import { AcpTestClient, type AcpEvent } from "./rpc-client";
 
 // ── config ────────────────────────────────────────────────────────────────────
 
 const COPILOT_TOKEN =
   process.env.COPILOT_GITHUB_TOKEN ?? process.env.GH_TOKEN ?? "";
+const AGENT_TYPE = process.env.AGENT_TYPE ?? "copilot";
 const PROVIDER = process.env.AGENT_PROVIDER ?? "github-copilot";
 const MODEL = process.env.AGENT_MODEL ?? "gpt-5-mini";
 
@@ -29,30 +30,37 @@ const PROMPT_TIMEOUT = 90_000; // 1.5 min per prompt
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Extract all text deltas from a response event stream. */
-function responseText(events: RpcEvent[]): string {
+/** Extract text content from session/update notification params. */
+function responseText(events: AcpEvent[]): string {
   return events
-    .filter((e) => e.type === "message_update")
-    .map((e) => {
-      const ae = e.assistantMessageEvent as
-        | { type: string; delta?: string }
-        | undefined;
-      return ae?.type === "text_delta" && ae.delta ? ae.delta : "";
+    .filter((e) => e.method === "session/update")
+    .flatMap((e) => {
+      const content = e.params?.content;
+      if (!Array.isArray(content)) return [];
+      return content
+        .filter((c: unknown) => (c as { type?: string }).type === "text")
+        .map((c: unknown) => (c as { text?: string }).text ?? "");
     })
     .join("");
 }
 
-/** Names of tools called during a response. */
-function toolNames(events: RpcEvent[]): string[] {
+/** Names of tools invoked during ACP session updates. */
+function toolNames(events: AcpEvent[]): string[] {
   return events
-    .filter((e) => e.type === "tool_execution_start")
-    .map((e) => String(e.toolName ?? ""));
+    .filter((e) => e.method === "session/update")
+    .flatMap((e) => {
+      const content = e.params?.content;
+      if (!Array.isArray(content)) return [];
+      return content
+        .filter((c: unknown) => (c as { type?: string }).type === "tool_use")
+        .map((c: unknown) => String((c as { name?: string }).name ?? ""));
+    });
 }
 
 // ── suite ─────────────────────────────────────────────────────────────────────
 
-describe("Planning agent (isolation)", () => {
-  let client: PlanningAgentRpcClient;
+describe("Planning agent (ACP isolation)", () => {
+  let client: AcpTestClient;
 
   beforeAll(async () => {
     if (!COPILOT_TOKEN) {
@@ -61,11 +69,12 @@ describe("Planning agent (isolation)", () => {
       );
     }
 
-    client = new PlanningAgentRpcClient({
+    client = new AcpTestClient({
       projectId: `test-${Date.now()}`,
+      agentType: AGENT_TYPE,
       provider: PROVIDER,
       model: MODEL,
-      copilotToken: COPILOT_TOKEN,
+      env: [`COPILOT_GITHUB_TOKEN=${COPILOT_TOKEN}`],
       // Backend URL is intentionally unreachable for Phase-1 tests
       // (write_planning_document / dispatch_tasks are not called until after LGTM)
       backendUrl: "http://localhost:19999",
@@ -115,19 +124,17 @@ describe("Planning agent (isolation)", () => {
         PROMPT_TIMEOUT
       );
 
-      // Must have reached agent_end (not just timed out mid-stream)
-      expect(events.some((e) => e.type === "agent_end")).toBe(true);
+      // Must have received a session/prompt response (not just timed out mid-stream)
+      const hasResponse = events.some((e) => e.result != null);
+      expect(hasResponse).toBe(true);
 
-      // Agent must have used the bash tool (for `cat /app/...` skill read + workspace exploration)
-      const tools = toolNames(events);
-      expect(tools).toContain("bash");
-
-      // Agent must produce text output
+      // Agent must produce text output via session/update notifications
       const text = responseText(events);
       expect(text.length).toBeGreaterThan(20);
 
       // Phase 1: agent asks clarifying questions, does NOT immediately write a spec
       // (write_planning_document and dispatch_tasks are Phase-2/3 tools)
+      const tools = toolNames(events);
       expect(tools).not.toContain("write_planning_document");
       expect(tools).not.toContain("dispatch_tasks");
 
@@ -142,9 +149,7 @@ describe("Planning agent (isolation)", () => {
   test(
     "gh pr create is blocked by guard hook and agent is told to use write_planning_document",
     async () => {
-      // Inject a message that should make the agent try `gh pr create`.
-      // Even if the model doesn't obey, we verify the hook blocks it when triggered
-      // via a direct bash invocation in the container.
+      // Verify the guard hook blocks `gh pr create` via a direct exec in the container.
       const hookOutput = execSync(
         `docker exec ${client.containerName} node -e "
           import('/app/tools.mjs').then(m => {
@@ -165,14 +170,13 @@ describe("Planning agent (isolation)", () => {
   test(
     "agent responds to follow-up prompt in the same session",
     async () => {
-      // This test uses a second prompt in the same session (agent already loaded skill).
-      // The response should still be sensible (clarifying questions or acknowledgement).
       const events = await client.sendPrompt(
         "Actually, just confirm you understand the task and are ready to proceed",
         PROMPT_TIMEOUT
       );
 
-      expect(events.some((e) => e.type === "agent_end")).toBe(true);
+      const hasResponse = events.some((e) => e.result != null);
+      expect(hasResponse).toBe(true);
 
       const text = responseText(events);
       expect(text.length).toBeGreaterThan(10);

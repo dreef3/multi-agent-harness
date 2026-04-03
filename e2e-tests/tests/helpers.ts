@@ -130,6 +130,29 @@ export async function deleteTestRepo(request: APIRequestContext, repoName: strin
 }
 
 /**
+ * Create a project and configure its planning/implementation agent types.
+ */
+export async function createProjectWithAgentConfig(
+  request: APIRequestContext,
+  name: string,
+  agentConfig: { planning: string; implementation: string }
+) {
+  const res = await request.post(`${API_BASE}/projects`, {
+    data: { name, source: { type: "freeform", freeformDescription: "E2E test" } },
+  });
+  const project = await res.json();
+
+  await request.put(`${API_BASE}/projects/${project.id}/agent-config`, {
+    data: {
+      planningAgent: { type: agentConfig.planning },
+      implementationAgent: { type: agentConfig.implementation },
+    },
+  });
+
+  return project;
+}
+
+/**
  * Poll the /agents endpoint until a sub-agent reaches a terminal state.
  * Returns a poll callback suitable for use with expect.poll().toBe('completed').
  * Checking for any terminal state (completed | failed | error) lets the test fail

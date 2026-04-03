@@ -1,189 +1,152 @@
-/**
- * Minimal TCP RPC client for the planning agent.
- * Connects to the agent's TCP server on port 3333 and exchanges newline-delimited JSON.
- */
 import { createConnection, Socket } from "net";
 import { execSync } from "child_process";
-import { mkdtempSync, chmodSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
 
-export interface RpcEvent {
-  type: string;
-  toolName?: string;
-  toolCallId?: string;
-  result?: unknown;
-  isError?: boolean;
-  assistantMessageEvent?: { type: string; delta?: string };
-  message?: { role?: string; stopReason?: string };
-  [key: string]: unknown;
+export interface AcpEvent {
+  jsonrpc: "2.0";
+  method?: string;
+  id?: number;
+  params?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: { code: number; message: string };
 }
 
-export class PlanningAgentRpcClient {
+export class AcpTestClient {
   private socket: Socket | null = null;
   private lineBuffer = "";
   readonly containerName: string;
-  readonly piAgentDir: string;
+  private nextId = 1;
+  private pendingRequests = new Map<number, {
+    resolve: (r: AcpEvent) => void;
+    reject: (e: Error) => void;
+  }>();
+  private listeners = new Map<string, Set<Function>>();
 
   constructor(
     private readonly options: {
       projectId: string;
+      agentType: string;
       provider?: string;
       model?: string;
-      copilotToken?: string;
       backendUrl?: string;
+      env?: string[];
     }
   ) {
-    this.containerName = `planning-agent-test-${options.projectId}`;
-    this.piAgentDir = mkdtempSync(join(tmpdir(), "pi-agent-test-"));
-    chmodSync(this.piAgentDir, 0o777);
+    this.containerName = `agent-test-${options.agentType}-${options.projectId}`;
   }
 
-  /** Start the container and wait for the TCP RPC server to be ready. */
   async start(connectTimeoutMs = 120_000): Promise<void> {
+    const image = `multi-agent-harness/agent-${this.options.agentType}:latest`;
     const envFlags = [
+      `-e AGENT_ROLE=planning`,
       `-e PROJECT_ID=${this.options.projectId}`,
-      `-e GIT_CLONE_URLS=[]`,
-      `-e BACKEND_URL=${this.options.backendUrl ?? "http://localhost:19999"}`,
       `-e AGENT_PROVIDER=${this.options.provider ?? "github-copilot"}`,
       `-e AGENT_MODEL=${this.options.model ?? "gpt-5-mini"}`,
-      ...(this.options.copilotToken
-        ? [`-e COPILOT_GITHUB_TOKEN=${this.options.copilotToken}`]
-        : []),
+      ...(this.options.env ?? []).map((e: string) => `-e ${e}`),
     ].join(" ");
 
     execSync(
-      `docker run -d --name ${this.containerName} ${envFlags} ` +
-        `-v ${this.piAgentDir}:/pi-agent ` +
-        `multi-agent-harness/planning-agent:latest`,
+      `docker run -d --name ${this.containerName} ${envFlags} ${image}`,
       { stdio: "pipe" }
     );
 
-    // Get container IP on its Docker bridge network
     const ip = execSync(
       `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${this.containerName}`
-    )
-      .toString()
-      .trim();
+    ).toString().trim();
 
-    // Wait for port 3333 to open (agent clones repos + initialises session first)
     await waitForPort(ip, 3333, connectTimeoutMs);
-
-    // Connect the RPC socket
     this.socket = await tcpConnect(ip, 3333);
+    this.startListening();
+
+    await this.sendRequest("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    await this.sendRequest("session/new", { cwd: "/workspace" });
   }
 
-  /** Send a prompt and collect all events until agent_end, or until timeout. */
-  async sendPrompt(message: string, timeoutMs = 90_000): Promise<RpcEvent[]> {
-    if (!this.socket) throw new Error("Not connected — call start() first");
-
-    const events: RpcEvent[] = [];
-    const isStreaming = events.some((e) => e.type === "agent_start");
-
-    this.socket.write(
-      JSON.stringify({
-        type: "prompt",
-        message,
-        ...(isStreaming ? { streamingBehavior: "followUp" } : {}),
-      }) + "\n"
-    );
+  async sendPrompt(message: string, timeoutMs = 90_000): Promise<AcpEvent[]> {
+    if (!this.socket) throw new Error("Not connected");
+    const events: AcpEvent[] = [];
+    const id = this.nextId++;
+    this.socket.write(JSON.stringify({
+      jsonrpc: "2.0", id, method: "session/prompt",
+      params: { prompt: [{ type: "text", text: message }] },
+    }) + "\n");
 
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        resolve(events);
-      }, timeoutMs);
-
-      const onData = (chunk: Buffer) => {
-        this.lineBuffer += chunk.toString();
-        const lines = this.lineBuffer.split("\n");
-        this.lineBuffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed) continue;
-          try {
-            const event = JSON.parse(trimmed) as RpcEvent;
-            events.push(event);
-            if (event.type === "agent_end") {
-              clearTimeout(timer);
-              cleanup();
-              resolve(events);
-            }
-          } catch {
-            // ignore malformed lines
-          }
+      const timer = setTimeout(() => resolve(events), timeoutMs);
+      const handler = (event: AcpEvent) => {
+        events.push(event);
+        if (event.id === id && event.result) {
+          clearTimeout(timer);
+          this.off("event", handler);
+          resolve(events);
         }
       };
-
-      const cleanup = () => this.socket?.off("data", onData);
-      this.socket!.on("data", onData);
+      this.on("event", handler);
     });
   }
 
-  /** Stop and remove the container. */
+  private async sendRequest(method: string, params: Record<string, unknown>): Promise<AcpEvent> {
+    const id = this.nextId++;
+    this.socket!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`${method} timeout`)), 30_000);
+      this.pendingRequests.set(id, {
+        resolve: (r) => { clearTimeout(timer); resolve(r); },
+        reject: (e) => { clearTimeout(timer); reject(e); },
+      });
+    });
+  }
+
+  private startListening(): void {
+    this.socket!.on("data", (chunk: Buffer) => {
+      this.lineBuffer += chunk.toString();
+      const lines = this.lineBuffer.split("\n");
+      this.lineBuffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const msg = JSON.parse(line) as AcpEvent;
+          if (msg.id != null && this.pendingRequests.has(msg.id)) {
+            const p = this.pendingRequests.get(msg.id)!;
+            this.pendingRequests.delete(msg.id);
+            p.resolve(msg);
+          }
+          this.emit("event", msg);
+        } catch {}
+      }
+    });
+  }
+
+  on(event: string, fn: Function) {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(fn);
+  }
+  off(event: string, fn: Function) { this.listeners.get(event)?.delete(fn); }
+  private emit(event: string, ...args: unknown[]) {
+    for (const fn of this.listeners.get(event) ?? []) fn(...args);
+  }
+
   async stop(): Promise<void> {
     this.socket?.destroy();
-    this.socket = null;
-    try {
-      execSync(`docker stop -t 1 ${this.containerName}`, { stdio: "pipe" });
-    } catch {
-      /* already stopped */
-    }
-    try {
-      execSync(`docker rm ${this.containerName}`, { stdio: "pipe" });
-    } catch {
-      /* already removed */
-    }
+    try { execSync(`docker stop -t 1 ${this.containerName}`, { stdio: "pipe" }); } catch {}
+    try { execSync(`docker rm ${this.containerName}`, { stdio: "pipe" }); } catch {}
   }
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-
-async function waitForPort(
-  host: string,
-  port: number,
-  timeoutMs: number
-): Promise<void> {
+async function waitForPort(host: string, port: number, timeoutMs: number): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
   while (Date.now() < deadline) {
-    try {
-      await tcpConnect(host, port, 3000);
-      return; // connected — done
-    } catch {
-      attempt++;
-      const delay = Math.min(1000 * Math.pow(1.5, attempt - 1), 5000);
-      await sleep(delay);
-    }
+    try { const s = await tcpConnect(host, port, 3000); s.destroy(); return; }
+    catch { attempt++; await new Promise(r => setTimeout(r, Math.min(1000 * 1.5 ** (attempt - 1), 5000))); }
   }
-  throw new Error(
-    `Timed out waiting for ${host}:${port} after ${timeoutMs}ms`
-  );
+  throw new Error(`Timed out waiting for ${host}:${port}`);
 }
 
-function tcpConnect(
-  host: string,
-  port: number,
-  connectTimeoutMs = 5000
-): Promise<Socket> {
+function tcpConnect(host: string, port: number, timeout = 5000): Promise<Socket> {
   return new Promise((resolve, reject) => {
     const socket = createConnection(port, host);
-    const timer = setTimeout(() => {
-      socket.destroy();
-      reject(new Error(`connect timeout`));
-    }, connectTimeoutMs);
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      resolve(socket);
-    });
-    socket.once("error", (err) => {
-      clearTimeout(timer);
-      socket.destroy();
-      reject(err);
-    });
+    const timer = setTimeout(() => { socket.destroy(); reject(new Error("connect timeout")); }, timeout);
+    socket.once("connect", () => { clearTimeout(timer); resolve(socket); });
+    socket.once("error", (err) => { clearTimeout(timer); socket.destroy(); reject(err); });
   });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
