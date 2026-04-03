@@ -14,6 +14,6 @@ export type WsAcpEvent =
   | { type: "replay"; messages: unknown[] }
   | { type: "error"; message: string };
 
-export function isAcpEvent(msg: { type: string }): boolean {
+export function isAcpEvent(msg: { type: string }): msg is WsAcpEvent {
   return msg.type.startsWith("acp:") || msg.type.startsWith("agent:");
 }

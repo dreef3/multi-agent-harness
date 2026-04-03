@@ -21,6 +21,8 @@ export default function AgentSettings() {
       setDefaults(config.defaults);
       setPlanning(config.planningAgent ?? config.defaults.planningAgent);
       setImplementation(config.implementationAgent ?? config.defaults.implementationAgent);
+    }).catch((err: unknown) => {
+      setMessage(`Failed to load config: ${err instanceof Error ? err.message : "Unknown error"}`);
     });
   }, [projectId]);
 
@@ -33,8 +35,8 @@ export default function AgentSettings() {
         implementationAgent: implementation,
       });
       setMessage("Saved");
-    } catch (err: any) {
-      setMessage(`Error: ${err.message}`);
+    } catch (err: unknown) {
+      setMessage(`Error: ${err instanceof Error ? err.message : String(err)}`);
     }
     setSaving(false);
   };
@@ -57,8 +59,10 @@ export default function AgentSettings() {
           <select
             value={planning.type}
             onChange={(e) => setPlanning({ ...planning, type: e.target.value })}
+            disabled={enabledAgents.length === 0}
             className="border rounded px-2 py-1"
           >
+            {enabledAgents.length === 0 && <option value="">No agents available</option>}
             {enabledAgents.map((a) => (
               <option key={a.type} value={a.type}>{a.type}</option>
             ))}
@@ -79,8 +83,10 @@ export default function AgentSettings() {
           <select
             value={implementation.type}
             onChange={(e) => setImplementation({ ...implementation, type: e.target.value })}
+            disabled={enabledAgents.length === 0}
             className="border rounded px-2 py-1"
           >
+            {enabledAgents.length === 0 && <option value="">No agents available</option>}
             {enabledAgents.map((a) => (
               <option key={a.type} value={a.type}>{a.type}</option>
             ))}
@@ -103,7 +109,7 @@ export default function AgentSettings() {
       )}
 
       <div className="flex gap-3">
-        <button onClick={handleSave} disabled={saving} className="bg-blue-600 text-white px-4 py-2 rounded">
+        <button onClick={handleSave} disabled={saving || enabledAgents.length === 0} className="bg-blue-600 text-white px-4 py-2 rounded">
           {saving ? "Saving..." : "Save"}
         </button>
         <button onClick={handleReset} className="border px-4 py-2 rounded">

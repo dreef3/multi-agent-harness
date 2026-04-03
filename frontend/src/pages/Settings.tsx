@@ -391,8 +391,9 @@ export default function Settings() {
       <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
         <h2 className="text-lg font-semibold mb-2">Per-Project Agent Configuration</h2>
         <p className="text-sm text-gray-400 mb-3">
-          Each project can override which planning and implementation agents to use. Open a project
-          to configure its agents.
+          Each project can override which planning and implementation agents to use. To configure
+          agents for a specific project, open that project and use the "Agent Settings" link in the
+          project's chat view.
         </p>
         <Link
           to="/"

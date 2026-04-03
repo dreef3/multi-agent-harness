@@ -196,9 +196,10 @@ export default function Chat() {
       } else if (isAcpEvent(msg as { type: string })) {
         const acpMsg = msg as unknown as WsAcpEvent;
         if (acpMsg.type === "acp:agent_message_chunk") {
-          if (acpMsg.content?.type === "text" && acpMsg.content.text) {
+          const text = acpMsg.content?.text;
+          if (acpMsg.content?.type === "text" && text) {
             setThinkingMode("typing");
-            setStreamingContent((prev) => prev + acpMsg.content.text!);
+            setStreamingContent((prev) => prev + text);
             setRetryBanner(null);
           }
         } else if (acpMsg.type === "acp:tool_call") {

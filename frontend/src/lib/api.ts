@@ -205,6 +205,6 @@ export const api = {
     get: (projectId: string): Promise<{ planningAgent: AgentConfig | null; implementationAgent: AgentConfig | null; defaults: { planningAgent: AgentConfig; implementationAgent: AgentConfig } }> =>
       fetchJson(`${API_BASE}/projects/${projectId}/agent-config`),
     update: (projectId: string, config: { planningAgent?: AgentConfig; implementationAgent?: AgentConfig }): Promise<void> =>
-      fetchJson(`${API_BASE}/projects/${projectId}/agent-config`, { method: "PUT", body: JSON.stringify(config), headers: { "Content-Type": "application/json" } }),
+      fetchJson(`${API_BASE}/projects/${projectId}/agent-config`, { method: "PUT", body: JSON.stringify(config) }),
   },
 };
