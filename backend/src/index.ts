@@ -12,7 +12,7 @@ import { startPolling, stopPolling } from "./polling.js";
 import { DebounceEngine } from "./debounce/engine.js";
 import { setDebounceEngine } from "./api/webhooks.js";
 import { RecoveryService, setRecoveryService } from "./orchestrator/recoveryService.js";
-import { PlanningAgentManager, setPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
+import { AcpAgentManager, setAcpAgentManager } from "./orchestrator/acpAgentManager.js";
 import { createShutdownHandler } from "./orchestrator/shutdownHandler.js";
 import { DockerContainerRuntime } from "./orchestrator/dockerRuntime.js";
 import { KubernetesContainerRuntime } from "./orchestrator/kubernetesRuntime.js";
@@ -48,10 +48,10 @@ async function main() {
   const recoveryService = new RecoveryService(containerRuntime);
   setRecoveryService(recoveryService);
 
-  console.log("[startup] Initializing planning agent manager...");
-  const planningAgentManager = new PlanningAgentManager(containerRuntime);
-  setPlanningAgentManager(planningAgentManager);
-  void planningAgentManager.cleanupStaleContainers();
+  console.log("[startup] Initializing ACP agent manager...");
+  const acpAgentManager = new AcpAgentManager(docker);
+  setAcpAgentManager(acpAgentManager);
+  void acpAgentManager.cleanupStaleContainers();
 
   console.log("[startup] Running boot recovery (stale session scan)...");
   await recoveryService.recoverOnBoot();

@@ -1,7 +1,7 @@
 /**
  * Tests for WebSocket message persistence.
  * Verifies that user prompts and assistant responses are saved to the DB,
- * so that loadMessages() on the frontend returns them after each message_complete.
+ * so that loadMessages() on the frontend returns them after each turn_complete.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer } from "http";
@@ -17,7 +17,7 @@ import { listMessages } from "../store/messages.js";
 import { setupWebSocket } from "../api/websocket.js";
 import type { Project } from "../models/types.js";
 
-// ── Mock PlanningAgentManager ────────────────────────────────────────────────
+// ── Mock AcpAgentManager ────────────────────────────────────────────────────
 
 class MockManager extends EventEmitter {
   ensureRunning = vi.fn().mockResolvedValue(undefined);
@@ -29,8 +29,8 @@ class MockManager extends EventEmitter {
 
 let mockManager: MockManager;
 
-vi.mock("../orchestrator/planningAgentManager.js", () => ({
-  getPlanningAgentManager: () => mockManager,
+vi.mock("../orchestrator/acpAgentManager.js", () => ({
+  getAcpAgentManager: () => mockManager,
 }));
 
 vi.mock("../store/repositories.js", () => ({
@@ -136,14 +136,15 @@ describe("WebSocket message persistence", () => {
 
   it("persists assistant message to DB after streaming completes", async () => {
     const { projectId } = await makeProject();
+    const agentId = "planning-" + projectId;
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Hello" }));
     await sleep(20);
 
-    mockManager.emit(projectId, { type: "delta", text: "Hello " });
-    mockManager.emit(projectId, { type: "delta", text: "world!" });
-    const mcPromise = waitForWsMessage(ws, (m) => m.type === "message_complete");
-    mockManager.emit(projectId, { type: "message_complete" });
+    mockManager.emit(agentId, { type: "acp:agent_message_chunk", agentId, content: "Hello " });
+    mockManager.emit(agentId, { type: "acp:agent_message_chunk", agentId, content: "world!" });
+    const mcPromise = waitForWsMessage(ws, (m) => m.type === "acp:turn_complete");
+    mockManager.emit(agentId, { type: "acp:turn_complete", agentId, stopReason: "end_turn" });
     await mcPromise;
     ws.close();
     await sleep(20);
@@ -156,15 +157,16 @@ describe("WebSocket message persistence", () => {
 
   it("accumulates multiple deltas into a single assistant message", async () => {
     const { projectId } = await makeProject();
+    const agentId = "planning-" + projectId;
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
     await sleep(20);
 
     for (const chunk of ["The ", "answer ", "is ", "42."]) {
-      mockManager.emit(projectId, { type: "delta", text: chunk });
+      mockManager.emit(agentId, { type: "acp:agent_message_chunk", agentId, content: chunk });
     }
-    const mcPromise = waitForWsMessage(ws, (m) => m.type === "message_complete");
-    mockManager.emit(projectId, { type: "message_complete" });
+    const mcPromise = waitForWsMessage(ws, (m) => m.type === "acp:turn_complete");
+    mockManager.emit(agentId, { type: "acp:turn_complete", agentId, stopReason: "end_turn" });
     await mcPromise;
     ws.close();
     await sleep(20);
@@ -175,22 +177,23 @@ describe("WebSocket message persistence", () => {
     expect(assistant[0].content).toBe("The answer is 42.");
   });
 
-  it("saves separate assistant messages for each message_complete", async () => {
+  it("saves separate assistant messages for each turn_complete", async () => {
     const { projectId } = await makeProject();
+    const agentId = "planning-" + projectId;
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Multi-turn" }));
     await sleep(20);
 
     // First assistant turn
-    mockManager.emit(projectId, { type: "delta", text: "First response." });
-    const mc1 = waitForWsMessage(ws, (m) => m.type === "message_complete");
-    mockManager.emit(projectId, { type: "message_complete" });
+    mockManager.emit(agentId, { type: "acp:agent_message_chunk", agentId, content: "First response." });
+    const mc1 = waitForWsMessage(ws, (m) => m.type === "acp:turn_complete");
+    mockManager.emit(agentId, { type: "acp:turn_complete", agentId, stopReason: "end_turn" });
     await mc1;
 
     // Second assistant turn
-    mockManager.emit(projectId, { type: "delta", text: "Second response." });
-    const mc2 = waitForWsMessage(ws, (m) => m.type === "message_complete");
-    mockManager.emit(projectId, { type: "message_complete" });
+    mockManager.emit(agentId, { type: "acp:agent_message_chunk", agentId, content: "Second response." });
+    const mc2 = waitForWsMessage(ws, (m) => m.type === "acp:turn_complete");
+    mockManager.emit(agentId, { type: "acp:turn_complete", agentId, stopReason: "end_turn" });
     await mc2;
 
     ws.close();
@@ -230,7 +233,9 @@ describe("WebSocket message persistence", () => {
     ws.close();
 
     expect(mockManager.sendPrompt).toHaveBeenCalledOnce();
-    expect(mockManager.sendPrompt.mock.calls[0][1]).toBe("Early message");
+    // sendPrompt is called with (planningAgentId, contextPlusMessage)
+    expect(mockManager.sendPrompt.mock.calls[0][0]).toBe("planning-" + projectId);
+    expect(mockManager.sendPrompt.mock.calls[0][1]).toContain("Early message");
 
     const msgs = await listMessages(projectId);
     const user = msgs.filter((m) => m.role === "user");
@@ -238,15 +243,16 @@ describe("WebSocket message persistence", () => {
     expect(user[0].content).toBe("Early message");
   });
 
-  it("does not save empty assistant message when no deltas precede message_complete", async () => {
+  it("does not save empty assistant message when no chunks precede turn_complete", async () => {
     const { projectId } = await makeProject();
+    const agentId = "planning-" + projectId;
     const ws = await connectWs(projectId);
     ws.send(JSON.stringify({ type: "prompt", text: "Go" }));
     await sleep(20);
 
-    // message_complete with no preceding delta (tool-only turn)
-    const mcPromise = waitForWsMessage(ws, (m) => m.type === "message_complete");
-    mockManager.emit(projectId, { type: "message_complete" });
+    // turn_complete with no preceding chunk (tool-only turn)
+    const mcPromise = waitForWsMessage(ws, (m) => m.type === "acp:turn_complete");
+    mockManager.emit(agentId, { type: "acp:turn_complete", agentId, stopReason: "end_turn" });
     await mcPromise;
     ws.close();
     await sleep(20);
