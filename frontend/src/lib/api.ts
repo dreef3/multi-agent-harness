@@ -107,6 +107,16 @@ export interface ProviderStatus {
   configured: boolean;
 }
 
+export interface AgentConfig {
+  type: string;
+  model?: string;
+}
+
+export interface AvailableAgent {
+  type: string;
+  available: boolean;
+}
+
 export interface SettingsInfo {
   providers: ProviderStatus[];
 }
@@ -188,5 +198,13 @@ export const api = {
   },
   settings: {
     providers: () => fetchJson<SettingsInfo>(`${API_BASE}/settings/providers`),
+  },
+  agentConfig: {
+    available: (): Promise<{ agents: AvailableAgent[] }> =>
+      fetchJson(`${API_BASE}/config/available-agents`),
+    get: (projectId: string): Promise<{ planningAgent: AgentConfig | null; implementationAgent: AgentConfig | null; defaults: { planningAgent: AgentConfig; implementationAgent: AgentConfig } }> =>
+      fetchJson(`${API_BASE}/projects/${projectId}/agent-config`),
+    update: (projectId: string, config: { planningAgent?: AgentConfig; implementationAgent?: AgentConfig }): Promise<void> =>
+      fetchJson(`${API_BASE}/projects/${projectId}/agent-config`, { method: "PUT", body: JSON.stringify(config), headers: { "Content-Type": "application/json" } }),
   },
 };
