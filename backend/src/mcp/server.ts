@@ -25,6 +25,8 @@ import { getTaskStatusTool } from "./tools/get_task_status.js";
 import { getPullRequestsTool } from "./tools/get_pull_requests.js";
 import { replyToSubagentTool } from "./tools/reply_to_subagent.js";
 import { webFetchTool } from "./tools/web_fetch.js";
+import { getBuildStatusTool } from "./tools/get_build_status.js";
+import { getBuildLogsTool } from "./tools/get_build_logs.js";
 
 // ── Tool type ─────────────────────────────────────────────────────────────────
 
@@ -53,6 +55,8 @@ const PLANNING_TOOLS: McpTool[] = [
   getPullRequestsTool,
   replyToSubagentTool,
   webFetchTool,
+  getBuildStatusTool,
+  getBuildLogsTool,
 ];
 
 const IMPL_TOOLS: McpTool[] = [
