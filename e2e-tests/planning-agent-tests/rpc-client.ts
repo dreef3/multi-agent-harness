@@ -41,6 +41,7 @@ export class AcpTestClient {
       `-e PROJECT_ID=${this.options.projectId}`,
       `-e AGENT_PROVIDER=${this.options.provider ?? "github-copilot"}`,
       `-e AGENT_MODEL=${this.options.model ?? "gpt-5-mini"}`,
+      `-e BACKEND_URL=${this.options.backendUrl ?? "http://localhost:19999"}`,
       ...(this.options.env ?? []).map((e: string) => `-e ${e}`),
     ].join(" ");
 

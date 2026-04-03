@@ -196,8 +196,20 @@ export default function Chat() {
       } else if (isAcpEvent(msg as { type: string })) {
         const acpMsg = msg as unknown as WsAcpEvent;
         if (acpMsg.type === "acp:agent_message_chunk") {
-          const text = acpMsg.content?.text;
-          if (acpMsg.content?.type === "text" && text) {
+          // content may be a single {type,text} object, an array of such objects,
+          // or a plain string — normalise all three forms.
+          const raw = acpMsg.content as unknown;
+          const chunks: unknown[] = Array.isArray(raw) ? raw : [raw];
+          const text = chunks
+            .map((c) =>
+              typeof c === "string"
+                ? c
+                : (c as { type?: string; text?: string } | null)?.type === "text"
+                  ? ((c as { text?: string }).text ?? "")
+                  : ""
+            )
+            .join("");
+          if (text) {
             setThinkingMode("typing");
             setStreamingContent((prev) => prev + text);
             setRetryBanner(null);
