@@ -20,7 +20,7 @@ import { AcpTestClient, type AcpEvent } from "./rpc-client";
 
 const COPILOT_TOKEN =
   process.env.COPILOT_GITHUB_TOKEN ?? process.env.GH_TOKEN ?? "";
-const AGENT_TYPE = process.env.AGENT_TYPE ?? "copilot";
+const AGENT_TYPE = process.env.AGENT_TYPE ?? "pi";
 const PROVIDER = process.env.AGENT_PROVIDER ?? "github-copilot";
 const MODEL = process.env.AGENT_MODEL ?? "gpt-5-mini";
 

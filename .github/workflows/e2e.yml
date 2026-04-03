@@ -36,8 +36,9 @@ jobs:
           DATA_DIR=/app/data
           SUB_AGENT_IMAGE=multi-agent-harness/agent-pi:latest
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
-          AGENT_PLANNING_MODEL=github-copilot/gpt-5-mini
-          AGENT_IMPLEMENTATION_MODEL=github-copilot/gpt-5-mini
+          AGENT_PLANNING_MODEL=copilot/gpt-5-mini
+          AGENT_IMPLEMENTATION_MODEL=copilot/gpt-5-mini
+          HARNESS_API_URL=http://127.0.0.1:3000/api
           JIRA_BASE_URL=
           JIRA_TOKEN=
           BITBUCKET_BASE_URL=
@@ -67,6 +68,7 @@ jobs:
         run: |
           docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
           docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
+          docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest .
 
       - name: Start services
         run: |
@@ -358,7 +360,7 @@ jobs:
       - name: Build agent images
         run: |
           docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
-          docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest .
+          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2

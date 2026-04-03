@@ -16,7 +16,7 @@ import { execSync } from "child_process";
 
 // ── container lifecycle ───────────────────────────────────────────────────────
 
-const AGENT_TYPE = process.env.AGENT_TYPE ?? "copilot";
+const AGENT_TYPE = process.env.AGENT_TYPE ?? "pi";
 const CONTAINER_NAME = `impl-agent-test-${Date.now()}`;
 
 beforeAll(() => {

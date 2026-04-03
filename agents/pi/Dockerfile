@@ -6,6 +6,7 @@ COPY agents/pi/package.json /app/package.json
 RUN npm install --production
 
 COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
+COPY agents/pi/tools.mjs /app/tools.mjs
 
 COPY agents/prompts/planning/AGENTS.md /agent-data/planning/AGENTS.md
 RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agent-data/planning/CLAUDE.md
