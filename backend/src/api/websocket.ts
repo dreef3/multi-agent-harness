@@ -1,5 +1,6 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server } from "http";
+import { randomUUID } from "crypto";
 import { getAcpAgentManager } from "../orchestrator/acpAgentManager.js";
 import type { WsAcpEvent } from "../orchestrator/acpAgentManager.js";
 import { getProject, updateProject } from "../store/projects.js";
@@ -9,7 +10,7 @@ import type { Project, Repository } from "../models/types.js";
 import { verifyWsToken, LOCAL_USER } from "./auth.js";
 import type { AuthUser } from "./auth.js";
 import { config, resolveAgentConfig } from "../config.js";
-import { buildCiToolsDescription } from "../agents/ciTools.js";
+import { registerMcpToken, revokeMcpToken } from "../mcp/server.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
 interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error" | string; [key: string]: unknown; }
@@ -91,9 +92,6 @@ ${repoList}
 1. You have NO local direct file access. You MUST use the provided tools to interact with repositories.
 2. Always perform a broad search/grep before making structural assumptions.
 3. When you are ready to propose a plan, you MUST follow the "superpowers:executing-plans" format exactly.
-
----
-${buildCiToolsDescription(config.harnessApiUrl)}
 `;
 }
 
@@ -217,6 +215,10 @@ export function setupWebSocket(server: Server) {
       .filter(k => process.env[k])
       .map(k => `${k}=${process.env[k]}`);
 
+    // Generate a per-session MCP token so agents can authenticate to the MCP SSE endpoint
+    const mcpToken = randomUUID();
+    registerMcpToken(mcpToken);
+
     const envVars = [
       `GIT_CLONE_URLS=${JSON.stringify(repoUrls)}`,
       `PROJECT_ID=${projectId}`,
@@ -224,6 +226,7 @@ export function setupWebSocket(server: Server) {
       `PI_CODING_AGENT_DIR=/pi-agent`,
       `AGENT_PROVIDER=${agentType}`,
       `AGENT_MODEL=${agentConfig.model}`,
+      `MCP_TOKEN=${mcpToken}`,
       ...providerEnvVars,
     ];
 
@@ -284,6 +287,7 @@ export function setupWebSocket(server: Server) {
         if (event.type === "agent:stopped" || event.type === "agent:crashed") {
           if (unsubscribe) { unsubscribe(); unsubscribe = null; }
           projectBroadcasters.delete(projectId);
+          revokeMcpToken(mcpToken);
         }
 
         // acp:error → send as WS error type so the frontend shows it in the banner
@@ -348,6 +352,8 @@ export function setupWebSocket(server: Server) {
       }
       // Remove output broadcaster so it can be re-registered on next connection
       if (unsubscribe) { unsubscribe(); unsubscribe = null; projectBroadcasters.delete(projectId); }
+      // Revoke the per-session MCP token so the agent can no longer connect
+      revokeMcpToken(mcpToken);
       // Only decrement if we successfully incremented (agent started successfully)
       if (connected) {
         connected = false;

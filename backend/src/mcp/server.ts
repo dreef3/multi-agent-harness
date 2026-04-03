@@ -6,6 +6,18 @@ import {
   CallToolRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 
+// ── Token store ───────────────────────────────────────────────────────────────
+
+const validTokens = new Set<string>();
+
+export function registerMcpToken(token: string): void {
+  validTokens.add(token);
+}
+
+export function revokeMcpToken(token: string): void {
+  validTokens.delete(token);
+}
+
 import { dispatchTasksTool } from "./tools/dispatch_tasks.js";
 import { askPlanningAgentTool } from "./tools/ask_planning_agent.js";
 import { writePlanningDocumentTool } from "./tools/write_planning_document.js";
@@ -95,6 +107,12 @@ export function createMcpMiddleware(): Router {
 
   // GET /mcp — establish SSE stream
   router.get("/", async (req: Request, res: Response) => {
+    const token = req.query.token as string | undefined;
+    if (!token || !validTokens.has(token)) {
+      res.status(401).json({ error: "Unauthorized: missing or invalid MCP token" });
+      return;
+    }
+
     const projectId = (req.query.projectId as string) ?? "";
     const sessionId = (req.query.sessionId as string) ?? crypto.randomUUID();
     const role = (req.query.role as string) ?? "planning";
