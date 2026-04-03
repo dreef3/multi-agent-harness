@@ -15,6 +15,7 @@ export class AcpTestClient {
   private lineBuffer = "";
   readonly containerName: string;
   private nextId = 1;
+  private sessionId: string | null = null;
   private pendingRequests = new Map<number, {
     resolve: (r: AcpEvent) => void;
     reject: (e: Error) => void;
@@ -59,16 +60,18 @@ export class AcpTestClient {
     this.startListening();
 
     await this.sendRequest("initialize", { protocolVersion: 1, clientCapabilities: {} });
-    await this.sendRequest("session/new", { cwd: "/workspace" });
+    const sessionRes = await this.sendRequest("session/new", { cwd: "/workspace" });
+    this.sessionId = (sessionRes.result?.sessionId as string) ?? null;
   }
 
   async sendPrompt(message: string, timeoutMs = 90_000): Promise<AcpEvent[]> {
     if (!this.socket) throw new Error("Not connected");
     const events: AcpEvent[] = [];
     const id = this.nextId++;
+    const params: Record<string, unknown> = { prompt: [{ type: "text", text: message }] };
+    if (this.sessionId) params.sessionId = this.sessionId;
     this.socket.write(JSON.stringify({
-      jsonrpc: "2.0", id, method: "session/prompt",
-      params: { prompt: [{ type: "text", text: message }] },
+      jsonrpc: "2.0", id, method: "session/prompt", params,
     }) + "\n");
 
     return new Promise((resolve) => {
@@ -78,7 +81,8 @@ export class AcpTestClient {
       }, timeoutMs);
       const handler = (event: AcpEvent) => {
         events.push(event);
-        if (event.id === id && event.result) {
+        // Resolve on either a successful result OR an error response for this request
+        if (event.id === id && (event.result || event.error)) {
           clearTimeout(timer);
           this.off("event", handler);
           resolve(events);

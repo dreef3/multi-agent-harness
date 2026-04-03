@@ -193,7 +193,7 @@ export class AcpAgentManager extends EventEmitter {
     if (existing) return existing;
     const promise = this._doEnsureRunning(agentId, agentType, role, env);
     this.inFlightEnsure.set(agentId, promise);
-    promise.finally(() => this.inFlightEnsure.delete(agentId));
+    promise.finally(() => this.inFlightEnsure.delete(agentId)).catch(() => {});
     return promise;
   }
 
