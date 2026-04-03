@@ -4,7 +4,7 @@
 
 Multi-Agent Harness is an orchestration system for AI coding agents. A **planning agent** collaborates with a human user through a web UI to design a spec and implementation plan, then dispatches **sub-agents** in isolated Docker containers to execute coding tasks. Sub-agents create pull requests, and the system monitors PR reviews to trigger automated fix runs.
 
-The system is built on [pi-coding-agent](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent) (SDK + RPC mode) and supports multiple AI providers and VCS backends.
+The system supports five interchangeable agent backends (Pi, Gemini, Claude, Copilot, OpenCode), all communicating over the **ACP (Agent Communication Protocol)** JSON-RPC 2.0 protocol. Each agent type runs in its own Docker image derived from a shared base image.
 
 ## System Diagram
 
@@ -34,30 +34,39 @@ The system is built on [pi-coding-agent](https://github.com/badlogic/pi-mono/tre
      │       │               │                │               │        │
      │  ┌────▼───────────────▼────────────────▼───────────────▼─────┐  │
      │  │                   Orchestrator Layer                      │  │
-     │  │  PlanningAgentManager │ RecoveryService │ TaskDispatcher  │  │
-     │  │  ContainerManager     │ HeartbeatMonitor│ DebounceEngine  │  │
+     │  │  AcpAgentManager  │ RecoveryService │ TaskDispatcher      │  │
+     │  │  ContainerManager │ HeartbeatMonitor│ DebounceEngine      │  │
      │  └──────┬───────────────────────────┬───────────────────────┘   │
      │         │                           │                           │
-     │  ┌──────▼──────┐            ┌───────▼────────┐                  │
-     │  │ Store       │            │ VCS Connectors  │                  │
-     │  │ (SQLite)    │            │ GitHub │ Bitbuc.│                  │
-     │  └─────────────┘            └────────────────┘                  │
+     │  ┌──────▼──────┐    ┌───────────────▼────────────┐              │
+     │  │ Store       │    │ VCS Connectors              │              │
+     │  │ (SQLite)    │    │ GitHub │ Bitbucket          │              │
+     │  └─────────────┘    └────────────────────────────┘              │
+     │                                                                  │
+     │  ┌───────────────────────────────────────────────────────────┐  │
+     │  │  MCP SSE Server  (/api/mcp)                               │  │
+     │  │  Planning tools: dispatch_tasks, get_task_status,         │  │
+     │  │  get_pull_requests, write_planning_document,              │  │
+     │  │  reply_to_subagent, web_fetch, get_build_status,          │  │
+     │  │  get_build_logs                                            │  │
+     │  │  Token auth: MCP_TOKEN per agent session (UUID)           │  │
+     │  └───────────────────────────────────────────────────────────┘  │
      └─────────┬───────────────────────────┬───────────────────────────┘
-               │ Docker API                │ TCP RPC (port 3333)
+               │ Docker API                │ TCP ACP (port 3333)
                │ (via socket proxy)        │
      ┌─────────▼─────────┐      ┌─────────▼──────────────────────────┐
      │ docker-proxy       │      │ Planning Agent Container           │
-     │ (tecnativa)        │      │ pi-coding-agent (RPC mode)         │
-     │ /var/run/docker.sock│     │ Custom tools → backend HTTP API    │
-     └────────────────────┘      │ Repos cloned to /workspace/        │
+     │ (tecnativa)        │      │ agent-{pi,gemini,claude,copilot,   │
+     │ /var/run/docker.sock│     │          opencode}                  │
+     └────────────────────┘      │ stdio-TCP bridge → ACP subprocess  │
+                                 │ MCP SSE → backend:3000/mcp         │
                                  └────────────────────────────────────┘
                                           │
-                                          │ dispatch_tasks
+                                          │ dispatch_tasks (MCP tool)
                                           ▼
                                  ┌────────────────────────────────────┐
                                  │ Sub-Agent Containers (1..N)        │
-                                 │ pi-coding-agent (prompt mode)      │
-                                 │ One task per container, auto-cleanup│
+                                 │ Short-lived, one task per container│
                                  │ Repo cloned to /workspace/repo     │
                                  │ Events → backend HTTP API          │
                                  │ Heartbeat every 2 min              │
@@ -96,11 +105,44 @@ failed ◄── all tasks terminal, at least one failed
 
 Users can reactivate a `completed` project by sending a new message. Failed projects can be retried via the Dashboard.
 
+### Supported Agents
+
+Five agent types are supported, selected per-project via the UI or env vars:
+
+| Type | Image | Auth |
+|------|-------|------|
+| `pi` | `multi-agent-harness/agent-pi` | `COPILOT_GITHUB_TOKEN` or `PI_ENABLED=true` |
+| `gemini` | `multi-agent-harness/agent-gemini` | `GEMINI_API_KEY` |
+| `claude` | `multi-agent-harness/agent-claude` | `ANTHROPIC_API_KEY` |
+| `copilot` | `multi-agent-harness/agent-copilot` | `COPILOT_GITHUB_TOKEN` |
+| `opencode` | `multi-agent-harness/agent-opencode` | `ANTHROPIC_API_KEY` or `OPENCODE_ENABLED=true` |
+
+Each agent image is built `FROM multi-agent-harness/agent-base` which provides Node.js, git, gh CLI, and the stdio-TCP bridge.
+
+### AcpAgentManager
+
+`AcpAgentManager` (replacing the old `PlanningAgentManager`) manages the lifecycle of planning agent containers and communicates with them over the ACP JSON-RPC 2.0 protocol:
+
+1. **Container start**: `ensureRunning(agentId, agentType, role, envVars)` starts the container and waits for the TCP port to be ready.
+2. **Message send**: `sendPrompt(agentId, text)` sends an `acp/run` request over the TCP connection.
+3. **Output streaming**: `onOutput(agentId, callback)` subscribes to ACP notification events forwarded to all WebSocket clients for the project.
+4. **Idle timeout**: Containers are torn down after 1 hour of no active WebSocket connections.
+
+### stdio-TCP Bridge Pattern
+
+Agents that use CLI tools (Pi, Gemini, Claude, OpenCode) do not natively listen on a TCP port. The `stdio-tcp-bridge.mjs` script wraps any ACP subprocess:
+
+```
+TCP :3333 ←→ stdio-tcp-bridge.mjs ←→ agent subprocess (stdin/stdout)
+```
+
+The Copilot agent supports native ACP over TCP and does not use the bridge.
+
 ### Planning Agent
 
-Each project gets a dedicated Docker container running pi-coding-agent in RPC mode. The backend communicates with it over a TCP connection to port 3333 inside the container (bypassing Docker attach limitations).
+Each project gets a dedicated Docker container. The backend communicates with it over TCP port 3333 using the ACP (Agent Communication Protocol) JSON-RPC 2.0 protocol.
 
-**Custom tools available to the planning agent:**
+**MCP tools available to the planning agent** (via SSE at `/api/mcp`):
 
 | Tool | Purpose |
 |------|---------|
@@ -110,20 +152,32 @@ Each project gets a dedicated Docker container running pi-coding-agent in RPC mo
 | `get_pull_requests` | List PRs created by sub-agents |
 | `reply_to_subagent` | Answer a sub-agent's blocking question |
 | `web_fetch` | HTTP fetch with SSRF protection |
-
-The planning agent also has full access to pi-coding-agent's built-in tools (`read`, `write`, `edit`, `bash`) with a **guard hook** that blocks destructive operations (force push, `gh pr create`, credential URLs in commands).
+| `get_build_status` | Get CI build status for a pull request |
+| `get_build_logs` | Fetch CI build logs for a specific build URL |
 
 ### Sub-Agents
 
 Each task spawns a short-lived Docker container that:
 1. Clones the target repository and checks out the feature branch
-2. Runs the task via `session.prompt(TASK_DESCRIPTION)` with TDD instructions
+2. Runs the task via the implementation agent prompt with TDD instructions
 3. Commits changes and pushes to the branch
 4. Container exits, harness creates the PR
 
-Sub-agents have a `ask_planning_agent` tool for blocking clarification requests (5-min timeout). Activity events (tool calls, text deltas) are streamed to the backend via HTTP for real-time UI updates.
+Sub-agents have an `ask_planning_agent` MCP tool for blocking clarification requests (5-min timeout). Activity events (tool calls, text deltas) are streamed to the backend via HTTP for real-time UI updates.
 
 **Resource limits:** 4 GB memory, 2 CPU cores, 30-min timeout (all configurable).
+
+### Per-Project Agent Configuration
+
+Each project can independently configure its planning and implementation agents via the UI (Settings → Agent Configuration) or the API:
+
+```
+PUT /api/projects/:id/agent-config
+{ "planningAgent": { "type": "claude", "model": "claude-opus-4" },
+  "implementationAgent": { "type": "gemini", "model": "gemini-2.5-flash" } }
+```
+
+Agent availability is reported by `GET /api/config/available-agents`. An agent is available if its required API key env var is set, or if `{TYPE}_ENABLED=true` is set (for device-auth flows like Pi and OpenCode that don't require a static API key).
 
 ### Concurrency Control
 
@@ -139,18 +193,24 @@ Tasks queue behind semaphores and execute as slots become available.
 
 Endpoint: `ws://backend:3000/ws?projectId={id}`
 
-The backend bridges WebSocket to the planning agent's TCP RPC connection, streaming events to all connected clients for a project.
+The backend bridges WebSocket to the planning agent's TCP ACP connection, streaming events to all connected clients for a project.
 
 | Direction | Message Types |
 |-----------|--------------|
-| Server → Client | `delta`, `message_complete`, `conversation_complete`, `tool_call`, `tool_result`, `thinking`, `agent_activity`, `stuck_agent`, `replay`, `error` |
+| Server → Client | `acp:agent_message_chunk`, `acp:tool_call`, `acp:tool_call_update`, `acp:plan`, `acp:turn_complete`, `agent:stopped`, `agent:crashed`, `agent_activity`, `stuck_agent`, `replay`, `error` |
 | Client → Server | `prompt`, `steer`, `resume` |
 
 Early messages are buffered while the planning agent container starts (can take 5-120s).
 
-### TCP RPC (Backend ↔ Planning Agent)
+### TCP ACP (Backend ↔ Planning Agent)
 
-Port 3333 inside the planning agent container. Newline-delimited JSON (pi-coding-agent's built-in RPC protocol). The planning agent's `runner.mjs` overrides `process.stdout.write` to broadcast RPC output to all connected TCP sockets.
+Port 3333 inside the planning agent container. ACP JSON-RPC 2.0 over a persistent TCP socket. The backend sends `acp/run` requests and receives notifications (`acp/agentMessageChunk`, `acp/toolCall`, `acp/turnComplete`, etc.).
+
+### MCP SSE (Planning Agent ↔ Backend)
+
+Endpoint: `GET /api/mcp?token={MCP_TOKEN}&projectId={id}&role={planning|implementation}`
+
+The MCP server uses SSE for server-to-client streaming and `POST /api/mcp/messages` for client-to-server messages. Each agent session receives a unique `MCP_TOKEN` (UUID) via the `MCP_TOKEN` env var. The token is validated on every connection attempt and revoked when the agent stops.
 
 ### REST (Sub-Agent ↔ Backend)
 
@@ -212,37 +272,34 @@ The `VcsConnector` interface (`backend/src/connectors/types.ts`) abstracts versi
 
 Implementations: `GitHubConnector` (via Octokit) and `BitbucketConnector` (REST API v1.0).
 
-## Agent Provider Support
-
-The harness supports multiple AI providers via pi-coding-agent's `ModelRegistry`:
-
-| Provider | Planning Model (default) | Implementation Model (default) |
-|----------|------------------------|-------------------------------|
-| `pi` | claude-3-opus | claude-3-haiku |
-| `opencode-go` | minimax-m2.7 | minimax-m2.7 |
-| `google-gemini-cli` | gemini-2.5-pro | gemini-2.5-flash |
-| `google-antigravity` | claude-sonnet-4-6 | gemini-3-flash |
-| `openai-codex` | gpt-5.1 | gpt-5.1-codex-mini |
-| `github-copilot` | (per subscription) | (per subscription) |
-
-Configured via `AGENT_PLANNING_MODEL=<provider>/<model>` and `AGENT_IMPLEMENTATION_MODEL=<provider>/<model>`.
-
 ## Security Model
 
-### Agent Sandboxing
+### Guard Hooks
 
-Both planning and sub-agents run with a **bash guard hook** (`spawnHook`) that blocks:
-- `git push --force`, `git branch -D` (destructive git)
-- `gh pr create` (harness manages PRs)
-- `gh repo delete/edit`, `gh api` (GitHub API abuse)
-- `curl`, `wget` (replaced by `web_fetch` tool with SSRF protection)
-- Commands containing embedded credential URLs
+Planning agents run with guard hooks that block destructive operations:
+
+**Claude** (`agents/claude/guard-hook.sh`, triggered via `PreToolUse` hook):
+- Blocks `WebSearch` and `WebFetch` built-in tools (use MCP `web_fetch` instead)
+- Blocks dangerous bash patterns: `git push --force`, `git branch -D`, `gh pr create`, `gh repo delete`, `gh api`
+
+**Pi** (`agents/pi/guard-hook.mjs`, BashSpawnHook format):
+- Blocks `curl`, `wget`, `WebSearch`, `WebFetch`
+- Blocks all of the above git/gh patterns
+
+Claude's `settings.json` also sets `"disabledTools": ["WebSearch", "WebFetch"]` as an additional layer.
+
+### MCP Token Authentication
+
+Each planning agent session receives a unique UUID `MCP_TOKEN` via environment variable. The MCP SSE server validates this token on every connection:
+- Token is registered in `validTokens` before the container starts
+- Token is passed to the container as `MCP_TOKEN` env var
+- Agents include `?token=...` in their MCP server URL
+- Token is revoked when the agent stops, crashes, or the WebSocket client disconnects
 
 ### Credential Isolation
 
-- `GITHUB_TOKEN` is consumed during container setup (git credential store + gh auth) then **deleted from `process.env`** before the AI agent starts
-- Sub-agents receive `GIT_PUSH_URL` with embedded token for clone/push, deleted after setup
-- API keys are passed as env vars from the host, forwarded to containers via `PROVIDER_ENV_VARS` whitelist
+- `GITHUB_TOKEN` is consumed during container setup then deleted from the process environment before the AI agent starts
+- API keys are passed as env vars from the host, forwarded to containers via a whitelist: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `COPILOT_GITHUB_TOKEN`, `GEMINI_API_KEY`
 
 ### Network
 
@@ -280,19 +337,25 @@ services:
   backend        # Express server, port 3000
   frontend       # nginx serving React build, port 9999
   docker-proxy   # Socket proxy for Docker API access
-  planning-agent # Build-only (started dynamically per project)
-  sub-agent      # Build-only (started dynamically per task)
+  agent-base     # Build-only base image (node:22-slim + git + gh)
+  agent-base-ubi   # Build-only UBI8 variant (ubi8/nodejs-22-minimal)
+  agent-base-wolfi # Build-only Wolfi variant (cgr.dev/chainguard/node)
+  agent-pi       # Build-only: pi-acp planning agent
+  agent-gemini   # Build-only: gemini-cli ACP agent
+  agent-claude   # Build-only: claude-code ACP agent
+  agent-copilot  # Build-only: GitHub Copilot ACP agent
+  agent-opencode # Build-only: opencode ACP agent
 
 networks:
   default        # Backend ↔ frontend ↔ docker-proxy
-  harness-agents # Backend ↔ planning-agent ↔ sub-agents
+  harness-agents # Backend ↔ agent containers
 
 volumes:
   harness-data   # SQLite database
   harness-pi-auth # Shared OAuth tokens (e.g., GitHub Copilot)
 ```
 
-Planning agent and sub-agent images are built by `docker compose build` but started dynamically by the backend via the Docker API — not by Compose itself.
+Agent images are built by `docker compose build --profile build-only` but started dynamically by the backend via the Docker API — not by Compose itself.
 
 ## Key File Paths
 
@@ -301,14 +364,20 @@ Planning agent and sub-agent images are built by `docker compose build` but star
 | Backend entry | `backend/src/index.ts` | Startup, service wiring |
 | Config | `backend/src/config.ts` | All env var parsing with defaults |
 | Routes | `backend/src/api/routes.ts` | Express route registration |
-| WebSocket | `backend/src/api/websocket.ts` | WS ↔ TCP RPC bridge |
-| Orchestrator | `backend/src/orchestrator/` | Container, recovery, dispatch, planning mgr |
+| WebSocket | `backend/src/api/websocket.ts` | WS ↔ ACP TCP bridge + MCP token lifecycle |
+| Agent config API | `backend/src/api/agentConfig.ts` | Per-project agent type selection |
+| Orchestrator | `backend/src/orchestrator/` | Container, recovery, dispatch, ACP agent mgr |
+| MCP server | `backend/src/mcp/server.ts` | MCP SSE server with token auth |
+| MCP tools | `backend/src/mcp/tools/` | Individual tool implementations |
 | Store | `backend/src/store/` | SQLite operations per entity |
 | Connectors | `backend/src/connectors/` | GitHub + Bitbucket implementations |
 | Types | `backend/src/models/types.ts` | All domain interfaces |
-| Planning runner | `planning-agent/runner.mjs` | Container entrypoint + custom tools |
-| Sub-agent runner | `sub-agent/runner.mjs` | Container entrypoint + event forwarding |
-| Guard hooks | `*/tools.mjs` | Bash command blocking, web_fetch |
+| Agent base | `agents/base/Dockerfile.base` | Shared base image (debian) |
+| Agent base UBI | `agents/base/Dockerfile.base.ubi` | UBI8 variant |
+| Agent base Wolfi | `agents/base/Dockerfile.base.wolfi` | Wolfi/Chainguard variant |
+| stdio-TCP bridge | `agents/stdio-tcp-bridge.mjs` | Wraps CLI agents behind TCP :3333 |
+| Claude guard | `agents/claude/guard-hook.sh` | Claude PreToolUse guard hook |
+| Pi guard | `agents/pi/guard-hook.mjs` | Pi BashSpawnHook guard |
 | Frontend pages | `frontend/src/pages/` | React page components |
 | API client | `frontend/src/lib/api.ts` | REST client |
 | WS client | `frontend/src/lib/ws.ts` | WebSocket with auto-reconnect |
