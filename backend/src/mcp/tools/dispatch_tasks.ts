@@ -19,7 +19,8 @@ export const dispatchTasksTool = {
     },
     required: ["tasks"],
   },
-  async execute(args: { tasks: Array<{ id?: string; repositoryId: string; description: string }> }, _context: { projectId: string }) {
-    return { content: [{ type: "text" as const, text: `Acknowledged: ${args.tasks.length} task(s) queued for dispatch` }] };
+  async execute(args: Record<string, unknown>, _context: { projectId: string; sessionId?: string; role?: string }) {
+    const tasks = args.tasks as Array<{ id?: string; repositoryId: string; description: string }>;
+    return { content: [{ type: "text" as const, text: `Acknowledged: ${tasks.length} task(s) queued for dispatch` }] };
   },
 };

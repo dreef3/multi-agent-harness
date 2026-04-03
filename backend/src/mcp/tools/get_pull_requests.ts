@@ -4,7 +4,7 @@ export const getPullRequestsTool = {
   name: "get_pull_requests",
   description: "List all pull requests for the current project",
   inputSchema: { type: "object" as const, properties: {} },
-  async execute(_args: Record<string, unknown>, context: { projectId: string }) {
+  async execute(_args: Record<string, unknown>, context: { projectId: string; sessionId?: string; role?: string }) {
     const prs = await listPullRequestsByProject(context.projectId);
     const result = prs.map((pr) => ({
       url: pr.url,

@@ -20,7 +20,10 @@ interface McpTool {
   name: string;
   description: string;
   inputSchema: { type: "object"; properties: Record<string, unknown>; required?: string[] };
-  execute: (args: Record<string, unknown>, context: McpContext) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
+  execute: (
+    args: Record<string, unknown>,
+    context: { projectId: string; sessionId?: string; role?: string }
+  ) => Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }>;
 }
 
 interface McpContext {
@@ -32,17 +35,17 @@ interface McpContext {
 // ── Tool sets ─────────────────────────────────────────────────────────────────
 
 const PLANNING_TOOLS: McpTool[] = [
-  dispatchTasksTool as unknown as McpTool,
-  writePlanningDocumentTool as unknown as McpTool,
-  getTaskStatusTool as unknown as McpTool,
-  getPullRequestsTool as unknown as McpTool,
-  replyToSubagentTool as unknown as McpTool,
-  webFetchTool as unknown as McpTool,
+  dispatchTasksTool,
+  writePlanningDocumentTool,
+  getTaskStatusTool,
+  getPullRequestsTool,
+  replyToSubagentTool,
+  webFetchTool,
 ];
 
 const IMPL_TOOLS: McpTool[] = [
-  askPlanningAgentTool as unknown as McpTool,
-  webFetchTool as unknown as McpTool,
+  askPlanningAgentTool,
+  webFetchTool,
 ];
 
 // ── Factory ───────────────────────────────────────────────────────────────────

@@ -23,15 +23,18 @@ export const writePlanningDocumentTool = {
     required: ["type", "content"],
   },
   async execute(
-    args: { type: "spec" | "plan"; content: string },
-    context: { projectId: string }
+    args: Record<string, unknown>,
+    context: { projectId: string; sessionId?: string; role?: string }
   ) {
     const result = await handleWritePlanningDocument(
       context.projectId,
-      args.type,
-      args.content,
+      args.type as "spec" | "plan",
+      args.content as string,
       config.dataDir
     );
+    if ("error" in result) {
+      return { isError: true, content: [{ type: "text" as const, text: result.error }] };
+    }
     return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
   },
 };

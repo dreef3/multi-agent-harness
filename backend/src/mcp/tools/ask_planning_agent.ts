@@ -10,13 +10,17 @@ export const askPlanningAgentTool = {
     },
     required: ["question"],
   },
-  async execute(args: { question: string }, context: { projectId: string }) {
+  async execute(args: Record<string, unknown>, context: { projectId: string; sessionId?: string; role?: string }) {
     const manager = getAcpAgentManager();
     const planningAgentId = `planning-${context.projectId}`;
     if (!manager.isRunning(planningAgentId)) {
       return { content: [{ type: "text" as const, text: "Planning agent is not running" }] };
     }
-    await manager.sendPrompt(planningAgentId, `Sub-agent question: ${args.question}`);
-    return { content: [{ type: "text" as const, text: "Question sent to planning agent" }] };
+    try {
+      await manager.sendPrompt(planningAgentId, `Sub-agent question: ${args.question as string}`);
+      return { content: [{ type: "text" as const, text: "Question sent to planning agent" }] };
+    } catch (err: unknown) {
+      return { isError: true, content: [{ type: "text" as const, text: `Failed to send question to planning agent: ${(err as Error).message}` }] };
+    }
   },
 };

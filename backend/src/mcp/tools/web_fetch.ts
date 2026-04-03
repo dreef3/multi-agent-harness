@@ -11,19 +11,33 @@ export const webFetchTool = {
     },
     required: ["url"],
   },
-  async execute(args: { url: string; method?: string; body?: string; headers?: Record<string, string> }) {
-    const urlObj = new URL(args.url);
+  async execute(args: Record<string, unknown>, _context?: { projectId: string; sessionId?: string; role?: string }) {
+    const { url, method, body, headers } = args as { url: string; method?: string; body?: string; headers?: Record<string, string> };
+    const urlObj = new URL(url);
     const host = urlObj.hostname;
+    // Block IPv4 private/loopback ranges
     if (/^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|0\.|169\.254\.|localhost)/i.test(host)) {
-      return { content: [{ type: "text" as const, text: "Error: private/internal URLs are blocked" }] };
+      return { isError: true, content: [{ type: "text" as const, text: "Error: private/internal URLs are blocked" }] };
+    }
+    // Block IPv6 loopback (::1), IPv4-mapped IPv6 (::ffff:), bracketed IPv6 loopback ([::1])
+    // and ULA (unique local addresses, fd prefix)
+    if (
+      host === "::1" ||
+      host === "[::1]" ||
+      /^::ffff:/i.test(host) ||
+      /^\[::ffff:/i.test(host) ||
+      /^fd[0-9a-f]{2}:/i.test(host) ||
+      /^\[fd[0-9a-f]{2}:/i.test(host)
+    ) {
+      return { isError: true, content: [{ type: "text" as const, text: "Error: private/internal URLs are blocked" }] };
     }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 30_000);
     try {
-      const res = await fetch(args.url, {
-        method: args.method ?? "GET",
-        body: args.body,
-        headers: args.headers as HeadersInit | undefined,
+      const res = await fetch(url, {
+        method: method ?? "GET",
+        body: body,
+        headers: headers as HeadersInit | undefined,
         signal: controller.signal,
       });
       const text = await res.text();
