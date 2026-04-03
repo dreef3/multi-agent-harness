@@ -5,6 +5,7 @@ import Chat from "./pages/Chat";
 import PlanApproval from "./pages/PlanApproval";
 import Execution from "./pages/Execution";
 import Settings from "./pages/Settings";
+import AgentSettings from "./pages/AgentSettings";
 import PrOverview from "./pages/PrOverview";
 import AuthCallback from "./pages/AuthCallback";
 import { useAuth } from "./auth/index.js";
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/projects/:id/plan" element={<PlanApproval />} />
           <Route path="/projects/:id/execute" element={<Execution />} />
           <Route path="/projects/:id/prs" element={<PrOverview />} />
+          <Route path="/projects/:id/agents" element={<AgentSettings />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
         </Routes>

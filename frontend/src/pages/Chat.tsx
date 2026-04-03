@@ -309,6 +309,14 @@ export default function Chat() {
           </Link>
           <h1 className="text-2xl font-bold">Chat</h1>
         </div>
+        {id && (
+          <Link
+            to={`/projects/${id}/agents`}
+            className="text-sm text-gray-400 hover:text-gray-200"
+          >
+            Agent Settings
+          </Link>
+        )}
       </div>
 
       {retryBanner && (
