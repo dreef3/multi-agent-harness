@@ -153,7 +153,8 @@ export class AcpTestClient {
   async stop(): Promise<void> {
     this.socket?.destroy();
     try { execSync(`docker stop -t 1 ${this.containerName}`, { stdio: "pipe" }); } catch {}
-    try { execSync(`docker rm ${this.containerName}`, { stdio: "pipe" }); } catch {}
+    // Container removal is handled by the CI cleanup step (or caller) so that
+    // the "Dump planning agent container logs on failure" step can capture logs.
   }
 }
 

@@ -3,7 +3,9 @@ FROM multi-agent-harness/agent-base:latest AS base
 WORKDIR /app
 
 COPY agents/pi/package.json /app/package.json
-RUN npm install --production && npm install -g @mariozechner/pi-coding-agent
+RUN npm install --production
+# pi-coding-agent is a local dep so /app/node_modules/.bin/pi is on PATH when npx runs
+ENV PI_ACP_PI_COMMAND=/app/node_modules/.bin/pi
 
 COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
 COPY agents/pi/tools.mjs /app/tools.mjs
