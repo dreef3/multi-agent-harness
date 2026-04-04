@@ -3,7 +3,7 @@ FROM multi-agent-harness/agent-base:latest
 WORKDIR /app
 
 COPY agents/copilot/package.json /app/package.json
-RUN npm install --production
+RUN npm install --production && npm install -g @mariozechner/pi-coding-agent
 
 COPY agents/copilot/mcp.json /app/mcp.json
 COPY agents/copilot/start.sh /app/start.sh

@@ -3,7 +3,7 @@ FROM multi-agent-harness/agent-base:latest AS base
 WORKDIR /app
 
 COPY agents/pi/package.json /app/package.json
-RUN npm install --production
+RUN npm install --production && npm install -g @mariozechner/pi-coding-agent
 
 COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
 COPY agents/pi/tools.mjs /app/tools.mjs
