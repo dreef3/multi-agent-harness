@@ -3,7 +3,11 @@ FROM multi-agent-harness/agent-base:latest AS base
 WORKDIR /app
 
 COPY agents/pi/package.json /app/package.json
-RUN npm install --production
+RUN npm install --production && \
+    # GitHub Copilot rejects PATs for the "vscode-chat" integration ID.
+    # "copilot-developer-cli" accepts both PATs and short-lived session tokens.
+    find /app/node_modules -name "models.generated.js" -exec \
+      sed -i 's/"Copilot-Integration-Id": "vscode-chat"/"Copilot-Integration-Id": "copilot-developer-cli"/g' {} +
 # pi-coding-agent is a local dep so /app/node_modules/.bin/pi is on PATH when npx runs
 ENV PI_ACP_PI_COMMAND=/app/node_modules/.bin/pi
 

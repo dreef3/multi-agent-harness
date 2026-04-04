@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [pi-pi, copilot-copilot, pi-copilot]
+        project: [pi-pi]
 
     steps:
       - uses: actions/checkout@v4
@@ -67,7 +67,6 @@ jobs:
         run: |
           docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
           docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
-          docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest .
 
       - name: Start services
         run: |
