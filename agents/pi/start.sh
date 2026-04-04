@@ -1,15 +1,11 @@
 #!/bin/sh
-# pi-acp uses AGENT_PROVIDER=github-copilot; harness passes AGENT_PROVIDER=copilot — remap it.
-if [ "${AGENT_PROVIDER:-}" = "copilot" ]; then
-  export AGENT_PROVIDER=github-copilot
-fi
-
 # Exchange COPILOT_GITHUB_TOKEN for a Copilot session token and write it to
 # pi's auth.json so that pi can make authenticated Copilot API calls.
 # (The Copilot API requires a session token, not a raw GitHub token.)
 #
 # Pi will automatically refresh the session token using the stored refresh
 # token (COPILOT_GITHUB_TOKEN) when it expires.
+
 if [ -n "${COPILOT_GITHUB_TOKEN}" ]; then
   PI_DIR="${PI_CODING_AGENT_DIR:-${HOME}/.pi/agent}"
   AUTH_FILE="${PI_DIR}/auth.json"

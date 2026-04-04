@@ -9,6 +9,8 @@ ENV PI_ACP_PI_COMMAND=/app/node_modules/.bin/pi
 
 COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
 COPY agents/pi/tools.mjs /app/tools.mjs
+COPY agents/pi/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 COPY agents/prompts/planning/AGENTS.md /agent-data/planning/AGENTS.md
 RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agent-data/planning/CLAUDE.md
@@ -16,4 +18,4 @@ RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agen
 COPY agents/prompts/implementation/AGENTS.md /agent-data/implementation/AGENTS.md
 RUN mkdir -p /agent-data/implementation && ln -sf /agent-data/implementation/AGENTS.md /agent-data/implementation/CLAUDE.md
 
-ENTRYPOINT ["node", "/app/stdio-tcp-bridge.mjs", "npx", "pi-acp"]
+ENTRYPOINT ["/app/start.sh"]
