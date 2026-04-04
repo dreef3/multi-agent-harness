@@ -167,6 +167,7 @@ export class AcpAgentManager extends EventEmitter {
     // ACP handshake: session/new
     const sessionRes = await this.sendRequest(state, "session/new", {
       cwd: "/workspace",
+      mcpServers: [],
     });
     if (sessionRes.error) {
       throw new Error(`[AcpAgentManager] session/new failed: ${sessionRes.error.message}`);

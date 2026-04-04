@@ -62,7 +62,7 @@ export class AcpTestClient {
     const initRes = await this.sendRequest("initialize", { protocolVersion: 1, clientCapabilities: {} });
     if (initRes.error) throw new Error(`initialize failed: ${initRes.error.message}`);
 
-    const sessionRes = await this.sendRequest("session/new", { cwd: "/workspace" });
+    const sessionRes = await this.sendRequest("session/new", { cwd: "/workspace", mcpServers: [] });
     if (sessionRes.error) throw new Error(`session/new failed: ${sessionRes.error.message}`);
     this.sessionId = (sessionRes.result?.sessionId as string) ?? null;
     if (!this.sessionId) throw new Error("session/new returned no sessionId");
