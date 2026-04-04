@@ -30,16 +30,18 @@ const PROMPT_TIMEOUT = 90_000; // 1.5 min per prompt
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-/** Extract text content from session/update notification params. */
+/** Extract text content from session/update notification params.
+ * ACP notification shape: params.update.sessionUpdate + params.update.content (single object).
+ */
 function responseText(events: AcpEvent[]): string {
   return events
     .filter((e) => e.method === "session/update")
     .flatMap((e) => {
-      const content = e.params?.content;
-      if (!Array.isArray(content)) return [];
-      return content
-        .filter((c: unknown) => (c as { type?: string }).type === "text")
-        .map((c: unknown) => (c as { text?: string }).text ?? "");
+      const update = e.params?.update as Record<string, unknown> | undefined;
+      if (update?.sessionUpdate !== "agent_message_chunk") return [];
+      const content = update.content as { type?: string; text?: string } | undefined;
+      if (!content || content.type !== "text") return [];
+      return [content.text ?? ""];
     })
     .join("");
 }
@@ -49,11 +51,10 @@ function toolNames(events: AcpEvent[]): string[] {
   return events
     .filter((e) => e.method === "session/update")
     .flatMap((e) => {
-      const content = e.params?.content;
-      if (!Array.isArray(content)) return [];
-      return content
-        .filter((c: unknown) => (c as { type?: string }).type === "tool_use")
-        .map((c: unknown) => String((c as { name?: string }).name ?? ""));
+      const update = e.params?.update as Record<string, unknown> | undefined;
+      if (update?.sessionUpdate !== "tool_call") return [];
+      const title = update.title as string | undefined;
+      return title ? [title] : [];
     });
 }
 

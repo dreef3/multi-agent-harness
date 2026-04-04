@@ -525,20 +525,21 @@ export class AcpAgentManager extends EventEmitter {
       if (method === "session/update") {
         const notification = msg as AcpNotification;
         const params = notification.params;
-        const updateType = params.type as string;
+        const update = params.update as Record<string, unknown> | undefined;
+        const updateType = update?.sessionUpdate as string;
 
         if (updateType === "agent_message_chunk") {
           this.emitWsEvent(agentId, {
             type: "acp:agent_message_chunk",
             agentId,
-            content: params.content,
+            content: update?.content,
           });
           return;
         }
 
         if (updateType === "tool_call") {
-          const toolCallId = params.toolCallId as string;
-          const toolName = (params.title as string) ?? toolCallId;
+          const toolCallId = update?.toolCallId as string;
+          const toolName = (update?.title as string) ?? toolCallId;
 
           // Start OTEL tool span
           this.toolCallStartTimes.set(`${agentId}:${toolCallId}`, Date.now());
@@ -557,26 +558,23 @@ export class AcpAgentManager extends EventEmitter {
             type: "acp:tool_call",
             agentId,
             toolCallId,
-            title: params.title as string,
-            kind: params.kind as string,
-            status: params.status as string,
-            content: params.content as unknown[] | undefined,
-            locations: params.locations as unknown[] | undefined,
+            title: update?.title as string,
+            kind: update?.kind as string,
+            status: update?.status as string,
+            content: update?.content as unknown[] | undefined,
+            locations: update?.locations as unknown[] | undefined,
           });
           return;
         }
 
         if (updateType === "tool_call_update") {
-          const toolCallId = params.toolCallId as string;
-          const status = params.status as string;
+          const toolCallId = update?.toolCallId as string;
+          const status = update?.status as string;
 
           if (status === "completed" || status === "failed") {
             const startKey = `${agentId}:${toolCallId}`;
             const startTime = this.toolCallStartTimes.get(startKey);
             if (startTime !== undefined) {
-              const toolName = state.toolSpans.get(toolCallId)
-                ? `tool` // we don't have name here, use generic
-                : "tool";
               toolCallDuration.record(Date.now() - startTime, { "agent.id": agentId });
               this.toolCallStartTimes.delete(startKey);
             }
@@ -597,8 +595,8 @@ export class AcpAgentManager extends EventEmitter {
             agentId,
             toolCallId,
             status,
-            content: params.content as unknown[] | undefined,
-            locations: params.locations as unknown[] | undefined,
+            content: update?.content as unknown[] | undefined,
+            locations: update?.locations as unknown[] | undefined,
           });
           return;
         }
@@ -607,7 +605,7 @@ export class AcpAgentManager extends EventEmitter {
           this.emitWsEvent(agentId, {
             type: "acp:plan",
             agentId,
-            items: (params.items as unknown[]) ?? [],
+            items: (update?.items as unknown[]) ?? [],
           });
           return;
         }
