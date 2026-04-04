@@ -59,9 +59,13 @@ export class AcpTestClient {
     this.socket = await tcpConnect(ip, 3333);
     this.startListening();
 
-    await this.sendRequest("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    const initRes = await this.sendRequest("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    if (initRes.error) throw new Error(`initialize failed: ${initRes.error.message}`);
+
     const sessionRes = await this.sendRequest("session/new", { cwd: "/workspace" });
+    if (sessionRes.error) throw new Error(`session/new failed: ${sessionRes.error.message}`);
     this.sessionId = (sessionRes.result?.sessionId as string) ?? null;
+    if (!this.sessionId) throw new Error("session/new returned no sessionId");
   }
 
   async sendPrompt(message: string, timeoutMs = 90_000): Promise<AcpEvent[]> {

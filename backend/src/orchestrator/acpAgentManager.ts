@@ -2,7 +2,7 @@ import type Dockerode from "dockerode";
 import { Socket } from "net";
 import { EventEmitter } from "node:events";
 import { context, trace, SpanStatusCode, type Span } from "@opentelemetry/api";
-import { agentImage } from "../config.js";
+import { agentImage, config } from "../config.js";
 import { tracer, meter } from "../telemetry.js";
 import { appendEvent } from "../store/agentEvents.js";
 
@@ -703,6 +703,9 @@ export class AcpAgentManager extends EventEmitter {
       Image: image,
       name,
       Env: env ?? [],
+      HostConfig: {
+        NetworkMode: config.subAgentNetwork,
+      },
       Labels: { "harness.agent-id": agentId },
     });
     console.log(`[AcpAgentManager] created container ${container.id} name=${name} image=${image}`);

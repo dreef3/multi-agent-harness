@@ -372,7 +372,7 @@ jobs:
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           AGENT_PROVIDER: github-copilot
-          AGENT_MODEL: gpt-5-mini
+          AGENT_MODEL: copilot/gpt-5-mini
         run: bun test --timeout 180000
 
       - name: Dump planning agent container logs on failure
