@@ -241,6 +241,24 @@ export class AcpAgentManager extends EventEmitter {
       state.containerName = containerName;
     }
 
+    // Set the model so pi-acp uses the configured model instead of its default (gpt-4o).
+    // Extract from AGENT_MODEL=<value> in the env array, strip any provider prefix
+    // (e.g. "copilot/gpt-5-mini" → "gpt-5-mini") so pi-acp can look it up by bare ID.
+    const agentModelEnv = (env ?? []).find(e => e.startsWith("AGENT_MODEL="));
+    if (agentModelEnv && state) {
+      const rawModel = agentModelEnv.slice("AGENT_MODEL=".length);
+      const bareModel = rawModel.includes("/") ? rawModel.split("/").slice(1).join("/") : rawModel;
+      const modelRes = await this.sendRequest(state, "session/set_model", {
+        sessionId: state.acpSessionId,
+        modelId: bareModel,
+      });
+      if (modelRes.error) {
+        console.warn(`[AcpAgentManager] session/set_model warning for ${agentId}: ${modelRes.error.message}`);
+      } else {
+        console.log(`[AcpAgentManager] session/set_model → ${bareModel} for ${agentId}`);
+      }
+    }
+
     this.emitWsEvent(agentId, { type: "agent:started", agentId });
   }
 
