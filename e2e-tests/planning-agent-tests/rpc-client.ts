@@ -66,6 +66,22 @@ export class AcpTestClient {
     if (sessionRes.error) throw new Error(`session/new failed: ${sessionRes.error.message}`);
     this.sessionId = (sessionRes.result?.sessionId as string) ?? null;
     if (!this.sessionId) throw new Error("session/new returned no sessionId");
+
+    // Set the model if specified. Strip any provider prefix (e.g. "copilot/gpt-5-mini" → "gpt-5-mini")
+    // so that pi-acp can look up the model by ID and find the correct provider.
+    if (this.options.model) {
+      const bareModel = this.options.model.includes("/")
+        ? this.options.model.split("/").slice(1).join("/")
+        : this.options.model;
+      const modelRes = await this.sendRequest("session/set_model", {
+        sessionId: this.sessionId,
+        modelId: bareModel,
+      });
+      if (modelRes.error) {
+        // Non-fatal: log and continue — the agent may still use its default model.
+        process.stderr.write(`[rpc-client] session/set_model warning: ${modelRes.error.message}\n`);
+      }
+    }
   }
 
   async sendPrompt(message: string, timeoutMs = 90_000): Promise<AcpEvent[]> {
