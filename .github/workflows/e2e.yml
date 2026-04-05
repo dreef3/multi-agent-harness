@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [pi-pi, copilot-copilot]
+        project: [pi-pi, copilot-copilot, pi-copilot]
 
     steps:
       - uses: actions/checkout@v4
