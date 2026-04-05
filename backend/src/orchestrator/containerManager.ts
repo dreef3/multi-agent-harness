@@ -1,7 +1,7 @@
 // containerManager.ts — legacy shim for stopContainer/removeContainer; new code should
 // use ContainerRuntime via constructor injection instead.
 import Dockerode from "dockerode";
-import { config } from "../config.js";
+import { config, agentImage } from "../config.js";
 import { DockerContainerRuntime } from "./dockerRuntime.js";
 
 // All provider API key env vars supported by pi-coding-agent
@@ -50,6 +50,8 @@ export interface ContainerCreateOptions {
   agentProvider?: string;
   agentModel?: string;
   taskId?: string;
+  /** Agent type override (e.g. "pi", "claude", "gemini"). Determines the container image. */
+  agentType?: string;
 }
 
 export async function createSubAgentContainer(docker: Dockerode, opts: ContainerCreateOptions): Promise<string> {
@@ -77,6 +79,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
 
   const agentProvider = opts.agentProvider ?? config.agentProvider;
   const agentModel = opts.agentModel ?? config.implementationModel;
+  const image = opts.agentType ? agentImage(opts.agentType) : config.subAgentImage;
 
   const taskEnv = [
     ...(opts.taskDescription ? [`TASK_DESCRIPTION=${opts.taskDescription}`] : []),
@@ -92,7 +95,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
 
   console.log(`[containerManager] Creating container for session=${opts.sessionId} taskId=${opts.taskId ?? "n/a"}`);
-  console.log(`[containerManager]   image=${config.subAgentImage}`);
+  console.log(`[containerManager]   image=${image}`);
   console.log(`[containerManager]   network=${config.subAgentNetwork}`);
   console.log(`[containerManager]   piAgentVolume=${config.piAgentVolume}`);
   console.log(`[containerManager]   branch=${opts.branchName}`);
@@ -110,7 +113,7 @@ export async function createSubAgentContainer(docker: Dockerode, opts: Container
   const containerName = `sub-${nameSuffix}`;
 
   const container = await docker.createContainer({
-    Image: config.subAgentImage,
+    Image: image,
     name: containerName,
     Env: [
       `REPO_CLONE_URL=${opts.repoCloneUrl}`,

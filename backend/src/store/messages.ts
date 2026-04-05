@@ -15,18 +15,18 @@ function fromRow(row: MessageRow): ChatMessage {
 
 export async function appendMessage(projectId: string, role: "user" | "assistant", content: string): Promise<ChatMessage> {
   const adapter = db();
-  const maxRows = await adapter.query<{ max_seq: number }>(
-    "SELECT COALESCE(MAX(seq_id), 0) as max_seq FROM messages WHERE project_id = ?", [projectId]
-  );
-  const seqId = (maxRows[0]?.max_seq ?? 0) + 1;
   const createdAt = new Date().toISOString();
+  // Inline subquery makes seq_id computation + INSERT a single atomic statement,
+  // preventing the UNIQUE constraint race when concurrent appends run for the
+  // same project. The SQLite adapter's execute() is synchronous under the hood,
+  // so no other append can interleave between the subquery and the write.
   await adapter.execute(
-    `INSERT INTO messages (project_id, seq_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)`,
-    [projectId, seqId, role, content, createdAt]
+    `INSERT INTO messages (project_id, seq_id, role, content, created_at)
+     VALUES (?, (SELECT COALESCE(MAX(seq_id), 0) + 1 FROM messages WHERE project_id = ?), ?, ?, ?)`,
+    [projectId, projectId, role, content, createdAt]
   );
-  // Fetch the inserted row to get the auto-generated id
   const rows = await adapter.query<MessageRow>(
-    "SELECT * FROM messages WHERE project_id = ? AND seq_id = ?", [projectId, seqId]
+    "SELECT * FROM messages WHERE project_id = ? ORDER BY seq_id DESC LIMIT 1", [projectId]
   );
   return fromRow(rows[0]!);
 }

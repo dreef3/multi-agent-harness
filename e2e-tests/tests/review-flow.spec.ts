@@ -7,38 +7,38 @@ import {
   TEST_REPO_NAME,
   createPlanningPr,
   approvePlanningPr,
-  cleanupNewBranches,
   seedTestRepo,
   deleteTestRepo,
   pollSubAgentStatus,
 } from './helpers';
 
 test.describe('Review Comment Fix-Run Flow', () => {
-  let initialBranchNames: string[] = [];
   let repoName: string;
+  // Track branches created by THIS test so cleanup is targeted.
+  // cleanupNewBranches() deletes ALL new branches which causes cross-job
+  // interference when multiple CI matrix jobs share the same GitHub test repo.
+  let branchesCreatedByTest: string[] = [];
 
   test.beforeEach(async ({ request }, testInfo) => {
     // Use worker-unique repo name so parallel workers don't clobber each other's repo.
     repoName = `E2E Test Repo ${testInfo.parallelIndex}`;
-
-    // Record current branches so we can clean up new ones in afterEach
-    const branchRes = await fetch(
-      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
-      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
-    );
-    if (branchRes.ok) {
-      const branches = await branchRes.json() as { name: string }[];
-      if (Array.isArray(branches)) {
-        initialBranchNames = branches.map(b => b.name);
-      }
-    }
+    branchesCreatedByTest = [];
 
     await seedTestRepo(request, repoName);
   });
 
   test.afterEach(async ({ request }) => {
     await deleteTestRepo(request, repoName);
-    await cleanupNewBranches(initialBranchNames);
+    // Only delete branches created by this test — not all new branches.
+    // Deleting all new branches would race with other CI jobs that share
+    // the same GitHub test repo and create their own branches concurrently.
+    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
+    for (const branch of branchesCreatedByTest) {
+      await fetch(
+        `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch}`,
+        { method: 'DELETE', headers: ghHeaders }
+      ).catch(() => {}); // ignore if already deleted
+    }
   });
 
   test('fix-run marks comments fixed and pushes new commit', async ({ request }) => {
@@ -67,6 +67,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
     const suffix = Date.now().toString();
     const taskId = `e2e-task-${suffix}`;
     const { branch, prNumber, prUrl } = await createPlanningPr(suffix);
+    branchesCreatedByTest.push(branch);
 
     await request.patch(`${API_BASE}/projects/${projectId}`, {
       data: {
@@ -91,6 +92,8 @@ test.describe('Review Comment Fix-Run Flow', () => {
     await approvePlanningPr(prNumber);
 
     // ── 5. Wait for polling to detect approval and transition to executing ────────
+    // 5-minute timeout: under concurrent CI load (3 matrix jobs × GitHub API calls)
+    // the harness can take >2 min to detect the PR approval due to rate limiting.
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
@@ -98,7 +101,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         const proj = await res.json() as { status: string };
         return proj.status === 'executing';
       },
-      { timeout: 120000, intervals: [3000] }
+      { timeout: 5 * 60 * 1000, intervals: [5000] }
     ).toBe(true);
 
     // ── 6. Poll for sub-agent reaching a terminal state ───────────────────────
@@ -130,6 +133,9 @@ test.describe('Review Comment Fix-Run Flow', () => {
     expect(prId).toBeDefined();
     expect(prBranch).toBeDefined();
     expect(prNumber2).toBeGreaterThan(0);
+
+    // Track the implementation branch for targeted cleanup in afterEach.
+    branchesCreatedByTest.push(prBranch!);
 
     // ── 8. Record baseline commit count on the PR branch ─────────────────────
     const baselineCommitsRes = await fetch(

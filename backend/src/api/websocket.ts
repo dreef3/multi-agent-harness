@@ -1,18 +1,19 @@
 import { WebSocketServer, WebSocket } from "ws";
 import { IncomingMessage, Server } from "http";
-import { getPlanningAgentManager } from "../orchestrator/planningAgentManager.js";
-import type { PlanningAgentEvent } from "../orchestrator/planningAgentManager.js";
+import { randomUUID } from "crypto";
+import { getAcpAgentManager } from "../orchestrator/acpAgentManager.js";
+import type { WsAcpEvent } from "../orchestrator/acpAgentManager.js";
 import { getProject, updateProject } from "../store/projects.js";
 import { appendMessage, listMessagesSince } from "../store/messages.js";
 import { listRepositories } from "../store/repositories.js";
 import type { Project, Repository } from "../models/types.js";
 import { verifyWsToken, LOCAL_USER } from "./auth.js";
 import type { AuthUser } from "./auth.js";
-import { config } from "../config.js";
-import { buildCiToolsDescription } from "../agents/ciTools.js";
+import { config, resolveAgentConfig } from "../config.js";
+import { registerMcpToken, revokeMcpToken } from "../mcp/server.js";
 
 interface WsClientMessage { type: "prompt" | "steer" | "resume"; text?: string; lastSeqId?: number; }
-interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error"; [key: string]: unknown; }
+interface WsServerMessage { type: "delta" | "message_complete" | "conversation_complete" | "tool_call" | "tool_result" | "thinking" | "agent_activity" | "stuck_agent" | "replay" | "error" | string; [key: string]: unknown; }
 
 // ── resolveWsUser ─────────────────────────────────────────────────────────────
 // Extracted for testability. Returns the resolved AuthUser or throws on failure.
@@ -33,7 +34,7 @@ function send(ws: WebSocket, msg: WsServerMessage) {
 const projectConnections = new Map<string, Set<WebSocket>>();
 // Track which projects already have an output broadcaster registered (one per project)
 const projectBroadcasters = new Set<string>();
-// Accumulates streaming delta text per project so we can persist on message_complete
+// Accumulates streaming chunk text per project so we can persist on turn_complete
 const projectMessageBuffers = new Map<string, string>();
 
 export function broadcastToProject(projectId: string, msg: WsServerMessage) {
@@ -91,28 +92,27 @@ ${repoList}
 1. You have NO local direct file access. You MUST use the provided tools to interact with repositories.
 2. Always perform a broad search/grep before making structural assumptions.
 3. When you are ready to propose a plan, you MUST follow the "superpowers:executing-plans" format exactly.
-
----
-${buildCiToolsDescription(config.harnessApiUrl)}
 `;
 }
 
 const WS_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 120_000];
 
 async function ensureRunningWithRetry(
-  manager: ReturnType<typeof getPlanningAgentManager>,
+  manager: ReturnType<typeof getAcpAgentManager>,
+  planningAgentId: string,
   projectId: string,
-  repoUrls: Array<{ id?: string; name: string; url: string }>,
+  agentType: string,
+  envVars: string[],
   ws: WebSocket
 ): Promise<boolean> {
   for (let attempt = 0; attempt <= WS_RETRY_DELAYS.length; attempt++) {
     if (ws.readyState !== WebSocket.OPEN) return false;
     try {
-      await manager.ensureRunning(projectId, repoUrls);
+      await manager.ensureRunning(planningAgentId, agentType, "planning", envVars);
       return true;
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
-      console.error(`[ws] ensureRunning failed for ${projectId} (attempt ${attempt + 1}):`, msg);
+      console.error(`[ws] ensureRunning failed for ${planningAgentId} (attempt ${attempt + 1}):`, msg);
       if (attempt < WS_RETRY_DELAYS.length) {
         send(ws, {
           type: "error",
@@ -190,7 +190,11 @@ export function setupWebSocket(server: Server) {
     if (!projectConnections.has(projectId)) projectConnections.set(projectId, new Set());
     projectConnections.get(projectId)!.add(ws);
 
-    const manager = getPlanningAgentManager();
+    const manager = getAcpAgentManager();
+    const planningAgentId = "planning-" + projectId;
+    const agentConfig = resolveAgentConfig("planning", project?.planningAgent);
+    const agentType = agentConfig.type;
+
     const ghToken = process.env.GITHUB_TOKEN;
     const allRepos = (await listRepositories()).filter((r) => project.repositoryIds.includes(r.id));
     const repoUrls = allRepos.map((r) => ({
@@ -201,13 +205,38 @@ export function setupWebSocket(server: Server) {
         : r.cloneUrl
     }));
 
+    // Build env vars for the planning agent container
+    const providerEnvVars = [
+      "ANTHROPIC_API_KEY",
+      "OPENAI_API_KEY",
+      "COPILOT_GITHUB_TOKEN",
+      "GEMINI_API_KEY",
+    ]
+      .filter(k => process.env[k])
+      .map(k => `${k}=${process.env[k]}`);
+
+    // Generate a per-session MCP token so agents can authenticate to the MCP SSE endpoint
+    const mcpToken = randomUUID();
+    registerMcpToken(mcpToken);
+
+    const envVars = [
+      `GIT_CLONE_URLS=${JSON.stringify(repoUrls)}`,
+      `PROJECT_ID=${projectId}`,
+      `BACKEND_URL=http://backend:3000`,
+      `PI_CODING_AGENT_DIR=/pi-agent`,
+      `AGENT_PROVIDER=${agentType}`,
+      `AGENT_MODEL=${agentConfig.model}`,
+      `MCP_TOKEN=${mcpToken}`,
+      ...providerEnvVars,
+    ];
+
     // Buffer messages that arrive while the container is starting up, so we
     // don't lose the initial prompt on new projects (container can take 5-120s).
     const earlyMessages: Buffer[] = [];
     const earlyMessageHandler = (data: Buffer) => earlyMessages.push(data);
     ws.on("message", earlyMessageHandler);
 
-    const started = await ensureRunningWithRetry(manager, projectId, repoUrls, ws);
+    const started = await ensureRunningWithRetry(manager, planningAgentId, projectId, agentType, envVars, ws);
     ws.off("message", earlyMessageHandler);
 
     if (!started) {
@@ -215,23 +244,35 @@ export function setupWebSocket(server: Server) {
       return;
     }
 
-    // Increment manager's connection count to prevent idle timeout
-    manager.incrementConnections(projectId);
+    // Increment manager's connection count to prevent idle timeout.
+    // Track that increment happened so the close handler can match it.
+    let connected = false;
+    manager.incrementConnections(planningAgentId);
+    connected = true;
 
-    // Initial output listener setup (only once per project)
+    // Per-project output broadcaster (only one listener per project at a time).
+    // `unsubscribe` is called when the agent stops/crashes or this WS closes.
+    let unsubscribe: (() => void) | null = null;
+
     if (!projectBroadcasters.has(projectId)) {
       projectBroadcasters.add(projectId);
-      manager.on(projectId, (event: PlanningAgentEvent) => {
-        let logMsg = `[ws] Broadcasting agent event to project ${projectId}: type=${event.type}`;
-        if (event.type === "delta") {
-          logMsg += ` text="${event.text.slice(0, 50)}..."`;
+      unsubscribe = manager.onOutput(planningAgentId, (event: WsAcpEvent) => {
+        let logMsg = `[ws] Broadcasting ACP event to project ${projectId}: type=${event.type}`;
+        if (event.type === "acp:agent_message_chunk") {
+          const text = typeof event.content === "string"
+            ? event.content
+            : (event.content as { text?: string } | null)?.text ?? "";
+          logMsg += ` text="${String(text).slice(0, 50)}..."`;
         }
         console.log(logMsg);
 
-        // Accumulate text for persistence
-        if (event.type === "delta") {
-          projectMessageBuffers.set(projectId, (projectMessageBuffers.get(projectId) ?? "") + event.text);
-        } else if (event.type === "message_complete") {
+        // Accumulate text chunks for persistence
+        if (event.type === "acp:agent_message_chunk") {
+          const chunk = typeof event.content === "string"
+            ? event.content
+            : (event.content as { text?: string } | null)?.text ?? "";
+          projectMessageBuffers.set(projectId, (projectMessageBuffers.get(projectId) ?? "") + String(chunk));
+        } else if (event.type === "acp:turn_complete") {
           const buffer = projectMessageBuffers.get(projectId) ?? "";
           if (buffer) {
             appendMessage(projectId, "assistant", buffer).catch(err => {
@@ -241,17 +282,25 @@ export function setupWebSocket(server: Server) {
           projectMessageBuffers.delete(projectId);
         }
 
-        // agent_error → send as WS error type so the frontend shows it in the banner
-        if (event.type === "agent_error") {
+        // Remove broadcaster when the agent stops or crashes so it can be
+        // re-registered if the agent restarts.
+        if (event.type === "agent:stopped" || event.type === "agent:crashed") {
+          if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+          projectBroadcasters.delete(projectId);
+          revokeMcpToken(mcpToken);
+        }
+
+        // acp:error → send as WS error type so the frontend shows it in the banner
+        if (event.type === "acp:error") {
           broadcastToProject(projectId, { type: "error", message: event.message });
           return;
         }
 
-        // Broadcaster handles: delta, tool_call, tool_result, thinking, message_complete, conversation_complete
+        // Forward all ACP events as-is (they have the right shape for the frontend)
         broadcastToProject(projectId, {
           ...event,
           agentType: "master",
-          agentId: "master"
+          agentId: planningAgentId,
         });
       });
     }
@@ -274,14 +323,15 @@ export function setupWebSocket(server: Server) {
           } catch (err) {
             console.error(`[ws] Failed to persist user message for ${projectId}:`, err);
           }
-          // Master agent prompt
+          // Master agent prompt — include context as part of the message
           const context = buildMasterAgentContext(project, allRepos);
+          const fullPrompt = context + "\n\n---\n\n" + msg.text;
           console.log(`[ws] Dispatching message to planning agent for project ${projectId}`);
-          await manager.sendPrompt(projectId, msg.text, context);
+          await manager.sendPrompt(planningAgentId, fullPrompt);
         } else if (msg.type === "steer" && msg.text) {
           console.log(`[ws] Received steer for project ${projectId}: "${msg.text?.slice(0, 100)}..."`);
           // Mid-stream steering
-          await manager.sendPrompt(projectId, msg.text);
+          await manager.sendPrompt(planningAgentId, msg.text);
         } else if (msg.type === "resume" && msg.lastSeqId !== undefined) {
           // Replay missed messages
           const missed = await listMessagesSince(projectId, msg.lastSeqId);
@@ -300,7 +350,15 @@ export function setupWebSocket(server: Server) {
         connections.delete(ws);
         if (connections.size === 0) projectConnections.delete(projectId);
       }
-      manager.decrementConnections(projectId);
+      // Remove output broadcaster so it can be re-registered on next connection
+      if (unsubscribe) { unsubscribe(); unsubscribe = null; projectBroadcasters.delete(projectId); }
+      // Revoke the per-session MCP token so the agent can no longer connect
+      revokeMcpToken(mcpToken);
+      // Only decrement if we successfully incremented (agent started successfully)
+      if (connected) {
+        connected = false;
+        manager.decrementConnections(planningAgentId);
+      }
     });
 
     // Replay any messages that arrived before the container was ready

@@ -13,9 +13,13 @@ concurrency:
 
 jobs:
   e2e-github-copilot:
-    name: E2E with GitHub Copilot
+    name: E2E (${{ matrix.project }})
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [pi-pi, copilot-copilot, pi-copilot]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,10 +34,10 @@ jobs:
           COPILOT_GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
-          SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
+          SUB_AGENT_IMAGE=multi-agent-harness/agent-pi:latest
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
-          AGENT_PLANNING_MODEL=github-copilot/gpt-5-mini
-          AGENT_IMPLEMENTATION_MODEL=github-copilot/gpt-5-mini
+          AGENT_PLANNING_MODEL=copilot/gpt-5-mini
+          AGENT_IMPLEMENTATION_MODEL=copilot/gpt-5-mini
           JIRA_BASE_URL=
           JIRA_TOKEN=
           BITBUCKET_BASE_URL=
@@ -59,25 +63,11 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-      - name: Build sub-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./sub-agent/Dockerfile
-          tags: multi-agent-harness/sub-agent:latest
-          load: true
-          cache-from: type=gha,scope=sub-agent
-          cache-to: type=gha,scope=sub-agent,mode=max
-
-      - name: Build planning-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./planning-agent/Dockerfile
-          tags: multi-agent-harness/planning-agent:latest
-          load: true
-          cache-from: type=gha,scope=planning-agent
-          cache-to: type=gha,scope=planning-agent,mode=max
+      - name: Build agent images
+        run: |
+          docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
+          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
+          docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest .
 
       - name: Start services
         run: |
@@ -132,15 +122,16 @@ jobs:
         env:
           TEST_REPO_URL: git@github.com:dreef3/multi-agent-harness-test-repo.git
           GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          HARNESS_API_URL: http://127.0.0.1:3000/api
           GH_APPROVER_TOKEN: ${{ secrets.GH_APPROVER_TOKEN }}
           HARNESS_URL: ${{ env.HARNESS_URL }}
-        run: bunx playwright test
+        run: bunx playwright test --project ${{ matrix.project }}
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-github-copilot
+          name: playwright-report-${{ matrix.project }}
           path: e2e-tests/playwright-report/
           retention-days: 30
 
@@ -151,27 +142,27 @@ jobs:
           docker compose logs backend
           echo "=== Frontend logs ==="
           docker compose logs frontend
-          echo "=== Planning agent container logs ==="
-          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+          echo "=== Agent container logs ==="
+          docker ps -a --format "{{.Names}}" | grep -E "^(agent-|planning-|sub-)" | \
             while read name; do
               echo "--- $name ---"
               docker logs "$name" 2>&1 || true
             done
 
-      - name: Collect planning agent session logs
+      - name: Collect agent session logs
         if: failure()
         run: |
           mkdir -p /tmp/agent-sessions
-          docker ps -a --filter "name=planning-" --format "{{.Names}}" | grep -v "planning-agent-test" | \
+          docker ps -a --filter "name=agent-" --format "{{.Names}}" | \
             while read name; do
               docker cp "$name:/pi-agent/sessions/." "/tmp/agent-sessions/$name/" 2>/dev/null || true
             done
 
-      - name: Upload planning agent session logs
+      - name: Upload agent session logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: agent-session-logs
+          name: agent-session-logs-${{ matrix.project }}
           path: /tmp/agent-sessions/
           retention-days: 7
 
@@ -278,7 +269,7 @@ jobs:
           GITHUB_TOKEN=${{ secrets.GH_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
-          SUB_AGENT_IMAGE=multi-agent-harness/sub-agent:latest
+          SUB_AGENT_IMAGE=multi-agent-harness/agent-pi:latest
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
           AGENT_PLANNING_MODEL=github-copilot/gpt-5-mini
           AGENT_IMPLEMENTATION_MODEL=github-copilot/gpt-5-mini
@@ -366,25 +357,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build planning-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./planning-agent/Dockerfile
-          tags: multi-agent-harness/planning-agent:latest
-          load: true
-          cache-from: type=gha,scope=planning-agent
-          cache-to: type=gha,scope=planning-agent,mode=max
-
-      - name: Build sub-agent image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          file: ./sub-agent/Dockerfile
-          tags: multi-agent-harness/sub-agent:latest
-          load: true
-          cache-from: type=gha,scope=sub-agent
-          cache-to: type=gha,scope=sub-agent,mode=max
+      - name: Build agent images
+        run: |
+          docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest .
+          docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest .
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -396,17 +372,17 @@ jobs:
         env:
           COPILOT_GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
           AGENT_PROVIDER: github-copilot
-          AGENT_MODEL: gpt-5-mini
-        run: bun test
+          AGENT_MODEL: copilot/gpt-5-mini
+        run: bun test --timeout 180000
 
       - name: Dump planning agent container logs on failure
         if: failure()
         run: |
-          docker ps -a --filter "name=planning-agent-test" --format "{{.Names}}" | \
+          docker ps -a --filter "name=agent-test-" --format "{{.Names}}" | \
             xargs -I{} sh -c 'echo "=== {} ===" && docker logs {}'
 
       - name: Cleanup leftover test containers
         if: always()
         run: |
-          docker ps -a --filter "name=planning-agent-test" --format "{{.Names}}" | \
+          docker ps -a --filter "name=agent-test-" --format "{{.Names}}" | \
             xargs -r docker rm -f

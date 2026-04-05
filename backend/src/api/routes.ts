@@ -9,10 +9,12 @@ import { createPullRequestsRouter } from "./pullRequests.js";
 import { createWebhooksRouter } from "./webhooks.js";
 import { createSettingsRouter } from "./settings.js";
 import { createCiRouter } from "./ci.js";
+import { createAgentConfigRouter } from "./agentConfig.js";
 import { config } from "../config.js";
 import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
 import type { ContainerRuntime } from "../orchestrator/containerRuntime.js";
+import { createMcpMiddleware } from "../mcp/server.js";
 
 export function createRouter(dataDir: string, docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
@@ -29,6 +31,12 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
       implementationModel: config.implementationModel,
     });
   });
+
+  // Agent config endpoints — no auth required (simple config reads/writes)
+  router.use(createAgentConfigRouter());
+
+  // MCP SSE server — no auth (agents connect directly)
+  router.use("/mcp", createMcpMiddleware());
 
   // JWT verification for all protected routes
   router.use(verifyJwt());

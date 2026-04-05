@@ -1,5 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const agentConfigs = [
+  { name: "pi-pi", planning: "pi", implementation: "pi" },
+  { name: "copilot-copilot", planning: "copilot", implementation: "copilot" },
+  { name: "pi-copilot", planning: "pi", implementation: "copilot" },
+];
+
 export default defineConfig({
   testDir: './tests',
   // Exclude Jenkins integration tests unless JENKINS_URL is set —
@@ -19,14 +25,18 @@ export default defineConfig({
     video: 'retain-on-failure',
     actionTimeout: 10000,
   },
-  projects: [
-    {
-      name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+  projects: agentConfigs.map((cfg, i) => ({
+    name: cfg.name,
+    use: {
+      ...devices['Desktop Chrome'],
+      agentConfig: cfg,
     },
-  ],
-  timeout: 60000, // Increased from 30000 for AI response times
+    // ci-status tests push commits and wait for GitHub Actions check runs — running them
+    // in every matrix project causes resource contention.  Run only in the first project.
+    testIgnore: i > 0 ? ['**/ci-status.spec.ts'] : undefined,
+  })),
+  timeout: 60000,
   expect: {
-    timeout: 50000, // Increased from 25000
+    timeout: 50000,
   },
 });

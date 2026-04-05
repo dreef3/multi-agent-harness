@@ -6,7 +6,7 @@ import { getConnector } from "./connectors/types.js";
 import { getOrCreateTrace } from "./orchestrator/traceBuilder.js";
 import { getDebounceEngine } from "./api/webhooks.js";
 import { getRecoveryService } from "./orchestrator/recoveryService.js";
-import { getPlanningAgentManager } from "./orchestrator/planningAgentManager.js";
+import { getAcpAgentManager } from "./orchestrator/acpAgentManager.js";
 import { TaskDispatcher } from "./orchestrator/taskDispatcher.js";
 import type { ContainerRuntime } from "./orchestrator/containerRuntime.js";
 import { slugify, buildPlanningFilePath } from "./agents/planningTool.js";
@@ -192,10 +192,17 @@ async function pollPlanningPrs(docker: Dockerode, _containerRuntime?: ContainerR
         console.log(`[polling] Planning PR closed for project ${project.id} — marking as failed`);
         await updateProject(project.id, { status: "failed" });
         approvalPollStates.delete(project.id);
-        await getPlanningAgentManager().sendPrompt(
-          project.id,
-          "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
-        );
+        try {
+          const acpManager = getAcpAgentManager();
+          const agentId = `planning-${project.id}`;
+          if (acpManager.isRunning(agentId)) {
+            await acpManager.sendPrompt(agentId,
+              "[SYSTEM] The planning PR was closed before approval. The project has been marked as failed. Let the user know."
+            );
+          }
+        } catch (err) {
+          console.warn(`[polling] Could not notify planning agent of PR closure (${project.id}):`, err);
+        }
         continue;
       }
 
@@ -210,8 +217,6 @@ async function pollPlanningPrs(docker: Dockerode, _containerRuntime?: ContainerR
 
       console.log(`[polling] LGTM detected on planning PR for project ${project.id} (status: ${project.status})`);
 
-      const planningManager = getPlanningAgentManager();
-
       if (project.status === "awaiting_spec_approval") {
         const specApprovedAt = new Date().toISOString();
         await updateProject(project.id, {
@@ -219,12 +224,20 @@ async function pollPlanningPrs(docker: Dockerode, _containerRuntime?: ContainerR
           status: "plan_in_progress",
         });
         getOrCreateTrace(project.id, project.name).setSpecApproved(specApprovedAt);
-        await planningManager.sendPrompt(
-          project.id,
-          '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
-          'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
-          'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
-        );
+        try {
+          const acpManager = getAcpAgentManager();
+          const agentId = `planning-${project.id}`;
+          if (acpManager.isRunning(agentId)) {
+            await acpManager.sendPrompt(
+              agentId,
+              '[SYSTEM] The spec has been approved (LGTM received on the PR).\n' +
+              'Write the implementation plan now using the write_planning_document tool with type "plan".\n' +
+              'Then post the PR URL in chat and tell the user to add a LGTM comment when ready to start implementation.'
+            );
+          }
+        } catch (err) {
+          console.warn(`[polling] Could not notify planning agent for spec approval (${project.id}):`, err);
+        }
       } else if (project.status === "awaiting_plan_approval") {
         const planApprovedAt = new Date().toISOString();
         await updateProject(project.id, {
@@ -264,11 +277,19 @@ async function pollPlanningPrs(docker: Dockerode, _containerRuntime?: ContainerR
         }
 
         // Notify the planning agent — it will call dispatch_tasks to start sub-agents
-        await planningManager.sendPrompt(
-          project.id,
-          '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
-          'Call dispatch_tasks now to submit the implementation tasks to sub-agents, then inform the user that implementation is starting.'
-        );
+        try {
+          const acpManager = getAcpAgentManager();
+          const agentId = `planning-${project.id}`;
+          if (acpManager.isRunning(agentId)) {
+            await acpManager.sendPrompt(
+              agentId,
+              '[SYSTEM] The implementation plan has been approved (LGTM received on the PR).\n' +
+              'Call dispatch_tasks now to submit the implementation tasks to sub-agents, then inform the user that implementation is starting.'
+            );
+          }
+        } catch (err) {
+          console.warn(`[polling] Could not notify planning agent for plan approval (${project.id}):`, err);
+        }
       }
     } catch (error) {
       console.error(`[polling] Error processing LGTM for project ${project.id}:`, error);

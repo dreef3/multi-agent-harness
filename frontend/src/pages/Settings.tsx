@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, Config, ModelConfig, Repository } from "../lib/api";
 import RepositoryForm from "../components/RepositoryForm";
 
@@ -386,6 +387,21 @@ export default function Settings() {
       >
         {saving ? "Saving..." : "Save Settings"}
       </button>
+
+      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+        <h2 className="text-lg font-semibold mb-2">Per-Project Agent Configuration</h2>
+        <p className="text-sm text-gray-400 mb-3">
+          Each project can override which planning and implementation agents to use. To configure
+          agents for a specific project, open that project and use the "Agent Settings" link in the
+          project's chat view.
+        </p>
+        <Link
+          to="/"
+          className="text-blue-400 hover:text-blue-300 text-sm"
+        >
+          Go to projects &rarr;
+        </Link>
+      </div>
     </div>
   );
 }

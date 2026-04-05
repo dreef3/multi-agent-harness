@@ -16,15 +16,16 @@ import { execSync } from "child_process";
 
 // ── container lifecycle ───────────────────────────────────────────────────────
 
+const AGENT_TYPE = process.env.AGENT_TYPE ?? "pi";
 const CONTAINER_NAME = `impl-agent-test-${Date.now()}`;
 
 beforeAll(() => {
-  // Start a long-lived container using the sub-agent image but with a sleep
+  // Start a long-lived container using the agent image but with a sleep
   // entrypoint so we can run docker exec commands without the runner exiting.
   execSync(
     `docker run -d --name ${CONTAINER_NAME} ` +
       `--entrypoint sleep ` +
-      `multi-agent-harness/sub-agent:latest infinity`,
+      `multi-agent-harness/agent-${AGENT_TYPE}:latest infinity`,
     { stdio: "pipe" }
   );
 });

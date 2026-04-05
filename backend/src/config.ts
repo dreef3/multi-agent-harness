@@ -114,3 +114,29 @@ export const config = {
   })(),
   k8sNamespace: process.env.K8S_NAMESPACE ?? "default",
 };
+
+export function agentImage(agentType: string): string {
+  return `multi-agent-harness/agent-${agentType}:latest`;
+}
+
+export function resolveAgentConfig(
+  role: "planning" | "implementation",
+  projectConfig?: { type: string; model?: string }
+): { type: string; model: string; image: string } {
+  if (projectConfig) {
+    const type = projectConfig.type;
+    return {
+      type,
+      model: projectConfig.model ?? (
+        role === "planning" ? config.planningModel : config.implementationModel
+      ),
+      image: agentImage(type),
+    };
+  }
+  const type = config.agentProvider;
+  return {
+    type,
+    model: role === "planning" ? config.planningModel : config.implementationModel,
+    image: agentImage(type),
+  };
+}

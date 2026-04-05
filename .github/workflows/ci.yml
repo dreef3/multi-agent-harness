@@ -81,22 +81,14 @@ jobs:
             variant: wolfi
             context: ./frontend
             dockerfile: frontend/Dockerfile.wolfi
-          - service: planning-agent
+          - service: agent-base
             variant: ubi
             context: .
-            dockerfile: planning-agent/Dockerfile.ubi
-          - service: planning-agent
+            dockerfile: agents/base/Dockerfile.base.ubi
+          - service: agent-base
             variant: wolfi
             context: .
-            dockerfile: planning-agent/Dockerfile.wolfi
-          - service: sub-agent
-            variant: ubi
-            context: .
-            dockerfile: sub-agent/Dockerfile.ubi
-          - service: sub-agent
-            variant: wolfi
-            context: .
-            dockerfile: sub-agent/Dockerfile.wolfi
+            dockerfile: agents/base/Dockerfile.base.wolfi
 
     steps:
       - uses: actions/checkout@v4

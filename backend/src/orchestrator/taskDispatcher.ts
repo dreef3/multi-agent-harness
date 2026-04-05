@@ -8,7 +8,7 @@ import { getConnector, ConnectorError } from "../connectors/types.js";
 import type { BuildStatus } from "../connectors/types.js";
 import { getOrCreateTrace } from "./traceBuilder.js";
 import type { ContainerRuntime } from "./containerRuntime.js";
-import { config } from "../config.js";
+import { config, resolveAgentConfig } from "../config.js";
 import { tracer } from "../telemetry.js";
 import { SpanStatusCode } from "@opentelemetry/api";
 
@@ -196,13 +196,16 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
           .slice(0, 30)
           .replace(/-+$/g, "");
 
+        const implConfig = resolveAgentConfig("implementation", project.implementationAgent);
+        const agentProvider = implConfig.type ?? config.agentProvider;
+        const agentModel = implConfig.model ?? config.implementationModel;
+        const agentImage = implConfig.image ?? config.subAgentImage;
+
         const nameSuffix = taskName
           ? `${taskName}-${(task.id ?? sessionId).slice(0, 8)}`
           : (task.id ?? sessionId).slice(0, 16);
         const containerName = `sub-${nameSuffix}`;
 
-        const agentProvider = config.agentProvider;
-        const agentModel = config.implementationModel;
         const providerEnv = PROVIDER_ENV_VARS
           .filter(name => process.env[name])
           .map(name => `${name}=${process.env[name]}`);
@@ -220,7 +223,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
         const presentProviderKeys = PROVIDER_ENV_VARS.filter(name => process.env[name]);
         console.log(`[taskDispatcher] Creating container for session=${sessionId} taskId=${task.id ?? "n/a"}`);
-        console.log(`[taskDispatcher]   image=${config.subAgentImage}`);
+        console.log(`[taskDispatcher]   image=${agentImage}`);
         console.log(`[taskDispatcher]   network=${config.subAgentNetwork}`);
         console.log(`[taskDispatcher]   branch=${branchName}`);
         console.log(`[taskDispatcher]   agentProvider=${agentProvider} agentModel=${agentModel}`);
@@ -229,7 +232,7 @@ harness opens the pull request automatically — do NOT run \`gh pr create\`.
 
         containerId = await this.runtime.createContainer({
           sessionId,
-          image: config.subAgentImage,
+          image: agentImage,
           name: containerName,
           env: [
             `REPO_CLONE_URL=${repository.cloneUrl}`,

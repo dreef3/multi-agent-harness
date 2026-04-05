@@ -4,7 +4,7 @@ test.describe('Multi-Agent Harness E2E', () => {
   test('create project and run free form request', async ({ page, request }) => {
     test.setTimeout(3 * 60 * 1000); // 3 minutes — Docker startup (~30s) + TCP init (~20s) + LLM call (~10s)
     // Seed a test repository first (required for project creation)
-    const repoResponse = await request.post('http://localhost:3000/api/repositories', {
+    const repoResponse = await request.post('http://127.0.0.1:3000/api/repositories', {
       data: {
         name: 'E2E Test Repo',
         provider: 'github',
@@ -68,12 +68,12 @@ test.describe('Multi-Agent Harness E2E', () => {
     await page.screenshot({ path: 'test-results/e2e-success.png', fullPage: true });
 
     // Cleanup: Delete test repository
-    const repos = await request.get('http://localhost:3000/api/repositories');
-    if (repos.ok) {
+    const repos = await request.get('http://127.0.0.1:3000/api/repositories');
+    if (repos.ok()) {
       const data = await repos.json();
       for (const repo of data) {
         if (repo.name === 'E2E Test Repo') {
-          await request.delete(`http://localhost:3000/api/repositories/${repo.id}`);
+          await request.delete(`http://127.0.0.1:3000/api/repositories/${repo.id}`);
         }
       }
     }
@@ -81,7 +81,7 @@ test.describe('Multi-Agent Harness E2E', () => {
   
   test('health check', async ({ request }) => {
     // Test the backend health endpoint
-    const response = await request.get('http://localhost:3000/api/health');
+    const response = await request.get('http://127.0.0.1:3000/api/health');
     expect(response.ok()).toBeTruthy();
     
     const body = await response.json();

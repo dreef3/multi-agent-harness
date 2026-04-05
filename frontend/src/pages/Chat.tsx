@@ -4,6 +4,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api, Message, Project } from "../lib/api";
 import { wsClient } from "../lib/ws";
+import { type WsAcpEvent, isAcpEvent } from "../lib/acpEvents.js";
 
 type ThinkingMode = "none" | "typing" | "processing";
 
@@ -192,6 +193,64 @@ export default function Chat() {
           attempt: errMsg.retrying ? (errMsg.attempt as number | undefined) : undefined,
           maxAttempts: errMsg.retrying ? (errMsg.maxAttempts as number | undefined) : undefined,
         });
+      } else if (isAcpEvent(msg as { type: string })) {
+        const acpMsg = msg as unknown as WsAcpEvent;
+        if (acpMsg.type === "acp:agent_message_chunk") {
+          // content may be a single {type,text} object, an array of such objects,
+          // or a plain string — normalise all three forms.
+          const raw = acpMsg.content as unknown;
+          const chunks: unknown[] = Array.isArray(raw) ? raw : [raw];
+          const text = chunks
+            .map((c) =>
+              typeof c === "string"
+                ? c
+                : (c as { type?: string; text?: string } | null)?.type === "text"
+                  ? ((c as { text?: string }).text ?? "")
+                  : ""
+            )
+            .join("");
+          if (text) {
+            setThinkingMode("typing");
+            setStreamingContent((prev) => prev + text);
+            setRetryBanner(null);
+          }
+        } else if (acpMsg.type === "acp:tool_call") {
+          setCurrentToolCall({
+            toolName: acpMsg.title,
+            args: { kind: acpMsg.kind, status: acpMsg.status },
+          });
+          setToolCallCount((prev) => prev + 1);
+        } else if (acpMsg.type === "acp:tool_call_update") {
+          setCurrentToolCall((prev) =>
+            prev ? { ...prev, result: acpMsg.status } : null
+          );
+        } else if (acpMsg.type === "acp:plan") {
+          // Show plan as a tool card summarising the items
+          const planSummary = acpMsg.items.map((item) => `${item.status}: ${item.title}`).join("\n");
+          setCurrentToolCall({
+            toolName: "Plan",
+            args: {},
+            result: planSummary,
+          });
+          setToolCallCount((prev) => prev + 1);
+        } else if (acpMsg.type === "acp:turn_complete") {
+          setStreamingContent("");
+          setThinkingMode("processing");
+          void loadMessages();
+        } else if (acpMsg.type === "acp:error") {
+          setRetryBanner({ message: acpMsg.message });
+        } else if (acpMsg.type === "agent:started") {
+          setThinkingMode("processing");
+          setRetryBanner(null);
+        } else if (acpMsg.type === "agent:stopped") {
+          setThinkingMode("none");
+          setCurrentToolCall(null);
+          setToolCallCount(0);
+          void loadMessages();
+        } else if (acpMsg.type === "agent:crashed") {
+          setThinkingMode("none");
+          setRetryBanner({ message: `Agent crashed: ${acpMsg.message}` });
+        }
       }
     });
 
@@ -263,6 +322,14 @@ export default function Chat() {
           </Link>
           <h1 className="text-2xl font-bold">Chat</h1>
         </div>
+        {id && (
+          <Link
+            to={`/projects/${id}/agents`}
+            className="text-sm text-gray-400 hover:text-gray-200"
+          >
+            Agent Settings
+          </Link>
+        )}
       </div>
 
       {retryBanner && (

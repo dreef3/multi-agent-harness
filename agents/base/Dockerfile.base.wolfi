@@ -1,0 +1,29 @@
+# agents/base/Dockerfile.base.wolfi
+# Chainguard Wolfi variant — minimal CVE surface.
+# Build context: repo root (same as Dockerfile.base)
+
+FROM cgr.dev/chainguard/node:latest-dev
+
+USER root
+
+RUN apk add --no-cache git curl gettext
+
+# Install GitHub CLI from binary tarball (not in Chainguard repo)
+RUN curl -fsSL "https://github.com/cli/cli/releases/download/v2.49.2/gh_2.49.2_linux_amd64.tar.gz" \
+       -o /tmp/gh.tar.gz && \
+    tar -xzf /tmp/gh.tar.gz -C /tmp && \
+    mv /tmp/gh_2.49.2_linux_amd64/bin/gh /usr/local/bin/gh && \
+    rm -rf /tmp/gh.tar.gz /tmp/gh_2.49.2_linux_amd64
+
+WORKDIR /app
+
+# stdio-to-TCP bridge
+COPY agents/stdio-tcp-bridge.mjs /app/stdio-tcp-bridge.mjs
+
+# Startup wrapper for env var substitution (e.g. MCP_TOKEN in config files)
+COPY agents/startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
+
+RUN mkdir -p /workspace /agent-data
+
+EXPOSE 3333

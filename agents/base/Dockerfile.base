@@ -1,0 +1,24 @@
+FROM node:22-slim
+
+RUN apt-get update && apt-get install -y \
+    git curl build-essential python3 gettext-base \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+       | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+       | tee /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update && apt-get install -y gh \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# stdio-to-TCP bridge
+COPY agents/stdio-tcp-bridge.mjs /app/stdio-tcp-bridge.mjs
+
+# Startup wrapper for env var substitution (e.g. MCP_TOKEN in config files)
+COPY agents/startup.sh /app/startup.sh
+RUN chmod +x /app/startup.sh
+
+RUN mkdir -p /workspace /agent-data
+
+EXPOSE 3333
