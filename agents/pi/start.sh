@@ -1,4 +1,9 @@
 #!/bin/sh
+# Harness uses "copilot" as the short provider name; pi expects "github-copilot".
+if [ "${AGENT_PROVIDER:-}" = "copilot" ]; then
+  export AGENT_PROVIDER=github-copilot
+fi
+
 # Seed pi's auth.json from COPILOT_GITHUB_TOKEN so pi-acp can authenticate.
 # Fine-grained GitHub PATs work directly as Bearer tokens against
 # api.individual.githubcopilot.com — no session token exchange is needed.
@@ -62,8 +67,8 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
   git config user.email "harness-sub-agent@harness.local"
   git config user.name "Harness Sub-Agent"
 
-  # Map AGENT_PROVIDER=pi (harness internal name) to the github-copilot provider
-  # that pi's auth.json was seeded with.
+  # AGENT_PROVIDER is already normalised at the top of this script.
+  # "pi" is an additional alias used by the harness internally.
   PROVIDER="${AGENT_PROVIDER:-github-copilot}"
   [ "${PROVIDER}" = "pi" ] && PROVIDER="github-copilot"
 
