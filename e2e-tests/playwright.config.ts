@@ -25,12 +25,15 @@ export default defineConfig({
     video: 'retain-on-failure',
     actionTimeout: 10000,
   },
-  projects: agentConfigs.map(cfg => ({
+  projects: agentConfigs.map((cfg, i) => ({
     name: cfg.name,
     use: {
       ...devices['Desktop Chrome'],
       agentConfig: cfg,
     },
+    // ci-status tests push commits and wait for GitHub Actions check runs — running them
+    // in every matrix project causes resource contention.  Run only in the first project.
+    testIgnore: i > 0 ? ['**/ci-status.spec.ts'] : undefined,
   })),
   timeout: 60000,
   expect: {

@@ -92,6 +92,8 @@ test.describe('Review Comment Fix-Run Flow', () => {
     await approvePlanningPr(prNumber);
 
     // ── 5. Wait for polling to detect approval and transition to executing ────────
+    // 5-minute timeout: under concurrent CI load (3 matrix jobs × GitHub API calls)
+    // the harness can take >2 min to detect the PR approval due to rate limiting.
     await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
@@ -99,7 +101,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         const proj = await res.json() as { status: string };
         return proj.status === 'executing';
       },
-      { timeout: 120000, intervals: [3000] }
+      { timeout: 5 * 60 * 1000, intervals: [5000] }
     ).toBe(true);
 
     // ── 6. Poll for sub-agent reaching a terminal state ───────────────────────
