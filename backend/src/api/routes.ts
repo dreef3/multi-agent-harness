@@ -15,7 +15,6 @@ import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
 import type { ContainerRuntime } from "../orchestrator/containerRuntime.js";
 import { createMcpMiddleware } from "../mcp/server.js";
-import { createPlanningToolsRouter } from "./planningToolsRouter.js";
 
 export function createRouter(dataDir: string, docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
@@ -38,9 +37,6 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
 
   // MCP SSE server — no auth (agents connect directly)
   router.use("/mcp", createMcpMiddleware());
-
-  // Planning tools REST façade — no user JWT (agent token auth via MCP token set)
-  router.use("/tools", createPlanningToolsRouter());
 
   // JWT verification for all protected routes
   router.use(verifyJwt());

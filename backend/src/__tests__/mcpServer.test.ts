@@ -24,7 +24,7 @@ describe("MCP SSE server", () => {
   it("responds to SSE connection on /mcp", async () => {
     // Register a test token so the auth check passes
     const testToken = "test-mcp-token";
-    registerMcpToken(testToken);
+    registerMcpToken(testToken, "test-project", "planning");
 
     // The MCP SSE endpoint keeps the connection open for streaming.
     // We connect, read the status + headers, then destroy the socket.
@@ -51,6 +51,28 @@ describe("MCP SSE server", () => {
 
     expect(statusCode).toBe(200);
     expect(headers["content-type"]).toMatch(/text\/event-stream/);
+  });
+
+  it("accepts SSE connection via Authorization: Bearer header", async () => {
+    const bearerToken = "bearer-test-token";
+    registerMcpToken(bearerToken, "bearer-project", "planning");
+
+    const { statusCode } = await new Promise<{ statusCode: number }>((resolve, reject) => {
+      const req = http.get(
+        `http://127.0.0.1:${port}/mcp`,
+        { headers: { Authorization: `Bearer ${bearerToken}` } },
+        (res) => {
+          resolve({ statusCode: res.statusCode! });
+          res.destroy();
+        }
+      );
+      req.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET") reject(err);
+      });
+      req.setTimeout(5000, () => { req.destroy(); reject(new Error("timeout")); });
+    });
+
+    expect(statusCode).toBe(200);
   });
 
   it("rejects SSE connection without token", async () => {

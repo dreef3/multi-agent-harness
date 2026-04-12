@@ -12,6 +12,6 @@ PLANNING_PROMPT=""
 [ -f "/agent-data/planning/AGENTS.md" ] && PLANNING_PROMPT="$(cat /agent-data/planning/AGENTS.md)"
 
 exec /app/node_modules/.bin/pi \
-  --extension /app/harness-planning-tools.mjs \
+  --extension /app/node_modules/pi-mcp-adapter/index.ts \
   ${PLANNING_PROMPT:+--append-system-prompt "${PLANNING_PROMPT}"} \
   "$@"

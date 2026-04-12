@@ -241,7 +241,7 @@ export function setupWebSocket(server: Server) {
 
     // Generate a per-session MCP token so agents can authenticate to the MCP SSE endpoint
     const mcpToken = randomUUID();
-    registerMcpToken(mcpToken);
+    registerMcpToken(mcpToken, projectId, "planning");
 
     const envVars = [
       `GIT_CLONE_URLS=${JSON.stringify(repoUrls)}`,

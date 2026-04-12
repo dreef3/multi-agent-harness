@@ -7,15 +7,22 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 
 // ── Token store ───────────────────────────────────────────────────────────────
+// Maps token → session context so the MCP server knows which project/role
+// an agent belongs to without requiring URL query parameters.
 
-export const validTokens = new Set<string>();
+interface TokenContext {
+  projectId: string;
+  role: string;
+}
 
-export function registerMcpToken(token: string): void {
-  validTokens.add(token);
+const tokenContexts = new Map<string, TokenContext>();
+
+export function registerMcpToken(token: string, projectId: string, role: string): void {
+  tokenContexts.set(token, { projectId, role });
 }
 
 export function revokeMcpToken(token: string): void {
-  validTokens.delete(token);
+  tokenContexts.delete(token);
 }
 
 import { dispatchTasksTool } from "./tools/dispatch_tasks.js";
@@ -110,16 +117,23 @@ export function createMcpMiddleware(): Router {
   const transports = new Map<string, SSEServerTransport>();
 
   // GET /mcp — establish SSE stream
+  // Accepts token via ?token= query param (other agents) or
+  // Authorization: Bearer <token> header (pi-mcp-adapter).
   router.get("/", async (req: Request, res: Response) => {
-    const token = req.query.token as string | undefined;
-    if (!token || !validTokens.has(token)) {
+    const authHeader = req.headers.authorization;
+    const token =
+      (req.query.token as string | undefined) ??
+      (authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined);
+
+    const ctx = token ? tokenContexts.get(token) : undefined;
+    if (!token || !ctx) {
       res.status(401).json({ error: "Unauthorized: missing or invalid MCP token" });
       return;
     }
 
-    const projectId = (req.query.projectId as string) ?? "";
+    const projectId = ctx.projectId;
     const sessionId = (req.query.sessionId as string) ?? crypto.randomUUID();
-    const role = (req.query.role as string) ?? "planning";
+    const role = ctx.role;
     const context: McpContext = { projectId, sessionId, role };
 
     const tools = role === "implementation" ? IMPL_TOOLS : PLANNING_TOOLS;

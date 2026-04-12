@@ -145,8 +145,30 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
 fi
 
 # ── Planning agent mode ───────────────────────────────────────────────────────
-# Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which injects:
-#   --extension /app/harness-planning-tools.mjs  (registers write_planning_document)
-#   --append-system-prompt (AGENTS.md planning instructions)
+# Write pi-mcp-adapter config so pi can reach the harness MCP server.
+# pi-mcp-adapter reads ~/.pi/agent/mcp.json; we generate it here from env vars
+# so the URL and token are correct for both production and E2E test environments.
+MCP_BASE="${HARNESS_API_URL:-${BACKEND_URL:-http://backend:3000}}"
+mkdir -p "${HOME}/.pi/agent"
+cat > "${HOME}/.pi/agent/mcp.json" << EOF
+{
+  "mcpServers": {
+    "harness": {
+      "url": "${MCP_BASE}/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "MCP_TOKEN",
+      "lifecycle": "eager",
+      "directTools": true
+    }
+  },
+  "settings": {
+    "toolPrefix": "none"
+  }
+}
+EOF
+
+# Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which loads
+# pi-mcp-adapter (giving pi access to all harness MCP tools) and injects the
+# planning AGENTS.md system prompt.
 export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
 exec node /app/stdio-tcp-bridge.mjs /app/node_modules/.bin/pi-acp
