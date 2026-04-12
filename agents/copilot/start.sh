@@ -145,4 +145,8 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
 fi
 
 # ── Planning agent mode ───────────────────────────────────────────────────────
+# Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which injects:
+#   --extension /app/harness-planning-tools.mjs  (registers write_planning_document)
+#   --append-system-prompt (AGENTS.md planning instructions)
+export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
 exec node /app/stdio-tcp-bridge.mjs /app/node_modules/.bin/pi-acp
