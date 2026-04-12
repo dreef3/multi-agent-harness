@@ -8,7 +8,7 @@ import {
 
 // ── Token store ───────────────────────────────────────────────────────────────
 
-const validTokens = new Set<string>();
+export const validTokens = new Set<string>();
 
 export function registerMcpToken(token: string): void {
   validTokens.add(token);
