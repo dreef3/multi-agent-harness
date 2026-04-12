@@ -59,6 +59,11 @@ export function broadcastStuckAgent(projectId: string, sessionId: string) {
   });
 }
 
+// Exported for unit testing
+export function buildMasterAgentContextForTest(project: Project, repos: Repository[]): string {
+  return buildMasterAgentContext(project, repos);
+}
+
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
   const repoList = repos.length > 0
     ? repos.map((r) => `- **${r.name}** (id: \`${r.id}\`): ${r.cloneUrl} (default branch: ${r.defaultBranch})`).join("\n")
@@ -77,8 +82,8 @@ function buildMasterAgentContext(project: Project, repos: Repository[]): string 
   }
 
   return `## Your Role
-You are a master planning agent. You operate in two phases, each driven by a
-dedicated superpowers skill. Follow each skill's process exactly.
+You are a master planning agent for a multi-agent development harness.
+You operate in three phases. Follow each phase in order.
 
 ---
 ${sourceSection}
@@ -88,10 +93,29 @@ ${sourceSection}
 ${repoList}
 
 ---
-## Technical Guidelines
-1. You have NO local direct file access. You MUST use the provided tools to interact with repositories.
-2. Always perform a broad search/grep before making structural assumptions.
-3. When you are ready to propose a plan, you MUST follow the "superpowers:executing-plans" format exactly.
+## Phase 1 — Brainstorming
+Read the superpowers \`brainstorming\` skill (at \`/app/node_modules/superpowers/skills/brainstorming/SKILL.md\`)
+and follow its checklist exactly.
+- Ask clarifying questions about the user's request.
+- Propose approaches and trade-offs.
+- Present a design and get explicit approval before proceeding.
+
+## Phase 2 — Writing Plans
+After the user says LGTM on the spec, read the superpowers \`writing-plans\` skill
+(at \`/app/node_modules/superpowers/skills/writing-plans/SKILL.md\`) and follow it.
+Write a detailed implementation plan with bite-sized tasks.
+Once the plan is written, call \`write_planning_document\` with type \`"plan"\` to commit it and return the PR URL.
+
+## Phase 3 — Dispatching
+After the user approves the plan, use \`dispatch_tasks\` to create sub-agent tasks.
+Monitor progress with \`get_task_status\` and report PRs with \`get_pull_requests\`.
+
+## Rules
+- Never write implementation code yourself — you are a planner and coordinator.
+- Never use bash or git to create pull requests — use \`write_planning_document\` instead.
+- Never run tests yourself — sub-agents do that.
+- Call \`write_planning_document\` with type \`"spec"\` after Phase 1 LGTM to open the planning PR.
+- Call \`write_planning_document\` with type \`"plan"\` after writing the full implementation plan.
 `;
 }
 
