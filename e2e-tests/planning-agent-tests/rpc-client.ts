@@ -29,6 +29,7 @@ export class AcpTestClient {
       provider?: string;
       model?: string;
       backendUrl?: string;
+      mcpToken?: string;
       env?: string[];
     }
   ) {
@@ -37,17 +38,23 @@ export class AcpTestClient {
 
   async start(connectTimeoutMs = 120_000): Promise<void> {
     const image = `multi-agent-harness/agent-${this.options.agentType}:latest`;
+    const backendUrl = this.options.backendUrl ?? "http://localhost:19999";
+    const mcpToken   = this.options.mcpToken   ?? "test-token";
     const envFlags = [
       `-e AGENT_ROLE=planning`,
       `-e PROJECT_ID=${this.options.projectId}`,
       `-e AGENT_PROVIDER=${this.options.provider ?? "github-copilot"}`,
       `-e AGENT_MODEL=${this.options.model ?? "gpt-5-mini"}`,
-      `-e BACKEND_URL=${this.options.backendUrl ?? "http://localhost:19999"}`,
+      // Pass both names: BACKEND_URL for legacy callers, HARNESS_API_URL for the extension
+      `-e BACKEND_URL=${backendUrl}`,
+      `-e HARNESS_API_URL=${backendUrl}`,
+      `-e MCP_TOKEN=${mcpToken}`,
       ...(this.options.env ?? []).map((e: string) => `-e ${e}`),
     ].join(" ");
 
     execSync(
-      `docker run -d --name ${this.containerName} ${envFlags} ${image}`,
+      // --add-host makes host.docker.internal resolve to the Docker host gateway on Linux
+      `docker run -d --add-host=host.docker.internal:host-gateway --name ${this.containerName} ${envFlags} ${image}`,
       { stdio: "pipe" }
     );
 
