@@ -196,8 +196,10 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
     "agent calls write_planning_document when asked and mock MCP backend records the call",
     async () => {
       if (!COPILOT_TOKEN) {
-        console.log("Skipping LLM test — COPILOT_GITHUB_TOKEN not set");
-        return;
+        throw new Error(
+          "COPILOT_GITHUB_TOKEN or GH_TOKEN is required for this LLM test. " +
+          "Set it to run, or the test must not silently pass."
+        );
       }
 
       const events = await client.sendPrompt(
@@ -229,8 +231,10 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
     "agent does NOT run edit or write tools when given a fresh planning request",
     async () => {
       if (!COPILOT_TOKEN) {
-        console.log("Skipping LLM test — COPILOT_GITHUB_TOKEN not set");
-        return;
+        throw new Error(
+          "COPILOT_GITHUB_TOKEN or GH_TOKEN is required for this LLM test. " +
+          "Set it to run, or the test must not silently pass."
+        );
       }
 
       const events = await client.sendPrompt(

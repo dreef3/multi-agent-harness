@@ -4,7 +4,6 @@ import {
   GH_TOKEN,
   TEST_REPO_OWNER,
   TEST_REPO_NAME,
-  createPlanningPr,
   approvePlanningPr,
   cleanupNewBranches,
   seedTestRepo,
@@ -102,12 +101,6 @@ test.describe('Repository Configuration Flow', () => {
     await expect(page.locator('.bg-gray-800').first()).toBeVisible({ timeout: 120000 });
 
     // Wait for the project to reach awaiting_plan_approval (agent wrote spec + plan).
-    // If the agent didn't complete the full planning flow in time, inject a plan via API.
-    const reposRes = await request.get(`${API_BASE}/repositories`);
-    const repos = await reposRes.json() as { id: string; name: string }[];
-    const testRepo = repos.find(r => r.name === repoName);
-    expect(testRepo).toBeDefined();
-
     const projectInApproval = await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
@@ -118,47 +111,22 @@ test.describe('Repository Configuration Flow', () => {
       { timeout: 90000, intervals: [5000] }
     ).toBe(true).then(() => true).catch(() => false);
 
-    // Get current project state to check if master agent created the planning PR
+    // Get current project state — agent must have created the planning PR itself.
+    // Fallback injection is explicitly prohibited: it hid real planning-agent failures.
     const projStateRes = await request.get(`${API_BASE}/projects/${projectId}`);
     const projState = await projStateRes.json() as {
       planningPr?: { number: number; url: string };
       planningBranch?: string;
     };
 
-    let planningPrNumber: number;
+    expect(projectInApproval,
+      'Project must reach awaiting_plan_approval via the planning agent (no injection fallback)'
+    ).toBe(true);
+    expect(projState.planningPr?.number,
+      'Agent must create the planning PR via write_planning_document — fake injection shortcut is not allowed'
+    ).toBeDefined();
 
-    if (projState.planningPr?.number) {
-      // Master agent completed the planning flow — planning PR already exists
-      planningPrNumber = projState.planningPr.number;
-    } else {
-      // Injection path — create a planning PR on GitHub manually
-      const suffix = Date.now().toString();
-      const { branch, prNumber, prUrl } = await createPlanningPr(suffix);
-
-      const patchData: Record<string, unknown> = {
-        planningBranch: branch,
-        planningPr: { number: prNumber, url: prUrl },
-        status: 'awaiting_plan_approval',
-      };
-
-      if (!projectInApproval) {
-        // Also inject the plan tasks
-        patchData.plan = {
-          id: `e2e-plan-${suffix}`,
-          projectId,
-          content: `### Task 1: Create e2e-marker.md\n**Repository:** ${repoName}\n**Description:**\nCreate e2e-marker.md.`,
-          tasks: [{
-            id: `e2e-task-${suffix}`,
-            repositoryId: testRepo!.id,
-            description: 'Create a file called `e2e-marker.md` with the content "# E2E Test Passed" and commit it to the current branch.',
-            status: 'pending',
-          }],
-        };
-      }
-
-      await request.patch(`${API_BASE}/projects/${projectId}`, { data: patchData });
-      planningPrNumber = prNumber;
-    }
+    const planningPrNumber = projState.planningPr!.number;
 
     // Approve the planning PR — triggers the polling cycle to dispatch tasks
     await approvePlanningPr(planningPrNumber);

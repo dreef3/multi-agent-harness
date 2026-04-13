@@ -137,8 +137,14 @@ describe("Planning agent (ACP isolation)", () => {
       expect(tools).not.toContain("write_planning_document");
       expect(tools).not.toContain("dispatch_tasks");
 
-      // Response should contain at least one question (brainstorming skill HARD-GATE)
-      expect(text).toMatch(/\?/);
+      // Brainstorming skill HARD-GATE: agent must ask substantive clarifying questions.
+      // A single incidental "?" is too weak — require ≥2 questions and evidence
+      // the agent engaged with the specific feature (dark mode / toggle / navigation).
+      const questionCount = (text.match(/\?/g) ?? []).length;
+      expect(questionCount,
+        `Expected ≥2 clarifying questions, got ${questionCount}.\nResponse: ${text.slice(0, 300)}`
+      ).toBeGreaterThanOrEqual(2);
+      expect(text.toLowerCase()).toMatch(/dark.?mode|toggle|nav/);
     },
     PROMPT_TIMEOUT + 10_000
   );
@@ -146,9 +152,9 @@ describe("Planning agent (ACP isolation)", () => {
   // ── Test 3: Guard hook ──────────────────────────────────────────────────────
 
   test(
-    "gh pr create is blocked by guard hook and agent is told to use write_planning_document",
-    async () => {
-      // Verify the guard hook blocks `gh pr create` via a direct exec in the container.
+    "guard hook module: gh pr create command is rewritten to print Blocked message",
+    () => {
+      // Unit test — verifies hook logic directly without involving the LLM.
       const hookOutput = execSync(
         `docker exec ${client.containerName} node -e "
           import('/app/tools.mjs').then(m => {
@@ -162,6 +168,35 @@ describe("Planning agent (ACP isolation)", () => {
       expect(hookOutput).toContain("Blocked:");
       expect(hookOutput).toContain("write_planning_document");
     }
+  );
+
+  test(
+    "running agent: guard hook fires for gh pr create and response references write_planning_document",
+    async () => {
+      // Integration leg: the guard hook must fire inside the live container when
+      // the agent attempts `gh pr create`, and the agent must acknowledge the
+      // blocked message ("Use the write_planning_document tool…") in its reply.
+      if (!COPILOT_TOKEN) {
+        throw new Error(
+          "COPILOT_GITHUB_TOKEN or GH_TOKEN is required for this integration test"
+        );
+      }
+
+      const events = await client.sendPrompt(
+        "Please run this shell command now: gh pr create --title 'Planning doc' --body 'spec'",
+        PROMPT_TIMEOUT
+      );
+
+      const text = responseText(events);
+      expect(text.length).toBeGreaterThan(10);
+
+      // The guard hook converts `gh pr create` to a `printf 'Blocked: …' ; exit 1`
+      // whose stdout/stderr propagates back to the agent.  The blocked message says
+      // "Use the write_planning_document tool to create planning PRs."  The agent
+      // must surface this in its response.
+      expect(text).toContain("write_planning_document");
+    },
+    PROMPT_TIMEOUT + 10_000
   );
 
   // ── Test 4: agent responds to follow-up after first turn ───────────────────
