@@ -13,6 +13,7 @@ ENV PI_ACP_PI_COMMAND=/app/node_modules/.bin/pi
 
 COPY agents/pi/guard-hook.mjs /app/guard-hook.mjs
 COPY agents/pi/tools.mjs /app/tools.mjs
+COPY agents/pi/harness-planning-tools.mjs /app/harness-planning-tools.mjs
 COPY agents/pi/pi-planning-wrapper.sh /app/pi-planning-wrapper.sh
 COPY agents/pi/start.sh /app/start.sh
 RUN chmod +x /app/start.sh /app/pi-planning-wrapper.sh

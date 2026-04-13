@@ -1,12 +1,13 @@
 /**
- * Tests that write_planning_document works end-to-end via MCP:
- *   1. pi-mcp-adapter is installed in the container (pure Docker, no LLM)
- *   2. After being asked to call the tool, the agent calls it and the mock MCP
- *      backend records the call (LLM required — skipped if COPILOT_GITHUB_TOKEN not set)
+ * Tests that write_planning_document works end-to-end via the native pi extension:
+ *   1. harness-planning-tools.mjs is present in the container (pure Docker, no LLM)
+ *   2. After being asked to call the tool, the agent calls it and the mock REST
+ *      backend records the call (LLM required — throws if COPILOT_GITHUB_TOKEN not set)
  *   3. Agent does NOT run edit/write tools when given a planning request (Phase 1 gate)
  *
- * The mock MCP backend implements a minimal Streamable HTTP MCP server so that
- * pi-mcp-adapter can connect, discover write_planning_document, and call it.
+ * write_planning_document is a native pi extension registered via --extension
+ * /app/harness-planning-tools.mjs (not MCP). The extension calls the harness
+ * backend's REST endpoint: POST /api/tools/write-planning-document.
  *
  * Requires: COPILOT_GITHUB_TOKEN (or GH_TOKEN) for LLM tests.
  */
@@ -29,128 +30,47 @@ const PROMPT_TIMEOUT          =  90_000;
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-interface McpToolCall { name: string; arguments: Record<string, unknown> }
+interface RestToolCall { type: string; content: string }
 
 /**
- * Minimal Streamable HTTP MCP server.
- * pi-mcp-adapter tries StreamableHTTP first; this mock handles the JSON-RPC
- * over POST so the agent can discover and call write_planning_document.
+ * Minimal mock of the harness backend's write-planning-document REST endpoint.
+ * The harness-planning-tools.mjs extension calls:
+ *   POST ${HARNESS_API_URL}/api/tools/write-planning-document
+ * with JSON body { projectId, type, content } and Bearer auth.
+ * Returns { prUrl: string }.
  */
-function startMockMcpBackend(): Promise<{
+function startMockHarnessBackend(): Promise<{
   server: Server;
   port: number;
-  toolCalls: McpToolCall[];
+  toolCalls: RestToolCall[];
 }> {
-  const toolCalls: McpToolCall[] = [];
-
-  const WRITE_PLANNING_TOOL = {
-    name: "write_planning_document",
-    description:
-      'Write a planning document (spec or plan). Call with type "spec" then "plan".',
-    inputSchema: {
-      type: "object",
-      properties: {
-        type: { type: "string", enum: ["spec", "plan"] },
-        content: { type: "string" },
-      },
-      required: ["type", "content"],
-    },
-  };
+  const toolCalls: RestToolCall[] = [];
 
   return new Promise((resolve) => {
-    // Track SSE sessions so we can route POST messages back to the right stream.
-    let sseCounter = 0;
-    const sseSessions = new Map<string, ServerResponse>();
-
-    const handleJsonRpc = (
-      msg: Record<string, unknown>,
-      res: ServerResponse,
-      sseSessionRes?: ServerResponse,
-    ) => {
-      const { method, id } = msg as { method?: string; id?: unknown };
-      let result: Record<string, unknown>;
-
-      if (method === "initialize") {
-        result = {
-          protocolVersion: "2024-11-05",
-          capabilities: { tools: {} },
-          serverInfo: { name: "mock-harness", version: "1.0.0" },
-        };
-      } else if (method === "tools/list") {
-        result = { tools: [WRITE_PLANNING_TOOL] };
-      } else if (method === "tools/call") {
-        const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
-        toolCalls.push({ name: params.name ?? "", arguments: params.arguments ?? {} });
-        result = {
-          content: [{
-            type: "text",
-            text: "Planning document created. PR: https://github.com/test-org/test-repo/pull/42",
-          }],
-        };
-      } else {
-        result = {};
-      }
-
-      // Notifications have no id — don't respond (just acknowledge with 200)
-      if (id === undefined || id === null) {
-        res.writeHead(200);
-        res.end();
-        return;
-      }
-
-      const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
-
-      if (sseSessionRes) {
-        // SSE transport: send response as an SSE "message" event on the open stream,
-        // and acknowledge the POST with 202 Accepted (no body).
-        sseSessionRes.write(`event: message\ndata: ${payload}\n\n`);
-        res.writeHead(202);
-        res.end();
-      } else {
-        // StreamableHTTP transport: respond directly on the POST connection.
-        // Include Mcp-Session-Id on initialize so the SDK doesn't reject us.
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (method === "initialize") headers["Mcp-Session-Id"] = "mock-streamable-1";
-        res.writeHead(200, headers);
-        res.end(payload);
-      }
-    };
-
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-      const urlObj = new URL(req.url ?? "/", "http://localhost");
-
-      // ── SSE GET: open event stream (SSEClientTransport fallback) ──────────
-      if (req.method === "GET") {
-        const sessionId = `sse-${++sseCounter}`;
-        res.writeHead(200, {
-          "Content-Type": "text/event-stream",
-          "Cache-Control": "no-cache",
-          Connection: "keep-alive",
+      if (
+        req.method === "POST" &&
+        req.url?.startsWith("/api/tools/write-planning-document")
+      ) {
+        let raw = "";
+        req.on("data", (chunk) => { raw += chunk; });
+        req.on("end", () => {
+          let body: Record<string, unknown> = {};
+          try { body = JSON.parse(raw); } catch { /**/ }
+          toolCalls.push({
+            type: (body.type as string) ?? "",
+            content: (body.content as string) ?? "",
+          });
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({
+            prUrl: "https://github.com/test-org/test-repo/pull/42",
+          }));
         });
-        // Endpoint event: tell the client where to POST messages
-        res.write(`event: endpoint\ndata: /message?sessionId=${sessionId}\n\n`);
-        sseSessions.set(sessionId, res);
-        req.on("close", () => { sseSessions.delete(sessionId); });
         return;
       }
-
-      if (req.method !== "POST") {
-        res.writeHead(405);
-        res.end();
-        return;
-      }
-
-      // ── POST: either StreamableHTTP or SSE message endpoint ───────────────
-      const sessionId = urlObj.searchParams.get("sessionId") ?? undefined;
-      const sseSessionRes = sessionId ? sseSessions.get(sessionId) : undefined;
-
-      let raw = "";
-      req.on("data", (chunk) => { raw += chunk; });
-      req.on("end", () => {
-        let msg: Record<string, unknown> = {};
-        try { msg = raw ? JSON.parse(raw) : {}; } catch { /**/ }
-        handleJsonRpc(msg, res, sseSessionRes);
-      });
+      // Swallow any other requests (health-checks, etc.)
+      res.writeHead(404);
+      res.end();
     });
 
     server.listen(0, "0.0.0.0", () => {
@@ -166,8 +86,10 @@ function toolNames(events: AcpEvent[]): string[] {
     .flatMap((e) => {
       const update = e.params?.update as Record<string, unknown> | undefined;
       if (update?.sessionUpdate !== "tool_call") return [];
+      // pi may emit the tool name or label; capture both
       const title = update.title as string | undefined;
-      return title ? [title] : [];
+      const name  = update.name  as string | undefined;
+      return [title, name].filter((s): s is string => !!s);
     });
 }
 
@@ -186,19 +108,21 @@ function responseText(events: AcpEvent[]): string {
 
 // ── suite ──────────────────────────────────────────────────────────────────────
 
-describe("write_planning_document tool via MCP (planning agent)", () => {
+describe("write_planning_document tool via REST extension (planning agent)", () => {
   let client: AcpTestClient;
   let mockServer: Server;
   let mockPort: number;
-  let mockToolCalls: McpToolCall[];
+  let mockToolCalls: RestToolCall[];
 
   const TEST_TOKEN = "e2e-test-mcp-token";
 
   // ── Test 1: pure Docker — no LLM ─────────────────────────────────────────────
 
-  test("pi-mcp-adapter is installed in the container", () => {
-    const containerName = `agent-test-ext-check-${Date.now()}`;
+  test("harness-planning-tools.mjs extension is present in the container", () => {
+    // write_planning_document is a native pi extension (not MCP).
+    // This verifies the extension file exists and can be imported.
     const image = `multi-agent-harness/agent-${AGENT_TYPE}:latest`;
+    const containerName = `agent-test-ext-check-${Date.now()}`;
 
     try {
       execSync(
@@ -206,13 +130,13 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
         { stdio: "pipe" }
       );
 
-      // Verify pi-mcp-adapter package is present
+      // Verify the extension file is present
       const output = execSync(
         `docker exec ${containerName} node -e ` +
-        `"const p=require('/app/node_modules/pi-mcp-adapter/package.json');console.log(p.name)"`
+        `"import('/app/harness-planning-tools.mjs').then(() => console.log('ok')).catch(e => { process.stderr.write(e.message+'\\n'); process.exit(1); })"`
       ).toString().trim();
 
-      expect(output).toBe("pi-mcp-adapter");
+      expect(output).toBe("ok");
     } finally {
       try { execSync(`docker rm -f ${containerName}`, { stdio: "pipe" }); } catch {}
     }
@@ -223,7 +147,7 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
   beforeAll(async () => {
     if (!COPILOT_TOKEN) return;
 
-    const mock = await startMockMcpBackend();
+    const mock = await startMockHarnessBackend();
     mockServer   = mock.server;
     mockPort     = mock.port;
     mockToolCalls = mock.toolCalls;
@@ -233,6 +157,8 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
       agentType: AGENT_TYPE,
       provider: PROVIDER,
       model: MODEL,
+      // AcpTestClient sets both BACKEND_URL and HARNESS_API_URL to this value.
+      // harness-planning-tools.mjs reads HARNESS_API_URL.
       backendUrl: `http://host.docker.internal:${mockPort}`,
       mcpToken: TEST_TOKEN,
       env: [`COPILOT_GITHUB_TOKEN=${COPILOT_TOKEN}`],
@@ -247,7 +173,7 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
   });
 
   test(
-    "agent calls write_planning_document when asked and mock MCP backend records the call",
+    "agent calls write_planning_document when asked and mock REST backend records the call",
     async () => {
       if (!COPILOT_TOKEN) {
         throw new Error(
@@ -265,15 +191,21 @@ describe("write_planning_document tool via MCP (planning agent)", () => {
       const text = responseText(events);
       expect(text.length).toBeGreaterThan(10);
 
+      // pi must emit a tool_call event for the extension tool
       const tools = toolNames(events);
-      expect(tools).toContain("write_planning_document");
+      expect(
+        tools.some((t) => t === "write_planning_document" || t === "Write Planning Document"),
+        `Expected write_planning_document in tool events. Got: ${JSON.stringify(tools)}`
+      ).toBe(true);
 
-      // Mock MCP backend must have received the tools/call request
-      const call = mockToolCalls.find((c) => c.name === "write_planning_document");
-      expect(call).toBeDefined();
-      expect(call!.arguments.type).toBe("spec");
-      expect(typeof call!.arguments.content).toBe("string");
-      expect((call!.arguments.content as string).length).toBeGreaterThan(10);
+      // Mock REST backend must have received the POST request
+      const call = mockToolCalls.find((c) => c.type === "spec");
+      expect(
+        call,
+        `Mock backend did not receive a write-planning-document call. Calls received: ${JSON.stringify(mockToolCalls)}`
+      ).toBeDefined();
+      expect(typeof call!.content).toBe("string");
+      expect(call!.content.length).toBeGreaterThan(10);
 
       // Agent should mention the PR URL returned by the mock
       expect(text).toContain("pull/42");

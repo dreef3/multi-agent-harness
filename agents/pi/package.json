@@ -5,7 +5,6 @@
   "dependencies": {
     "@mariozechner/pi-coding-agent": "0.66.1",
     "pi-acp": "^0.0.24",
-    "pi-mcp-adapter": "2.3.4",
     "superpowers": "github:obra/superpowers#v5.0.7"
   }
 }

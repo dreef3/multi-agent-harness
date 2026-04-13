@@ -25,6 +25,10 @@ export function revokeMcpToken(token: string): void {
   tokenContexts.delete(token);
 }
 
+export function lookupMcpTokenContext(token: string): TokenContext | undefined {
+  return tokenContexts.get(token);
+}
+
 import { dispatchTasksTool } from "./tools/dispatch_tasks.js";
 import { askPlanningAgentTool } from "./tools/ask_planning_agent.js";
 import { writePlanningDocumentTool } from "./tools/write_planning_document.js";

@@ -113,28 +113,8 @@ fi
 # No TASK_DESCRIPTION: this is a long-lived ACP server connected to the harness
 # backend via the TCP bridge.
 #
-# Write pi-mcp-adapter config so pi can reach the harness MCP server.
-MCP_BASE="${HARNESS_API_URL:-${BACKEND_URL:-http://backend:3000}}"
-mkdir -p "${HOME}/.pi/agent"
-cat > "${HOME}/.pi/agent/mcp.json" << EOF
-{
-  "mcpServers": {
-    "harness": {
-      "url": "${MCP_BASE}/mcp",
-      "auth": "bearer",
-      "bearerTokenEnv": "MCP_TOKEN",
-      "lifecycle": "eager",
-      "directTools": true
-    }
-  },
-  "settings": {
-    "toolPrefix": "none"
-  }
-}
-EOF
-
 # Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which loads
-# pi-mcp-adapter (giving pi access to all harness MCP tools) and injects the
-# planning AGENTS.md system prompt.
+# the harness-planning-tools extension (registering write_planning_document as
+# a native pi tool via REST) and injects the planning AGENTS.md system prompt.
 export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
 exec node /app/stdio-tcp-bridge.mjs /app/node_modules/.bin/pi-acp

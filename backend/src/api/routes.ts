@@ -1,4 +1,5 @@
 import { Router } from "express";
+import type { Request, Response } from "express";
 import type Dockerode from "dockerode";
 import { createProjectsRouter } from "./projects.js";
 import { createRepositoriesRouter } from "./repositories.js";
@@ -14,7 +15,8 @@ import { config } from "../config.js";
 import { verifyJwt } from "./auth.js";
 import { auditLog } from "./auditMiddleware.js";
 import type { ContainerRuntime } from "../orchestrator/containerRuntime.js";
-import { createMcpMiddleware } from "../mcp/server.js";
+import { createMcpMiddleware, lookupMcpTokenContext } from "../mcp/server.js";
+import { handleWritePlanningDocument } from "../agents/planningTool.js";
 
 export function createRouter(dataDir: string, docker: Dockerode, containerRuntime?: ContainerRuntime): Router {
   const router = Router();
@@ -37,6 +39,36 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
 
   // MCP SSE server — no auth (agents connect directly)
   router.use("/mcp", createMcpMiddleware());
+
+  // Agent REST tools — Bearer-token auth via MCP token store (mounted before JWT)
+  // Called by harness-planning-tools.mjs extension in pi/copilot planning containers.
+  router.post("/tools/write-planning-document", async (req: Request, res: Response) => {
+    const token = req.headers.authorization?.startsWith("Bearer ")
+      ? req.headers.authorization.slice(7)
+      : undefined;
+    const ctx = token ? lookupMcpTokenContext(token) : undefined;
+    if (!ctx) {
+      res.status(401).json({ error: "Unauthorized: missing or invalid token" });
+      return;
+    }
+
+    const { type, content } = (req.body ?? {}) as { type?: string; content?: string };
+    if (!type || !content) {
+      res.status(400).json({ error: "Missing required fields: type, content" });
+      return;
+    }
+    if (type !== "spec" && type !== "plan") {
+      res.status(400).json({ error: 'type must be "spec" or "plan"' });
+      return;
+    }
+
+    const result = await handleWritePlanningDocument(ctx.projectId, type, content, dataDir);
+    if ("error" in result) {
+      res.status(400).json({ error: result.error });
+      return;
+    }
+    res.json(result);
+  });
 
   // JWT verification for all protected routes
   router.use(verifyJwt());
