@@ -58,44 +58,98 @@ function startMockMcpBackend(): Promise<{
   };
 
   return new Promise((resolve) => {
+    // Track SSE sessions so we can route POST messages back to the right stream.
+    let sseCounter = 0;
+    const sseSessions = new Map<string, ServerResponse>();
+
+    const handleJsonRpc = (
+      msg: Record<string, unknown>,
+      res: ServerResponse,
+      sseSessionRes?: ServerResponse,
+    ) => {
+      const { method, id } = msg as { method?: string; id?: unknown };
+      let result: Record<string, unknown>;
+
+      if (method === "initialize") {
+        result = {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "mock-harness", version: "1.0.0" },
+        };
+      } else if (method === "tools/list") {
+        result = { tools: [WRITE_PLANNING_TOOL] };
+      } else if (method === "tools/call") {
+        const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
+        toolCalls.push({ name: params.name ?? "", arguments: params.arguments ?? {} });
+        result = {
+          content: [{
+            type: "text",
+            text: "Planning document created. PR: https://github.com/test-org/test-repo/pull/42",
+          }],
+        };
+      } else {
+        result = {};
+      }
+
+      // Notifications have no id — don't respond (just acknowledge with 200)
+      if (id === undefined || id === null) {
+        res.writeHead(200);
+        res.end();
+        return;
+      }
+
+      const payload = JSON.stringify({ jsonrpc: "2.0", id, result });
+
+      if (sseSessionRes) {
+        // SSE transport: send response as an SSE "message" event on the open stream,
+        // and acknowledge the POST with 202 Accepted (no body).
+        sseSessionRes.write(`event: message\ndata: ${payload}\n\n`);
+        res.writeHead(202);
+        res.end();
+      } else {
+        // StreamableHTTP transport: respond directly on the POST connection.
+        // Include Mcp-Session-Id on initialize so the SDK doesn't reject us.
+        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        if (method === "initialize") headers["Mcp-Session-Id"] = "mock-streamable-1";
+        res.writeHead(200, headers);
+        res.end(payload);
+      }
+    };
+
     const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      const urlObj = new URL(req.url ?? "/", "http://localhost");
+
+      // ── SSE GET: open event stream (SSEClientTransport fallback) ──────────
+      if (req.method === "GET") {
+        const sessionId = `sse-${++sseCounter}`;
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        // Endpoint event: tell the client where to POST messages
+        res.write(`event: endpoint\ndata: /message?sessionId=${sessionId}\n\n`);
+        sseSessions.set(sessionId, res);
+        req.on("close", () => { sseSessions.delete(sessionId); });
+        return;
+      }
+
       if (req.method !== "POST") {
         res.writeHead(405);
         res.end();
         return;
       }
+
+      // ── POST: either StreamableHTTP or SSE message endpoint ───────────────
+      const sessionId = urlObj.searchParams.get("sessionId") ?? undefined;
+      const sseSessionRes = sessionId ? sseSessions.get(sessionId) : undefined;
+
       let raw = "";
       req.on("data", (chunk) => { raw += chunk; });
       req.on("end", () => {
         let msg: Record<string, unknown> = {};
         try { msg = raw ? JSON.parse(raw) : {}; } catch { /**/ }
-
-        const { method, id } = msg as { method?: string; id?: unknown };
-        let result: Record<string, unknown>;
-
-        if (method === "initialize") {
-          result = {
-            protocolVersion: "2024-11-05",
-            capabilities: { tools: {} },
-            serverInfo: { name: "mock-harness", version: "1.0.0" },
-          };
-        } else if (method === "tools/list") {
-          result = { tools: [WRITE_PLANNING_TOOL] };
-        } else if (method === "tools/call") {
-          const params = (msg.params ?? {}) as { name?: string; arguments?: Record<string, unknown> };
-          toolCalls.push({ name: params.name ?? "", arguments: params.arguments ?? {} });
-          result = {
-            content: [{
-              type: "text",
-              text: "Planning document created. PR: https://github.com/test-org/test-repo/pull/42",
-            }],
-          };
-        } else {
-          result = {};
-        }
-
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+        handleJsonRpc(msg, res, sseSessionRes);
       });
     });
 
