@@ -19,7 +19,13 @@ else
   [ -f "/agent-data/planning/AGENTS.md" ] && PLANNING_PROMPT="$(cat /agent-data/planning/AGENTS.md)"
 fi
 
-exec /app/node_modules/.bin/pi \
-  --extension /app/harness-planning-tools.mjs \
-  ${PLANNING_PROMPT:+--append-system-prompt "${PLANNING_PROMPT}"} \
-  "$@"
+if [ -n "${PLANNING_PROMPT}" ]; then
+  exec /app/node_modules/.bin/pi \
+    --extension /app/harness-planning-tools.mjs \
+    --append-system-prompt "${PLANNING_PROMPT}" \
+    "$@"
+else
+  exec /app/node_modules/.bin/pi \
+    --extension /app/harness-planning-tools.mjs \
+    "$@"
+fi
