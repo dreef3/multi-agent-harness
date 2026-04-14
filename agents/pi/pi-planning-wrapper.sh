@@ -7,9 +7,17 @@
 # the actual pi binary.
 #
 # Set in start.sh via: export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
+#
+# PLANNING_SYSTEM_PROMPT — if set, used instead of /agent-data/planning/AGENTS.md.
+#   Useful for tests that need a simpler system prompt without the multi-phase
+#   brainstorming workflow. Leave unset in production.
 
-PLANNING_PROMPT=""
-[ -f "/agent-data/planning/AGENTS.md" ] && PLANNING_PROMPT="$(cat /agent-data/planning/AGENTS.md)"
+if [ -n "${PLANNING_SYSTEM_PROMPT}" ]; then
+  PLANNING_PROMPT="${PLANNING_SYSTEM_PROMPT}"
+else
+  PLANNING_PROMPT=""
+  [ -f "/agent-data/planning/AGENTS.md" ] && PLANNING_PROMPT="$(cat /agent-data/planning/AGENTS.md)"
+fi
 
 exec /app/node_modules/.bin/pi \
   --extension /app/harness-planning-tools.mjs \

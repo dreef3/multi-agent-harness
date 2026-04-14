@@ -161,7 +161,13 @@ describe("write_planning_document tool via REST extension (planning agent)", () 
       // harness-planning-tools.mjs reads HARNESS_API_URL.
       backendUrl: `http://host.docker.internal:${mockPort}`,
       mcpToken: TEST_TOKEN,
-      env: [`COPILOT_GITHUB_TOKEN=${COPILOT_TOKEN}`],
+      env: [
+        `COPILOT_GITHUB_TOKEN=${COPILOT_TOKEN}`,
+        // Override AGENTS.md with a simpler prompt so the multi-phase brainstorming
+        // workflow doesn't intercept explicit tool-call requests in Test 2, and so
+        // Test 3 still passes (no edit/write, clarifying questions).
+        `PLANNING_SYSTEM_PROMPT=You are a planning assistant. You help users plan features by asking clarifying questions. You have a write_planning_document tool. When explicitly asked to call write_planning_document with specific type and content parameters, call it immediately with those exact values. Never write implementation code yourself — always ask clarifying questions for feature requests.`,
+      ],
     });
 
     await client.start(CONTAINER_START_TIMEOUT);
