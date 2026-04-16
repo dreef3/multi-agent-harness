@@ -6,8 +6,5 @@
     "@mariozechner/pi-coding-agent": "0.66.1",
     "pi-acp": "^0.0.24",
     "superpowers": "github:obra/superpowers#v5.0.7"
-  },
-  "overrides": {
-    "@agentclientprotocol/sdk": "0.18.2"
   }
 }
