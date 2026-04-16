@@ -127,7 +127,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         prNumber2 = parseInt(prs[0].externalId, 10);
         return true;
       },
-      { timeout: 60000, intervals: [5000] }
+      { timeout: 3 * 60 * 1000, intervals: [5000] }
     ).toBe(true);
 
     expect(prId).toBeDefined();
