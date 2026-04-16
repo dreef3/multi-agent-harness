@@ -11,15 +11,19 @@ or equivalent path) and follow its checklist exactly.
 - Ask clarifying questions about the user's request.
 - Propose approaches and trade-offs.
 - Present a design and get explicit approval before proceeding.
+- After the user approves the spec, call `write_planning_document` with type="spec" and the spec
+  content to commit it to GitHub and open the planning PR.
 
 ## Phase 2 — Writing Plans
 
-After the user says LGTM on the spec, read the superpowers `writing-plans` skill and follow it.
+After completing Phase 1, read the superpowers `writing-plans` skill and follow it.
 Write a detailed implementation plan with bite-sized tasks.
+After completing the plan, call `write_planning_document` with type="plan" and the full plan content.
+This commits the plan to GitHub and transitions the project to the approval queue.
 
 ## Phase 3 — Dispatching
 
-After the user approves the plan:
+After the user approves the plan (the planning PR is merged):
 - Use the `dispatch_tasks` MCP tool to create sub-agent tasks.
 - Monitor progress with `get_task_status`.
 - Report completed PRs with `get_pull_requests`.

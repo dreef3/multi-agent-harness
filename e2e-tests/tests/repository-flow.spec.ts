@@ -78,20 +78,25 @@ test.describe('Repository Configuration Flow', () => {
       });
     }
 
-    // Send a task that explicitly invokes superpowers skills.
-    // Keeping the request concise to minimize token usage.
+    // Send a task that exercises the full planning workflow in one shot.
+    // Explicitly requests write_planning_document calls so the agent does not
+    // stop at the LGTM gate waiting for user confirmation.
     const taskMessage = [
-      'Please execute these superpowers skills in order, keeping each step brief:',
-      '1. /brainstorm — one paragraph analysis only',
-      '2. /writing-plans — write the implementation plan using EXACTLY this format:',
+      'Complete the full planning workflow in ONE response — no clarifying questions needed.',
+      '',
+      'Task: In the "E2E Test Repo" repository, create a file called `e2e-marker.md`',
+      'with the single line "# E2E Test Passed". Commit it to a new branch.',
+      '',
+      'Write the plan using EXACTLY this format:',
       '',
       '### Task 1: Create e2e-marker.md',
       '**Repository:** E2E Test Repo',
       '**Description:**',
       'Create a file called `e2e-marker.md` with the single line "# E2E Test Passed". Commit it to a new branch.',
       '',
-      'Task: In the "E2E Test Repo" repository, create a file called `e2e-marker.md`',
-      'with the single line "# E2E Test Passed". Commit it to a new branch.',
+      'After writing the plan, call write_planning_document TWICE to save it:',
+      '1. Call with type="spec" and the plan above as the content',
+      '2. Call with type="plan" and the same plan content',
     ].join('\n');
 
     await page.getByPlaceholder(/type your message/i).fill(taskMessage);
