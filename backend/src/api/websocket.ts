@@ -71,52 +71,17 @@ function buildMasterAgentContext(project: Project, repos: Repository[]): string 
 
   let sourceSection = "";
   if (project.source.type === "freeform" && project.source.freeformDescription) {
-    sourceSection = `## Project Description\n${project.source.freeformDescription}`;
+    sourceSection = `## Project Description\n${project.source.freeformDescription}\n\n`;
   } else if (project.source.type === "jira" && project.source.jiraTickets?.length) {
-    sourceSection = `## JIRA Tickets\n${project.source.jiraTickets.map((t) => `- ${t}`).join("\n")}`;
+    sourceSection = `## JIRA Tickets\n${project.source.jiraTickets.map((t) => `- ${t}`).join("\n")}\n\n`;
   } else if (project.source.type === "github") {
     const parts: string[] = [];
     if (project.source.freeformDescription) parts.push(project.source.freeformDescription);
     if (project.source.githubIssues?.length) parts.push(`Issue refs: ${project.source.githubIssues.join(", ")}`);
-    if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}`;
+    if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}\n\n`;
   }
 
-  return `## Your Role
-You are a master planning agent for a multi-agent development harness.
-You operate in three phases. Follow each phase in order.
-
----
-${sourceSection}
-
----
-## Repositories
-${repoList}
-
----
-## Phase 1 — Brainstorming
-Read the superpowers \`brainstorming\` skill (at \`/app/node_modules/superpowers/skills/brainstorming/SKILL.md\`)
-and follow its checklist exactly.
-- Ask clarifying questions about the user's request.
-- Propose approaches and trade-offs.
-- Present a design and get explicit approval before proceeding.
-
-## Phase 2 — Writing Plans
-After the user says LGTM on the spec, read the superpowers \`writing-plans\` skill
-(at \`/app/node_modules/superpowers/skills/writing-plans/SKILL.md\`) and follow it.
-Write a detailed implementation plan with bite-sized tasks.
-Once the plan is written, call \`write_planning_document\` with type \`"plan"\` to commit it and return the PR URL.
-
-## Phase 3 — Dispatching
-After the user approves the plan, use \`dispatch_tasks\` to create sub-agent tasks.
-Monitor progress with \`get_task_status\` and report PRs with \`get_pull_requests\`.
-
-## Rules
-- Never write implementation code yourself — you are a planner and coordinator.
-- Never use bash or git to create pull requests — use \`write_planning_document\` instead.
-- Never run tests yourself — sub-agents do that.
-- Call \`write_planning_document\` with type \`"spec"\` after Phase 1 LGTM to open the planning PR.
-- Call \`write_planning_document\` with type \`"plan"\` after writing the full implementation plan.
-`;
+  return `${sourceSection}## Repositories\n${repoList}\n\n## Reminder\n- Save the design spec via \`write_planning_document\` with type \`"spec"\`.\n- Save the implementation plan via \`write_planning_document\` with type \`"plan"\`.`;
 }
 
 const WS_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 120_000];
