@@ -94,7 +94,13 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
   echo "[start] pi exited with code ${PI_EXIT}" >&2
 
   if [ $PI_EXIT -eq 0 ]; then
-    # Push any uncommitted changes (pi may have already pushed; this is a no-op if so)
+    # Auto-commit any uncommitted changes the agent left behind (modified or untracked files)
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      git add -A
+      git commit -m "${TASK_COMMIT_MSG:-fix: implement task}" 2>&1
+      echo "[start] Auto-committed uncommitted changes before push" >&2
+    fi
+    # Push to remote (no-op if nothing new to push)
     git push origin "${BRANCH_NAME}" 2>&1 || echo "[start] git push had no new changes" >&2
 
     curl -s -X PATCH "${HARNESS_API_URL}/api/sessions/${AGENT_SESSION_ID}" \
