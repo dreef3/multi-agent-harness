@@ -289,10 +289,24 @@ export class AcpAgentManager extends EventEmitter {
     // Use a 5-minute timeout: a single planning turn can take >120s under CI
     // load because it involves LLM generation plus multiple GitHub API calls
     // (branch creation, file commits, PR creation) via write_planning_document.
-    const res = await this.sendRequest(state, "session/prompt", {
-      sessionId: state.acpSessionId,
-      prompt: [{ type: "text", text: message }],
-    }, 300_000);
+    let res: AcpResponse;
+    try {
+      res = await this.sendRequest(state, "session/prompt", {
+        sessionId: state.acpSessionId,
+        prompt: [{ type: "text", text: message }],
+      }, 300_000);
+    } catch (err) {
+      // Reset streaming state so the stop timer and subsequent prompts work correctly
+      state.isStreaming = false;
+      state.promptPending = false;
+      state.turnSpan?.setStatus({ code: SpanStatusCode.ERROR, message: String(err) });
+      state.turnSpan?.end();
+      state.turnSpan = null;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      this.emitWsEvent(agentId, { type: "acp:error", agentId, message: errMsg });
+      this.emitWsEvent(agentId, { type: "acp:turn_complete", agentId, stopReason: "timeout" });
+      throw err;
+    }
 
     // Handle turn completion from the response
     const stopReason = (res.result?.stopReason as string) ?? (res.error ? "error" : "unknown");
