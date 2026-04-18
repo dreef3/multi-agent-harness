@@ -285,11 +285,14 @@ export class AcpAgentManager extends EventEmitter {
       attributes: { "agent.id": agentId },
     }, parentCtx);
 
-    // session/prompt — response (not notification) carries the stopReason
+    // session/prompt — response (not notification) carries the stopReason.
+    // Use a 5-minute timeout: a single planning turn can take >120s under CI
+    // load because it involves LLM generation plus multiple GitHub API calls
+    // (branch creation, file commits, PR creation) via write_planning_document.
     const res = await this.sendRequest(state, "session/prompt", {
       sessionId: state.acpSessionId,
       prompt: [{ type: "text", text: message }],
-    });
+    }, 300_000);
 
     // Handle turn completion from the response
     const stopReason = (res.result?.stopReason as string) ?? (res.error ? "error" : "unknown");
@@ -640,15 +643,17 @@ export class AcpAgentManager extends EventEmitter {
     state: AgentState,
     method: string,
     params?: Record<string, unknown>,
+    timeoutMs = 120_000,
   ): Promise<AcpResponse> {
     const id = state.nextRequestId++;
     const req: AcpRequest = { jsonrpc: "2.0", id, method, ...(params ? { params } : {}) };
 
     return new Promise<AcpResponse>((resolve, reject) => {
+      const timeoutSec = Math.round(timeoutMs / 1000);
       const timeout = setTimeout(() => {
         state.pendingRequests.delete(id);
-        reject(new Error(`[AcpAgentManager] request ${method} (id=${id}) timed out after 120s`));
-      }, 120_000);
+        reject(new Error(`[AcpAgentManager] request ${method} (id=${id}) timed out after ${timeoutSec}s`));
+      }, timeoutMs);
 
       state.pendingRequests.set(id, {
         resolve: (r) => { clearTimeout(timeout); resolve(r); },
