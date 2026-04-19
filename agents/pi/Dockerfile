@@ -1,4 +1,5 @@
-FROM multi-agent-harness/agent-base:latest AS base
+ARG BASE_IMAGE=multi-agent-harness/agent-base:latest
+FROM ${BASE_IMAGE} AS base
 
 WORKDIR /app
 
