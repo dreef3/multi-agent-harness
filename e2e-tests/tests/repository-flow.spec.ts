@@ -106,7 +106,8 @@ test.describe('Repository Configuration Flow', () => {
     await expect(page.locator('.bg-gray-800').first()).toBeVisible({ timeout: 120000 });
 
     // Wait for the project to reach awaiting_plan_approval (agent wrote spec + plan).
-    // Allow up to 5 minutes — the agent reads skills and thinks before calling write_planning_document.
+    // Allow up to 8 minutes — the agent needs two full turns on slow CI runners,
+    // and the copilot-copilot variant can take 5+ minutes per turn under load.
     const projectInApproval = await expect.poll(
       async () => {
         const res = await request.get(`${API_BASE}/projects/${projectId}`);
@@ -114,7 +115,7 @@ test.describe('Repository Configuration Flow', () => {
         const project = await res.json() as { status: string };
         return project.status === 'awaiting_plan_approval';
       },
-      { timeout: 300000, intervals: [5000] }
+      { timeout: 480000, intervals: [5000] }
     ).toBe(true).then(() => true).catch(() => false);
 
     // Get current project state — agent must have created the planning PR itself.

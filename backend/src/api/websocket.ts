@@ -81,7 +81,7 @@ function buildMasterAgentContext(project: Project, repos: Repository[]): string 
     if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}\n\n`;
   }
 
-  return `${sourceSection}## Repositories\n${repoList}\n\n## Reminder\n- Save the design spec via \`write_planning_document\` with type \`"spec"\`.\n- Save the implementation plan via \`write_planning_document\` with type \`"plan"\`.`;
+  return `${sourceSection}## Repositories\n${repoList}\n\n## Instructions\n- Proceed directly to planning — no clarifying questions.\n- Do not clone or explore repositories; use the task description above.\n- Save the design spec via \`write_planning_document\` with type \`"spec"\`.\n- Save the implementation plan via \`write_planning_document\` with type \`"plan"\`.`;
 }
 
 const WS_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 120_000];

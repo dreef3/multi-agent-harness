@@ -286,15 +286,15 @@ export class AcpAgentManager extends EventEmitter {
     }, parentCtx);
 
     // session/prompt — response (not notification) carries the stopReason.
-    // Use a 5-minute timeout: a single planning turn can take >120s under CI
-    // load because it involves LLM generation plus multiple GitHub API calls
+    // Use a 10-minute timeout: slow CI runners (especially copilot-copilot) can
+    // exceed 5 minutes per turn due to LLM generation + multiple GitHub API calls
     // (branch creation, file commits, PR creation) via write_planning_document.
     let res: AcpResponse;
     try {
       res = await this.sendRequest(state, "session/prompt", {
         sessionId: state.acpSessionId,
         prompt: [{ type: "text", text: message }],
-      }, 300_000);
+      }, 600_000);
     } catch (err) {
       // Reset streaming state so the stop timer and subsequent prompts work correctly
       state.isStreaming = false;
