@@ -83,8 +83,7 @@ SQLite, persisted in the `harness-data` named Docker volume on the VM's boot dis
 | `TAILSCALE_OAUTH_CLIENT_ID` | Tailscale OAuth client ID for GHA runner |
 | `TAILSCALE_OAUTH_SECRET` | Tailscale OAuth client secret for GHA runner |
 | `GHCR_TOKEN` | GitHub PAT with `read:packages` — used by VM to pull images |
-| `ANTHROPIC_API_KEY` | Claude API key written to `.env` |
-| `DEPLOY_GITHUB_TOKEN` | GitHub PAT for the harness app (written to `.env`) |
+| `DEPLOY_GITHUB_TOKEN` | GitHub PAT for the harness app — used by both the pi agent and Copilot provider |
 
 ### GitHub Actions Variables (non-secret)
 

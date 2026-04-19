@@ -128,7 +128,6 @@ jobs:
       - name: Write .env
         run: |
           cat > /tmp/harness.env << 'ENVEOF'
-          ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN=${{ secrets.DEPLOY_GITHUB_TOKEN }}
           PORT=3000
           DATA_DIR=/app/data
@@ -137,6 +136,7 @@ jobs:
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
           HARNESS_REPO_CACHE_VOLUME=harness-repo-cache
           GHCR_PREFIX=${{ env.GHCR_PREFIX }}
+          PI_ENABLED=true
           ENVEOF
 
       - name: Copy compose files and env to VM
