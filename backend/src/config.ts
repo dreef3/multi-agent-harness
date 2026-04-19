@@ -115,8 +115,11 @@ export const config = {
   k8sNamespace: process.env.K8S_NAMESPACE ?? "default",
 };
 
+const agentImagePrefix =
+  process.env.AGENT_IMAGE_PREFIX ?? "multi-agent-harness";
+
 export function agentImage(agentType: string): string {
-  return `multi-agent-harness/agent-${agentType}:latest`;
+  return `${agentImagePrefix}/agent-${agentType}:latest`;
 }
 
 export function resolveAgentConfig(

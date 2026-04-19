@@ -93,6 +93,65 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build and push agent-base
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agents/base/Dockerfile.base
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.GHCR_PREFIX }}/agent-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push agent-pi
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agents/pi/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.GHCR_PREFIX }}/agent-pi:latest
+          build-args: |
+            BASE_IMAGE=${{ env.GHCR_PREFIX }}/agent-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push agent-copilot
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agents/copilot/Dockerfile
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.GHCR_PREFIX }}/agent-copilot:latest
+          build-args: |
+            BASE_IMAGE=${{ env.GHCR_PREFIX }}/agent-base:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push planning-agent
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: planning-agent/Dockerfile.wolfi
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.GHCR_PREFIX }}/planning-agent:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push sub-agent
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: sub-agent/Dockerfile.wolfi
+          push: true
+          platforms: linux/arm64
+          tags: ${{ env.GHCR_PREFIX }}/sub-agent:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   # ── 3. Deploy ─────────────────────────────────────────────────────────────
   deploy:
     name: Deploy
@@ -130,7 +189,9 @@ jobs:
           PORT=3000
           DATA_DIR=/app/data
           FRONTEND_PORT=9999
+          AGENT_IMAGE_PREFIX=${{ env.GHCR_PREFIX }}
           SUB_AGENT_IMAGE=${{ env.GHCR_PREFIX }}/sub-agent:latest
+          PLANNING_AGENT_IMAGE=${{ env.GHCR_PREFIX }}/planning-agent:latest
           SUB_AGENT_NETWORK=multi-agent-harness_harness-agents
           HARNESS_REPO_CACHE_VOLUME=harness-repo-cache
           GHCR_PREFIX=${{ env.GHCR_PREFIX }}
