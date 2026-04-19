@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "dependencies": {
-    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-coding-agent": "0.66.1",
     "pi-acp": "^0.0.24",
     "superpowers": "github:obra/superpowers#v5.0.7"
   }

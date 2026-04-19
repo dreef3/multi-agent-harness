@@ -42,7 +42,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
   });
 
   test('fix-run marks comments fixed and pushes new commit', async ({ request }) => {
-    test.setTimeout(20 * 60 * 1000); // 20 minutes — covers two sub-agent runs
+    test.setTimeout(30 * 60 * 1000); // 30 minutes — covers two sub-agent runs (slow copilot models need ~15 min each)
 
     // ── 1. Get the seeded repository ID ──────────────────────────────────────
     const reposRes = await request.get(`${API_BASE}/repositories`);
@@ -127,7 +127,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
         prNumber2 = parseInt(prs[0].externalId, 10);
         return true;
       },
-      { timeout: 60000, intervals: [5000] }
+      { timeout: 3 * 60 * 1000, intervals: [5000] }
     ).toBe(true);
 
     expect(prId).toBeDefined();
@@ -171,7 +171,7 @@ test.describe('Review Comment Fix-Run Flow', () => {
     // ── 11. Trigger fix-run (blocks until container exits) ───────────────────
     const fixRes = await request.post(
       `${API_BASE}/pull-requests/${prId}/fix`,
-      { timeout: 15 * 60 * 1000 }
+      { timeout: 20 * 60 * 1000 }
     );
     expect(fixRes.ok()).toBe(true);
     const fixData = await fixRes.json() as { success: boolean };

@@ -11,8 +11,10 @@ RUN npm install --production && \
 ENV PI_ACP_PI_COMMAND=/app/node_modules/.bin/pi
 
 COPY agents/copilot/mcp.json /app/mcp.json
+COPY agents/copilot/pi-planning-wrapper.sh /app/pi-planning-wrapper.sh
+COPY agents/pi/harness-planning-tools.mjs /app/harness-planning-tools.mjs
 COPY agents/copilot/start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+RUN chmod +x /app/start.sh /app/pi-planning-wrapper.sh
 
 COPY agents/prompts/planning/AGENTS.md /agent-data/planning/AGENTS.md
 RUN mkdir -p /agent-data/planning && ln -sf /agent-data/planning/AGENTS.md /agent-data/planning/CLAUDE.md

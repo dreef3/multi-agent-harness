@@ -1,5 +1,5 @@
 import { createConnection, Socket } from "net";
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
 
 export interface AcpEvent {
   jsonrpc: "2.0";
@@ -29,6 +29,7 @@ export class AcpTestClient {
       provider?: string;
       model?: string;
       backendUrl?: string;
+      mcpToken?: string;
       env?: string[];
     }
   ) {
@@ -37,19 +38,33 @@ export class AcpTestClient {
 
   async start(connectTimeoutMs = 120_000): Promise<void> {
     const image = `multi-agent-harness/agent-${this.options.agentType}:latest`;
-    const envFlags = [
-      `-e AGENT_ROLE=planning`,
-      `-e PROJECT_ID=${this.options.projectId}`,
-      `-e AGENT_PROVIDER=${this.options.provider ?? "github-copilot"}`,
-      `-e AGENT_MODEL=${this.options.model ?? "gpt-5-mini"}`,
-      `-e BACKEND_URL=${this.options.backendUrl ?? "http://localhost:19999"}`,
-      ...(this.options.env ?? []).map((e: string) => `-e ${e}`),
-    ].join(" ");
+    const backendUrl = this.options.backendUrl ?? "http://localhost:19999";
+    const mcpToken   = this.options.mcpToken   ?? "test-token";
+    // Build docker run args as an array to avoid shell quoting issues with env values
+    // that may contain spaces (e.g. PLANNING_SYSTEM_PROMPT).
+    const envArgs: string[] = [
+      "-e", `AGENT_ROLE=planning`,
+      "-e", `PROJECT_ID=${this.options.projectId}`,
+      "-e", `AGENT_PROVIDER=${this.options.provider ?? "github-copilot"}`,
+      "-e", `AGENT_MODEL=${this.options.model ?? "gpt-5-mini"}`,
+      // Pass both names: BACKEND_URL for legacy callers, HARNESS_API_URL for the extension
+      "-e", `BACKEND_URL=${backendUrl}`,
+      "-e", `HARNESS_API_URL=${backendUrl}`,
+      "-e", `MCP_TOKEN=${mcpToken}`,
+      ...(this.options.env ?? []).flatMap((e: string) => ["-e", e]),
+    ];
 
-    execSync(
-      `docker run -d --name ${this.containerName} ${envFlags} ${image}`,
-      { stdio: "pipe" }
-    );
+    const result = spawnSync("docker", [
+      "run", "-d",
+      // --add-host makes host.docker.internal resolve to the Docker host gateway on Linux
+      "--add-host=host.docker.internal:host-gateway",
+      "--name", this.containerName,
+      ...envArgs,
+      image,
+    ], { stdio: "pipe" });
+    if (result.status !== 0) {
+      throw new Error(`docker run failed: ${result.stderr?.toString()}`);
+    }
 
     const ip = execSync(
       `docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ${this.containerName}`

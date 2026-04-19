@@ -59,6 +59,11 @@ export function broadcastStuckAgent(projectId: string, sessionId: string) {
   });
 }
 
+// Exported for unit testing
+export function buildMasterAgentContextForTest(project: Project, repos: Repository[]): string {
+  return buildMasterAgentContext(project, repos);
+}
+
 function buildMasterAgentContext(project: Project, repos: Repository[]): string {
   const repoList = repos.length > 0
     ? repos.map((r) => `- **${r.name}** (id: \`${r.id}\`): ${r.cloneUrl} (default branch: ${r.defaultBranch})`).join("\n")
@@ -66,33 +71,17 @@ function buildMasterAgentContext(project: Project, repos: Repository[]): string 
 
   let sourceSection = "";
   if (project.source.type === "freeform" && project.source.freeformDescription) {
-    sourceSection = `## Project Description\n${project.source.freeformDescription}`;
+    sourceSection = `## Project Description\n${project.source.freeformDescription}\n\n`;
   } else if (project.source.type === "jira" && project.source.jiraTickets?.length) {
-    sourceSection = `## JIRA Tickets\n${project.source.jiraTickets.map((t) => `- ${t}`).join("\n")}`;
+    sourceSection = `## JIRA Tickets\n${project.source.jiraTickets.map((t) => `- ${t}`).join("\n")}\n\n`;
   } else if (project.source.type === "github") {
     const parts: string[] = [];
     if (project.source.freeformDescription) parts.push(project.source.freeformDescription);
     if (project.source.githubIssues?.length) parts.push(`Issue refs: ${project.source.githubIssues.join(", ")}`);
-    if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}`;
+    if (parts.length > 0) sourceSection = `## GitHub Issues\n${parts.join("\n\n")}\n\n`;
   }
 
-  return `## Your Role
-You are a master planning agent. You operate in two phases, each driven by a
-dedicated superpowers skill. Follow each skill's process exactly.
-
----
-${sourceSection}
-
----
-## Repositories
-${repoList}
-
----
-## Technical Guidelines
-1. You have NO local direct file access. You MUST use the provided tools to interact with repositories.
-2. Always perform a broad search/grep before making structural assumptions.
-3. When you are ready to propose a plan, you MUST follow the "superpowers:executing-plans" format exactly.
-`;
+  return `${sourceSection}## Repositories\n${repoList}\n\n## Instructions\n- Proceed directly to planning — no clarifying questions.\n- Do not clone or explore repositories; use the task description above.\n- Save the design spec via \`write_planning_document\` with type \`"spec"\`.\n- Save the implementation plan via \`write_planning_document\` with type \`"plan"\`.`;
 }
 
 const WS_RETRY_DELAYS = [5_000, 15_000, 30_000, 60_000, 120_000];
@@ -217,7 +206,7 @@ export function setupWebSocket(server: Server) {
 
     // Generate a per-session MCP token so agents can authenticate to the MCP SSE endpoint
     const mcpToken = randomUUID();
-    registerMcpToken(mcpToken);
+    registerMcpToken(mcpToken, projectId, "planning");
 
     const envVars = [
       `GIT_CLONE_URLS=${JSON.stringify(repoUrls)}`,

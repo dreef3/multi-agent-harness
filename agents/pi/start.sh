@@ -94,7 +94,13 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
   echo "[start] pi exited with code ${PI_EXIT}" >&2
 
   if [ $PI_EXIT -eq 0 ]; then
-    # Push any uncommitted changes (pi may have already pushed; this is a no-op if so)
+    # Auto-commit any uncommitted changes the agent left behind (modified or untracked files)
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      git add -A
+      git commit -m "${TASK_COMMIT_MSG:-fix: implement task}" 2>&1
+      echo "[start] Auto-committed uncommitted changes before push" >&2
+    fi
+    # Push to remote (no-op if nothing new to push)
     git push origin "${BRANCH_NAME}" 2>&1 || echo "[start] git push had no new changes" >&2
 
     curl -s -X PATCH "${HARNESS_API_URL}/api/sessions/${AGENT_SESSION_ID}" \
@@ -112,4 +118,9 @@ fi
 # ── Planning agent mode ───────────────────────────────────────────────────────
 # No TASK_DESCRIPTION: this is a long-lived ACP server connected to the harness
 # backend via the TCP bridge.
+#
+# Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which loads
+# the harness-planning-tools extension (registering write_planning_document as
+# a native pi tool via REST) and injects the planning AGENTS.md system prompt.
+export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
 exec node /app/stdio-tcp-bridge.mjs /app/node_modules/.bin/pi-acp

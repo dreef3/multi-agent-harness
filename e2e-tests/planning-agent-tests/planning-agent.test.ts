@@ -62,6 +62,7 @@ function toolNames(events: AcpEvent[]): string[] {
 
 describe("Planning agent (ACP isolation)", () => {
   let client: AcpTestClient;
+  let setupComplete = false;
 
   beforeAll(async () => {
     if (!COPILOT_TOKEN) {
@@ -82,10 +83,11 @@ describe("Planning agent (ACP isolation)", () => {
     });
 
     await client.start(CONTAINER_START_TIMEOUT);
+    setupComplete = true;
   }, CONTAINER_START_TIMEOUT + 10_000);
 
   afterAll(async () => {
-    await client.stop();
+    if (setupComplete) await client.stop();
   });
 
   // ── Test 1: skill file accessible ──────────────────────────────────────────
@@ -115,10 +117,10 @@ describe("Planning agent (ACP isolation)", () => {
     expect(output.length).toBeGreaterThan(100);
   });
 
-  // ── Test 2: Phase-1 behaviour ───────────────────────────────────────────────
+  // ── Test 2: Clarification behaviour for ambiguous requests ──────────────────
 
   test(
-    "agent reads brainstorming skill via bash and asks clarifying questions",
+    "agent asks clarifying questions for ambiguous requests without calling planning tools",
     async () => {
       const events = await client.sendPrompt(
         "Add a dark mode toggle button to the main navigation bar",
@@ -131,13 +133,15 @@ describe("Planning agent (ACP isolation)", () => {
       const text = responseText(events);
       expect(text.length).toBeGreaterThan(20);
 
-      // Phase 1: agent asks clarifying questions, does NOT immediately write a spec
-      // (write_planning_document and dispatch_tasks are Phase-2/3 tools)
+      // Ambiguous request: agent must ask clarifying questions (Step 1 in AGENTS.md),
+      // NOT immediately call write_planning_document or dispatch_tasks.
       const tools = toolNames(events);
       expect(tools).not.toContain("write_planning_document");
       expect(tools).not.toContain("dispatch_tasks");
 
-      // Response should contain at least one question (brainstorming skill HARD-GATE)
+      // Agent must ask at least one clarifying question.
+      // Note: the first turn may be a visual-companion offer ("Want to try it?"),
+      // which counts as one "?" and is still valid clarification behaviour.
       expect(text).toMatch(/\?/);
     },
     PROMPT_TIMEOUT + 10_000
@@ -146,9 +150,9 @@ describe("Planning agent (ACP isolation)", () => {
   // ── Test 3: Guard hook ──────────────────────────────────────────────────────
 
   test(
-    "gh pr create is blocked by guard hook and agent is told to use write_planning_document",
-    async () => {
-      // Verify the guard hook blocks `gh pr create` via a direct exec in the container.
+    "guard hook module: gh pr create command is rewritten to print Blocked message",
+    () => {
+      // Unit test — verifies hook logic directly without involving the LLM.
       const hookOutput = execSync(
         `docker exec ${client.containerName} node -e "
           import('/app/tools.mjs').then(m => {
@@ -163,6 +167,11 @@ describe("Planning agent (ACP isolation)", () => {
       expect(hookOutput).toContain("write_planning_document");
     }
   );
+
+  // Note: an LLM-level integration test for the guard hook was removed because
+  // the planning agent's instructions cause it to refuse `gh pr create` at the
+  // LLM level before the bash hook can fire.  The unit test above (module-level
+  // hook invocation via docker exec) is the authoritative coverage for hook logic.
 
   // ── Test 4: agent responds to follow-up after first turn ───────────────────
 

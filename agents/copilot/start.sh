@@ -130,6 +130,13 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
   echo "[start] pi exited with code ${PI_EXIT}" >&2
 
   if [ $PI_EXIT -eq 0 ]; then
+    # Auto-commit any uncommitted changes the agent left behind (modified or untracked files)
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+      git add -A
+      git commit -m "${TASK_COMMIT_MSG:-fix: implement task}" 2>&1
+      echo "[start] Auto-committed uncommitted changes before push" >&2
+    fi
+    # Push to remote (no-op if nothing new to push)
     git push origin "${BRANCH_NAME}" 2>&1 || echo "[start] git push had no new changes" >&2
 
     curl -s -X PATCH "${HARNESS_API_URL}/api/sessions/${AGENT_SESSION_ID}" \
@@ -145,4 +152,30 @@ if [ -n "${TASK_DESCRIPTION}" ]; then
 fi
 
 # ── Planning agent mode ───────────────────────────────────────────────────────
+# Write pi-mcp-adapter config so pi can reach the harness MCP server.
+# pi-mcp-adapter reads ~/.pi/agent/mcp.json; we generate it here from env vars
+# so the URL and token are correct for both production and E2E test environments.
+MCP_BASE="${HARNESS_API_URL:-${BACKEND_URL:-http://backend:3000}}"
+mkdir -p "${HOME}/.pi/agent"
+cat > "${HOME}/.pi/agent/mcp.json" << EOF
+{
+  "mcpServers": {
+    "harness": {
+      "url": "${MCP_BASE}/mcp",
+      "auth": "bearer",
+      "bearerTokenEnv": "MCP_TOKEN",
+      "lifecycle": "eager",
+      "directTools": true
+    }
+  },
+  "settings": {
+    "toolPrefix": "none"
+  }
+}
+EOF
+
+# Override PI_ACP_PI_COMMAND so pi-acp calls our wrapper script, which loads
+# pi-mcp-adapter (giving pi access to all harness MCP tools) and injects the
+# planning AGENTS.md system prompt.
+export PI_ACP_PI_COMMAND=/app/pi-planning-wrapper.sh
 exec node /app/stdio-tcp-bridge.mjs /app/node_modules/.bin/pi-acp
