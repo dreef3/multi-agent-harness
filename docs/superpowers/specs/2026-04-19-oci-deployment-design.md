@@ -79,9 +79,8 @@ SQLite, persisted in the `harness-data` named Docker volume on the VM's boot dis
 | `OCI_STATE_SECRET_KEY` | Customer Secret Key secret |
 | `VM_SSH_PUBLIC_KEY` | SSH public key deployed to `deploy` user |
 | `VM_SSH_PRIVATE_KEY` | Corresponding SSH private key for GHA to SSH in |
-| `TAILSCALE_AUTH_KEY` | Reusable Tailscale auth key for the VM (tag: `tag:server`) |
-| `TAILSCALE_OAUTH_CLIENT_ID` | Tailscale OAuth client ID for GHA runner |
-| `TAILSCALE_OAUTH_SECRET` | Tailscale OAuth client secret for GHA runner |
+| `TAILSCALE_AUTH_KEY` | Reusable Tailscale auth key for the VM |
+| `TAILSCALE_CI_AUTH_KEY` | Reusable Tailscale auth key for the GHA runner (ephemeral node) |
 | `GHCR_TOKEN` | GitHub PAT with `read:packages` — used by VM to pull images |
 | `DEPLOY_GITHUB_TOKEN` | GitHub PAT for the harness app — used by both the pi agent and Copilot provider |
 
