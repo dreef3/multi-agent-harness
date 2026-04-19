@@ -1,0 +1,16 @@
+# Production overrides — use pre-built GHCR images instead of local builds.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Requires GHCR_PREFIX env var, e.g.:
+#   GHCR_PREFIX=ghcr.io/dreef3/multi-agent-harness
+
+services:
+  backend:
+    build: null
+    image: ${GHCR_PREFIX}/backend:latest
+    pull_policy: always
+
+  frontend:
+    build: null
+    image: ${GHCR_PREFIX}/frontend:latest
+    pull_policy: always
