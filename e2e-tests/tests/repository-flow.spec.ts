@@ -5,38 +5,31 @@ import {
   TEST_REPO_OWNER,
   TEST_REPO_NAME,
   approvePlanningPr,
-  cleanupNewBranches,
   seedTestRepo,
   deleteTestRepo,
   pollSubAgentStatus,
 } from './helpers';
 
 test.describe('Repository Configuration Flow', () => {
-  let initialBranchNames: string[] = [];
+  let branchesCreatedByTest: string[] = [];
   let repoName: string;
 
   test.beforeEach(async ({ request }, testInfo) => {
     // Use worker-unique repo name so parallel workers don't clobber each other's repo.
     repoName = `E2E Test Repo ${testInfo.parallelIndex}`;
-
-    // Record current branches so we can detect new ones after the test
-    const branchRes = await request.get(
-      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
-      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
-    );
-    if (branchRes.ok()) {
-      const branches = await branchRes.json();
-      if (Array.isArray(branches)) {
-        initialBranchNames = (branches as { name: string }[]).map(b => b.name);
-      }
-    }
-
+    branchesCreatedByTest = [];
     await seedTestRepo(request, repoName);
   });
 
   test.afterEach(async ({ request }) => {
     await deleteTestRepo(request, repoName);
-    await cleanupNewBranches(initialBranchNames);
+    const ghHeaders = { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' };
+    for (const branch of branchesCreatedByTest) {
+      await fetch(
+        `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/git/refs/heads/${branch}`,
+        { method: 'DELETE', headers: ghHeaders }
+      ).catch(() => {});
+    }
   });
 
   test('create project with repository and verify sub-agent pushes a branch', async ({ page, request, agentConfig }) => {
@@ -134,6 +127,7 @@ test.describe('Repository Configuration Flow', () => {
     ).toBeDefined();
 
     const planningPrNumber = projState.planningPr!.number;
+    if (projState.planningBranch) branchesCreatedByTest.push(projState.planningBranch);
 
     // Approve the planning PR — triggers the polling cycle to dispatch tasks
     await approvePlanningPr(planningPrNumber);
@@ -149,6 +143,17 @@ test.describe('Repository Configuration Flow', () => {
       { timeout: 120000, intervals: [3000] }
     ).toBe(true);
 
+    // Snapshot branches now (before sub-agent runs) to detect only branches it pushes.
+    const branchSnapshotBeforeExecution = new Set<string>(branchesCreatedByTest);
+    const snapshotRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
+    );
+    if (snapshotRes.ok) {
+      const snapshotBranches = await snapshotRes.json() as { name: string }[];
+      snapshotBranches.forEach(b => branchSnapshotBeforeExecution.add(b.name));
+    }
+
     // Poll for sub-agent reaching a terminal state — fails fast on auth/model errors
     await expect.poll(
       pollSubAgentStatus(request, projectId!),
@@ -156,17 +161,21 @@ test.describe('Repository Configuration Flow', () => {
     ).toBe('completed');
 
     // Verify a new branch was pushed to the test repo — proves the commit+push happened
+    let agentBranch: string | undefined;
     await expect.poll(
       async () => {
-        const res = await request.get(
+        const res = await fetch(
           `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
           { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
         );
-        if (!res.ok()) return false;
+        if (!res.ok) return false;
         const branches = await res.json() as { name: string }[];
-        return branches.some(b => !initialBranchNames.includes(b.name));
+        const newBranch = branches.find(b => !branchSnapshotBeforeExecution.has(b.name));
+        if (newBranch) { agentBranch = newBranch.name; return true; }
+        return false;
       },
       { timeout: 60000, intervals: [5000] }
     ).toBe(true);
+    if (agentBranch) branchesCreatedByTest.push(agentBranch);
   });
 });

@@ -12,7 +12,8 @@
     "dev": "bun run --cwd backend dev & bun run --cwd frontend dev",
     "build": "bun run --cwd backend build && bun run --cwd frontend build",
     "test": "bun run --cwd backend test",
-    "e2e": "bun run --cwd e2e-tests test"
+    "e2e": "bun run --cwd e2e-tests test",
+    "docker:build": "docker build -t multi-agent-harness/backend:latest ./backend & docker build -t multi-agent-harness/frontend:latest ./frontend & docker build -f agents/base/Dockerfile.base -t multi-agent-harness/agent-base:latest . && wait && docker build -f agents/pi/Dockerfile -t multi-agent-harness/agent-pi:latest . & docker build -f agents/copilot/Dockerfile -t multi-agent-harness/agent-copilot:latest . & wait"
   },
   "dependencies": {
     "csstype": "^3.2.3",

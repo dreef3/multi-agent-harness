@@ -62,6 +62,7 @@ function toolNames(events: AcpEvent[]): string[] {
 
 describe("Planning agent (ACP isolation)", () => {
   let client: AcpTestClient;
+  let setupComplete = false;
 
   beforeAll(async () => {
     if (!COPILOT_TOKEN) {
@@ -82,10 +83,11 @@ describe("Planning agent (ACP isolation)", () => {
     });
 
     await client.start(CONTAINER_START_TIMEOUT);
+    setupComplete = true;
   }, CONTAINER_START_TIMEOUT + 10_000);
 
   afterAll(async () => {
-    await client.stop();
+    if (setupComplete) await client.stop();
   });
 
   // ── Test 1: skill file accessible ──────────────────────────────────────────
