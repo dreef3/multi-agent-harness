@@ -122,11 +122,12 @@ export function createRouter(dataDir: string, docker: Dockerode, containerRuntim
       : { id: randomUUID(), projectId: ctx.projectId, content: "", tasks: updatedTasks };
 
     await updateProject(ctx.projectId, { plan, status: "executing" });
-    try {
-      await getRecoveryService().dispatchTasksForProject(ctx.projectId);
-    } catch (err) {
+    // Fire-and-forget: sub-agent containers can run for many minutes; awaiting them
+    // would block the HTTP response, which in turn blocks the planning agent's tool call,
+    // which blocks sendPrompt in polling.ts and stalls the entire polling cycle.
+    void getRecoveryService().dispatchTasksForProject(ctx.projectId).catch(err => {
       console.error("[routes] dispatchTasksForProject error:", err);
-    }
+    });
 
     res.json({ dispatched: netNew });
   });
