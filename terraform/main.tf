@@ -13,7 +13,7 @@ data "oci_identity_availability_domains" "ads" {
 }
 
 locals {
-  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
+  availability_domain = data.oci_identity_availability_domains.ads.availability_domains[var.availability_domain_index].name
 }
 
 # ── Ubuntu 22.04 ARM image ───────────────────────────────────────────────────

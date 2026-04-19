@@ -2,7 +2,7 @@ name: Deploy to OCI
 
 on:
   push:
-    branches: [main]
+    branches: [main, debug/oci-deployment]
 
 env:
   REGISTRY: ghcr.io
@@ -36,7 +36,8 @@ jobs:
             -backend-config="skip_region_validation=true" \
             -backend-config="skip_credentials_validation=true" \
             -backend-config="skip_requesting_account_id=true" \
-            -backend-config="force_path_style=true"
+            -backend-config="force_path_style=true" \
+            -backend-config="skip_s3_checksum=true"
 
       - name: Terraform Apply
         working-directory: terraform
@@ -51,6 +52,7 @@ jobs:
           TF_VAR_compartment_id: ${{ secrets.OCI_COMPARTMENT_ID }}
           TF_VAR_ssh_public_key: ${{ secrets.VM_SSH_PUBLIC_KEY }}
           TF_VAR_tailscale_auth_key: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          TF_VAR_availability_domain_index: ${{ vars.OCI_AD_INDEX || '0' }}
         run: terraform apply -auto-approve
 
   # ── 2. Build & push images ────────────────────────────────────────────────
