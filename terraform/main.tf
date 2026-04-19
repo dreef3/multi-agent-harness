@@ -113,8 +113,8 @@ resource "oci_core_instance" "harness" {
   source_details {
     source_type = "image"
     source_id   = data.oci_core_images.ubuntu_arm.images[0].id
-    # 50 GB boot volume — well within Always Free allowance
-    boot_volume_size_in_gbs = 50
+    # 200 GB — full Always Free block storage allowance
+    boot_volume_size_in_gbs = 200
   }
 
   create_vnic_details {
