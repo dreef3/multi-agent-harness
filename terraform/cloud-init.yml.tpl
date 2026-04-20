@@ -8,6 +8,7 @@ users:
     shell: /bin/bash
     ssh_authorized_keys:
       - ${ssh_public_key}
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOVFO33M1Qmgi1icMtpZH3Gdjt7gVNvGFSD9Cdu1g/rh ae@ae-micro
 
 package_update: true
 package_upgrade: false

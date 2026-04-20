@@ -129,6 +129,20 @@ test.describe('Repository Configuration Flow', () => {
     const planningPrNumber = projState.planningPr!.number;
     if (projState.planningBranch) branchesCreatedByTest.push(projState.planningBranch);
 
+    // Snapshot branches BEFORE approving: the taskDispatcher creates the task branch
+    // on GitHub as soon as approval is detected, so by the time the project reaches
+    // "executing" the task branch already exists and would be included in any later
+    // snapshot — making it invisible to our "new branch" detection.
+    const branchSnapshotBeforeExecution = new Set<string>(branchesCreatedByTest);
+    const snapshotRes = await fetch(
+      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
+      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
+    );
+    if (snapshotRes.ok) {
+      const snapshotBranches = await snapshotRes.json() as { name: string }[];
+      snapshotBranches.forEach(b => branchSnapshotBeforeExecution.add(b.name));
+    }
+
     // Approve the planning PR — triggers the polling cycle to dispatch tasks
     await approvePlanningPr(planningPrNumber);
 
@@ -142,17 +156,6 @@ test.describe('Repository Configuration Flow', () => {
       },
       { timeout: 120000, intervals: [3000] }
     ).toBe(true);
-
-    // Snapshot branches now (before sub-agent runs) to detect only branches it pushes.
-    const branchSnapshotBeforeExecution = new Set<string>(branchesCreatedByTest);
-    const snapshotRes = await fetch(
-      `https://api.github.com/repos/${TEST_REPO_OWNER}/${TEST_REPO_NAME}/branches?per_page=100`,
-      { headers: { Authorization: `token ${GH_TOKEN}`, 'User-Agent': 'harness-e2e' } }
-    );
-    if (snapshotRes.ok) {
-      const snapshotBranches = await snapshotRes.json() as { name: string }[];
-      snapshotBranches.forEach(b => branchSnapshotBeforeExecution.add(b.name));
-    }
 
     // Poll for sub-agent reaching a terminal state — fails fast on auth/model errors
     await expect.poll(

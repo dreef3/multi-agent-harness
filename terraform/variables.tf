@@ -54,3 +54,9 @@ variable "instance_memory_gb" {
   type        = number
   default     = 24
 }
+
+variable "availability_domain_index" {
+  description = "Index into the list of availability domains (0, 1, or 2). Change if the chosen AD is out of capacity."
+  type        = number
+  default     = 0
+}
