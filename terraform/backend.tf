@@ -8,6 +8,8 @@ terraform {
     }
   }
 
-  # Partial config — remaining args supplied via -backend-config in CI
-  backend "s3" {}
+  # Local backend — state is managed via OCI CLI in CI (see deploy.yml).
+  # OCI Object Storage S3-compatible API doesn't support chunked encoding
+  # required by the Terraform S3 backend.
+  backend "local" {}
 }

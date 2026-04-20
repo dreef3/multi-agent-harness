@@ -4,3 +4,7 @@
 node_modules/
 dist/
 data/
+terraform/terraform.tfstate
+terraform/errored.tfstate
+terraform/.terraform/
+terraform/.terraform.lock.hcl

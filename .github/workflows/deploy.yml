@@ -20,30 +20,30 @@ jobs:
         with:
           terraform_version: "~1.9"
 
+      - name: Install OCI CLI
+        run: pip install oci-cli --quiet
+
+      - name: Download Terraform state
+        env:
+          OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CLI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          oci os object get \
+            --namespace ${{ secrets.OCI_NAMESPACE }} \
+            --bucket-name ${{ vars.OCI_STATE_BUCKET }} \
+            --name multi-agent-harness/terraform.tfstate \
+            --file terraform/terraform.tfstate 2>/dev/null || echo "No existing state, starting fresh"
+
       - name: Terraform Init
         working-directory: terraform
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.OCI_STATE_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.OCI_STATE_SECRET_KEY }}
-        run: |
-          terraform init \
-            -backend-config="bucket=${{ vars.OCI_STATE_BUCKET }}" \
-            -backend-config="key=multi-agent-harness/terraform.tfstate" \
-            -backend-config="region=${{ secrets.OCI_REGION }}" \
-            -backend-config="endpoint=https://${{ secrets.OCI_NAMESPACE }}.compat.objectstorage.${{ secrets.OCI_REGION }}.oraclecloud.com" \
-            -backend-config="access_key=${{ secrets.OCI_STATE_ACCESS_KEY }}" \
-            -backend-config="secret_key=${{ secrets.OCI_STATE_SECRET_KEY }}" \
-            -backend-config="skip_region_validation=true" \
-            -backend-config="skip_credentials_validation=true" \
-            -backend-config="skip_requesting_account_id=true" \
-            -backend-config="force_path_style=true" \
-            -backend-config="skip_s3_checksum=true"
+        run: terraform init
 
       - name: Terraform Apply
         working-directory: terraform
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.OCI_STATE_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.OCI_STATE_SECRET_KEY }}
           TF_VAR_tenancy_ocid: ${{ secrets.OCI_TENANCY_OCID }}
           TF_VAR_user_ocid: ${{ secrets.OCI_USER_OCID }}
           TF_VAR_fingerprint: ${{ secrets.OCI_FINGERPRINT }}
@@ -54,6 +54,24 @@ jobs:
           TF_VAR_tailscale_auth_key: ${{ secrets.TAILSCALE_AUTH_KEY }}
           TF_VAR_availability_domain_index: ${{ vars.OCI_AD_INDEX || '0' }}
         run: terraform apply -auto-approve
+
+      - name: Upload Terraform state
+        if: always()
+        env:
+          OCI_CLI_USER: ${{ secrets.OCI_USER_OCID }}
+          OCI_CLI_TENANCY: ${{ secrets.OCI_TENANCY_OCID }}
+          OCI_CLI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+          OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_PRIVATE_KEY }}
+          OCI_CLI_REGION: ${{ secrets.OCI_REGION }}
+        run: |
+          STATE_FILE="terraform/terraform.tfstate"
+          [ -f "terraform/errored.tfstate" ] && STATE_FILE="terraform/errored.tfstate"
+          oci os object put \
+            --namespace ${{ secrets.OCI_NAMESPACE }} \
+            --bucket-name ${{ vars.OCI_STATE_BUCKET }} \
+            --name multi-agent-harness/terraform.tfstate \
+            --file "$STATE_FILE" \
+            --force
 
   # ── 2. Build & push images ────────────────────────────────────────────────
   build:
