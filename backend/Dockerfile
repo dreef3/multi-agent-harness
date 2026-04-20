@@ -22,7 +22,7 @@ COPY package.json bun.lock ./
 # Skip lifecycle scripts to avoid bun cache issues with native modules in Docker;
 # rebuild better-sqlite3 explicitly using node-gyp after packages are extracted.
 RUN bun install --ignore-scripts
-COPY backend/scripts ./scripts
+COPY scripts ./scripts
 RUN bash scripts/rebuild-sqlite3.sh
 COPY . .
 RUN bun run build
