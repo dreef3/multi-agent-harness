@@ -21,4 +21,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 # Claude Code + OpenCode CLIs
 RUN npm install -g @anthropic-ai/claude-code opencode-ai
 
+# Non-root user (Claude Code requires non-root for --dangerously-skip-permissions)
+RUN useradd -m -s /bin/bash -u 1000 dev \
+    && mkdir -p /workspace \
+    && chown dev:dev /workspace
+ENV PATH="/home/dev/.bun/bin:$PATH"
+
+USER dev
 WORKDIR /workspace
