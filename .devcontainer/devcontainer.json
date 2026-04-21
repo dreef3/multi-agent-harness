@@ -14,9 +14,6 @@
     "source=${localEnv:HOME}/.codex,target=/home/dev/.codex,type=bind,consistency=cached",
     "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"
   ],
-  "remoteEnv": {
-    "BUN_INSTALL": "/home/dev/.bun"
-  },
   "postCreateCommand": "bun install",
   "features": {
     "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
