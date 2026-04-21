@@ -7,9 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl ca-certificates jq python3 python3-yaml unzip \
     && rm -rf /var/lib/apt/lists/*
 
-# Bun
-RUN curl -fsSL https://bun.sh/install | bash
-ENV PATH="/root/.bun/bin:$PATH"
+# Bun (system-wide so non-root users can run it)
+RUN curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash
 
 # gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -26,7 +25,6 @@ RUN usermod -l dev -d /home/dev -m node \
     && groupmod -n dev node \
     && mkdir -p /workspace \
     && chown dev:dev /workspace
-ENV PATH="/home/dev/.bun/bin:$PATH"
 
 USER dev
 WORKDIR /workspace
